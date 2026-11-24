@@ -52,7 +52,7 @@ publisher/test/     δοκιμές χωρίς internet: node publisher/test/run_
 ### 4. Έλεγχος (επιλογή συνάρτησης → Εκτέλεση) — δεν δημοσιεύει τίποτα
 1. `findInstagramIds` (την πρώτη φορά ζητάει άδειες Google).
 2. `checkSetup` → για κάθε πελάτη: «δεν λήγει, δικαιώματα εντάξει», Instagram, Facebook, φάκελος, ουρά, «προβληματικά: 0».
-3. `dryRun` και `dryRunReel` → «OK … ΔΕΝ δημοσιεύτηκε τίποτα».
+3. `dryRun` (εικόνα σε Instagram + Facebook), `dryRunReel` (reel στο Instagram) και `dryRunReelFb` (reel στο Facebook ως πρόχειρο που σβήνεται) → «OK … ΔΕΝ δημοσιεύτηκε τίποτα».
 
 ### 5. Ενεργοποίηση
 1. `START_AFTER` = η ώρα της αλλαγής (π.χ. `2026-11-24T15:00:00+02:00`).

@@ -33,7 +33,8 @@
  *   findInstagramIds()  βρίσκει και αποθηκεύει IDs Instagram/Facebook για κάθε πελάτη με token
  *   checkSetup()        ελέγχει token, δικαιώματα, λογαριασμούς, φακέλους, ουρά (δεν δημοσιεύει)
  *   dryRun()            δοκιμή στην επόμενη εικόνα κάθε πελάτη ΧΩΡΙΣ δημοσίευση
- *   dryRunReel()        δοκιμή στο επόμενο reel κάθε πελάτη ΧΩΡΙΣ δημοσίευση (1–3 λεπτά ανά reel)
+ *   dryRunReel()        δοκιμή στο επόμενο reel κάθε πελάτη στο Instagram ΧΩΡΙΣ δημοσίευση (1–3 λεπτά ανά reel)
+ *   dryRunReelFb()      το ίδιο στο Facebook: ανεβαίνει ως πρόχειρο και σβήνεται, ΧΩΡΙΣ δημοσίευση
  *   setup()             αυτόματος έλεγχος κάθε 10 λεπτά
  *   pause() / resume()  παύση / συνέχεια όλων
  * Μενού «⚙️ okpublisher» στο Sheet: «Αλλαγή ρύθμισης…», «Δες τις ρυθμίσεις».
@@ -620,6 +621,32 @@ function dryRunReel() {
       waitReady_(c, 50, 5000, tok);
       console.log(pre + 'Instagram OK: το reel ' + next.id + ' επεξεργάστηκε σωστά. ΔΕΝ δημοσιεύτηκε τίποτα.');
     } catch (e) { console.log(pre + 'ΣΦΑΛΜΑ: ' + e.message); }
+  });
+}
+
+// Δοκιμή του reel στο Facebook: ανεβαίνει ως ΠΡΟΧΕΙΡΟ (DRAFT, δεν φαίνεται πουθενά) και σβήνεται αμέσως.
+// Αν δεν σβηστεί, μένει μόνο ως πρόχειρο στο Business Suite (Περιεχόμενο → Πρόχειρα) και το σβήνεις με το χέρι.
+function dryRunReelFb() {
+  const now = new Date();
+  const queues = allQueues_();
+  Object.keys(queues).forEach(function (K) {
+    const pre = '[' + K + '] ';
+    const next = queues[K].items.filter(function (it) { return it.type === 'REEL' && fbEnabled_(it) && new Date(it.publish_at) > now; })[0];
+    if (!next) { console.log(pre + 'Δεν υπάρχει επόμενο reel για Facebook στην ουρά (ή δεν έχει οριστεί FB_PAGE_' + K + ').'); return; }
+    try {
+      const pid = fbPageId_(K), pt = token_(K);
+      const st = api_('post', pid + '/video_reels', { upload_phase: 'start' }, pt);
+      const up = UrlFetchApp.fetch(st.upload_url, {
+        method: 'post', muteHttpExceptions: true,
+        headers: { Authorization: 'OAuth ' + pt, file_url: next.video },
+      });
+      if (up.getResponseCode() >= 400) throw new Error('FB upload ' + up.getResponseCode() + ': ' + up.getContentText());
+      api_('post', pid + '/video_reels', { upload_phase: 'finish', video_id: st.video_id, video_state: 'DRAFT', description: 'dry run' }, pt);
+      let gone = false;
+      try { api_('post', st.video_id, { method: 'delete' }, pt); gone = true; } catch (e) { /* μένει πρόχειρο */ }
+      console.log(pre + 'Facebook OK: το reel ' + next.id + ' ανέβηκε ως πρόχειρο' +
+        (gone ? ' και σβήστηκε.' : ' (ΔΕΝ σβήστηκε: σβήσ\' το από Business Suite → Περιεχόμενο → Πρόχειρα).') + ' ΔΕΝ δημοσιεύτηκε τίποτα.');
+    } catch (e) { console.log(pre + 'Facebook ΣΦΑΛΜΑ: ' + e.message); }
   });
 }
 

@@ -394,6 +394,20 @@ test('διπλότυπα: μόνο αφαίρεση από τον φάκελο (
   assert.strictEqual(env.mails[0].to, 'center@example.com');
 });
 
+test('dryRunReelFb: ανεβαίνει μόνο ως πρόχειρο (DRAFT) και σβήνεται· καμία δημοσίευση, καμία σημείωση', function () {
+  const env = makeEnv({ props: BASE_PROPS, queues: { [OLD_Q]: lsQueue() }, now: '2026-11-30T12:00:00+02:00' });
+  env.ctx.dryRunReelFb();
+  const reelCalls = graphPosts(env).filter(function (c) { return /video_reels$/.test(c.url); });
+  assert.strictEqual(reelCalls.length, 2);
+  assert.strictEqual(reelCalls[1].payload.video_state, 'DRAFT');
+  assert.ok(!graphPosts(env).some(function (c) { return c.payload && c.payload.video_state === 'PUBLISHED'; }));
+  assert.ok(graphPosts(env).some(function (c) { return c.payload && c.payload.method === 'delete'; }));
+  assert.deepStrictEqual(statusKeys(env), []);
+  assert.strictEqual(env.mails.length, 0);
+  const up = env.calls.filter(function (c) { return /rupload/.test(c.url); })[0];
+  assert.strictEqual(up.headers.file_url, M + 'r.mp4');
+});
+
 // Σύγκριση με τον παλιό LS Publisher: για την ίδια ουρά, οι ίδιες ακριβώς κλήσεις στο Meta (εκτός από το token).
 if (OLD_DIR) {
   test('ίδιες κλήσεις Meta με τον παλιό LS Publisher (carousel, story, reel, reel-story, εικόνα)', function () {
