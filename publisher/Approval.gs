@@ -351,18 +351,23 @@ function sendMail_(K, o) {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
   if (r.getResponseCode() >= 300) throw new Error('Gmail αποστολή ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 300));
   const j = JSON.parse(r.getContentText() || '{}');
-  rememberSent_(j.id);
+  rememberSent_(j.id, j.threadId);
   let rfc = '';
   try { rfc = hdr_(gmail_('get', '/messages/' + j.id + '?format=metadata&metadataHeaders=Message-ID'), 'Message-ID'); } catch (e) { rfc = ''; }
   return { message_id: j.id, thread_id: j.threadId, rfc822_message_id: rfc };
 }
 
-function rememberSent_(id) {
+function rememberSent_(id, threadId) {
   if (!id) return;
   let a = [];
   try { a = JSON.parse(prop_('MAIL_SENT_IDS', '[]')); } catch (e) { a = []; }
   a.push(id);
   P_().setProperty('MAIL_SENT_IDS', JSON.stringify(a.slice(-APPR_.SENT_KEEP)));
+  if (!threadId) return;
+  let t = [];
+  try { t = JSON.parse(prop_('MAIL_SENT_THREADS', '[]')); } catch (e) { t = []; }
+  if (t.indexOf(threadId) < 0) t.push(threadId);
+  P_().setProperty('MAIL_SENT_THREADS', JSON.stringify(t.slice(-APPR_.SENT_KEEP)));
 }
 
 // ------------------------------------------------------------------ εισερχόμενα (inbox)
@@ -391,13 +396,19 @@ function pollInbox_(K, cache) {
   try { sent = JSON.parse(prop_('MAIL_SENT_IDS', '[]')); } catch (e) { sent = []; }
   const fresh = (list.messages || []).map(function (m) { return m.id; })
     .filter(function (id) { return seen.indexOf(id) < 0 && sent.indexOf(id) < 0; }).reverse();
-  const own = ['[okpublisher]', '[' + clientName_(K) + ']'];
+  const own = ['[okpublisher]', '[okpublisher.gr]', '[' + clientName_(K) + ']'];
+  // Όταν εγκρίνων είναι ο ίδιος ο λογαριασμός του okpublisher (π.χ. TST, OKP), μετράνε μόνο οι απαντήσεις του μέσα σε
+  // thread που ξεκίνησε το σύστημα· όχι κάθε άλλο email που στέλνει (φόρμα του site, απαντήσεις σε ενδιαφερόμενους κ.λπ.).
+  let me = '', ours = [];
+  try { me = String(Session.getEffectiveUser().getEmail() || '').toLowerCase(); } catch (e) { me = ''; }
+  try { ours = JSON.parse(prop_('MAIL_SENT_THREADS', '[]')); } catch (e) { ours = []; }
   let n = 0;
   fresh.forEach(function (id) {
     const m = gmail_('get', '/messages/' + id + '?format=full');
     const from = emailOf_(hdr_(m, 'From'));
     const subject = hdr_(m, 'Subject');
-    if (approvers.indexOf(from) < 0 || own.some(function (p) { return subject.indexOf(p) === 0; })) {
+    if (approvers.indexOf(from) < 0 || own.some(function (p) { return subject.indexOf(p) === 0; }) ||
+        (me && from === me && ours.indexOf(m.threadId) < 0)) {
       seen.push(id);
       return;
     }

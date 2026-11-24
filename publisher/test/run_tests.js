@@ -644,6 +644,26 @@ test('έγκριση: notify πάει μόνο στο email του πελάτη�
   assert.strictEqual(JSON.stringify(env.ctx.approvalClients_()), '["ORE","TST"]');
 });
 
+test('έγκριση: όταν εγκρίνων είναι ο ίδιος ο λογαριασμός, μετράνε μόνο απαντήσεις στα δικά μας threads (όχι φόρμα/άλλα email)', function () {
+  const env = approvalEnv({ props: { TEST_CLIENTS: 'TST', NOTIFY_TO_TST: 'system@example.com', FOLDER_TST: 'ROOT', NAME_TST: 'Δοκιμή' },
+    gh: { 'clients/TST/outbox/n.json': JSON.stringify({ type: 'email', subject: 'Πρόγραμμα για έγκριση', text: 'Δείτε το πρόγραμμα.' }) },
+    mails: {
+      F1: msg('F1', 'TF1', 'okpublisher.gr <system@example.com>', '[okpublisher.gr] Νέο ενδιαφέρον: Καφέ', 'Όνομα: Χ', '2026-12-20T11:00:00+02:00'),
+      F2: msg('F2', 'TF1', 'Petros <system@example.com>', 'Re: [okpublisher.gr] Νέο ενδιαφέρον: Καφέ', 'Ευχαριστούμε, σας καλώ αύριο', '2026-12-20T11:10:00+02:00'),
+      F3: msg('F3', 'TF3', 'Petros <system@example.com>', 'Νέα διεύθυνση για το πρόγραμμα', 'ok', '2026-12-20T11:20:00+02:00'),
+    } });
+  env.ctx.approvalCycle();                       // στέλνει το email του πακέτου (νέο thread) και διαβάζει τα εισερχόμενα
+  const th = result(env, 'TST', 'n').thread_id;
+  assert.ok(th);
+  assert.deepStrictEqual(Object.keys(env.gh).filter(function (k) { return k.indexOf('clients/TST/inbox/') === 0; }), []);
+  env.gmail.R1 = msg('R1', th, 'Petros <system@example.com>', 'Re: Πρόγραμμα για έγκριση', 'ΟΚ', '2026-12-20T12:30:00+02:00');
+  env.nowMs = new Date('2026-12-20T12:31:00+02:00').getTime();
+  env.ctx.approvalCycle();
+  const inbox = Object.keys(env.gh).filter(function (k) { return k.indexOf('clients/TST/inbox/') === 0; });
+  assert.strictEqual(inbox.length, 1, inbox.join(','));
+  assert.strictEqual(JSON.parse(env.gh[inbox[0]]).text, 'ΟΚ');
+});
+
 test('checkApproval: μόνο έλεγχος, καμία αλλαγή', function () {
   const env = approvalEnv({ gh: { 'clients/ORE/config.json': ORE_CFG } });
   const out = env.ctx.checkApproval();
