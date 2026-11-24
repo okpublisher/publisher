@@ -104,7 +104,9 @@
    thread (το πολύ μία ανά 3 ημέρες) → `last_contact_at`.
 4. **Τέλος ουράς:** το email (στον πελάτη) το στέλνει μόνο του το Apps Script. Δεν στέλνεις δεύτερο.
 5. **Καθαρισμός:** `cleanup_repo.py /home/claude/publisher --days 3` (σβήνει ό,τι δημοσιεύτηκε πριν από 3+ ημέρες).
-   `--purge-history` (force push στο main) μόνο αν ΟΛΟΙ οι ενεργοί πελάτες έχουν `purge_history: true`.
+   `--purge-history` (force push στο main) μόνο αν ΟΛΟΙ οι ενεργοί πελάτες έχουν `purge_history: true` — χρειάζεται
+   `pip install --break-system-packages git-filter-repo` και ένα πρόσφατο `git pull` (κανένα άλλο push στη μέση). Αν το
+   force push απορριφθεί: ξανά χωρίς `--purge-history` και σημείωση στο τελικό μήνυμα προς τον διαχειριστή.
 6. Commit & push του publisher-work (state, inbox που επεξεργάστηκες, αιτήματα) — πάντα στο τέλος.
 
 ## 4. Δοκιμαστικός πελάτης (TST)
