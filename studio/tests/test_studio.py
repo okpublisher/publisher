@@ -60,6 +60,40 @@ class ClientTest(unittest.TestCase):
         self.assertTrue(str(c.logo('logo.png')).endswith('logo.png'))  # και με όνομα αρχείου
         self.assertEqual(c.banned_phrases, ['απαγορευμ'])
 
+    def _best(self, **kw):
+        from datetime import timezone, timedelta
+        bt = {'mode': 'auto', 'post_time': '20:00', 'story_time': '11:00',
+              'updated': (datetime.now(timezone.utc) - timedelta(days=kw.pop('age', 5))).isoformat().replace('+00:00', 'Z')}
+        bt.update(kw)
+        (Path(self.tmp) / 'clients' / 'TST' / 'best_times.json').write_text(json.dumps(bt), encoding='utf-8')
+
+    def _times(self, mode):
+        p = Path(self.tmp) / 'clients' / 'TST' / 'config.json'
+        cfg = json.loads(p.read_text(encoding='utf-8'))
+        if mode is None:
+            cfg.pop('times', None)
+        else:
+            cfg['times'] = mode
+        p.write_text(json.dumps(cfg), encoding='utf-8')
+
+    def test_times_manual_by_default(self):
+        self._best()
+        cl = self.client.load('TST', self.tmp)
+        self.assertEqual(cl.times_mode, 'manual')
+        self.assertEqual((cl.post_time, cl.story_time), ('21:00', '09:30'))
+
+    def test_times_auto(self):
+        self._times('auto')
+        cl = self.client.load('TST', self.tmp)
+        self.assertEqual((cl.post_time, cl.story_time), ('21:00', '09:30'), 'χωρίς αρχείο: ώρες του config')
+        self._best()
+        cl = self.client.load('TST', self.tmp)
+        self.assertEqual((cl.post_time, cl.story_time), ('20:00', '11:00'))
+        for bad in ({'mode': 'default'}, {'age': 100}, {'post_time': '25:00'}, {'updated': 'όχι ημερομηνία'}):
+            self._best(**bad)
+            cl = self.client.load('TST', self.tmp)
+            self.assertEqual((cl.post_time, cl.story_time), ('21:00', '09:30'), bad)
+
     def test_bad_key_and_missing(self):
         with self.assertRaises(SystemExit):
             self.client.load('x', self.tmp)

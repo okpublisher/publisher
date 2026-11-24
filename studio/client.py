@@ -1,12 +1,14 @@
 """Ρυθμίσεις πελάτη για το studio: διαβάζονται από το ιδιωτικό repo `okpublisher/publisher-work`.
 
     clients/<K>/config.json     στοιχεία πελάτη (ώρες, ημέρες, CTA, τρόπος έτοιμων reels, ομάδα)
+    clients/<K>/best_times.json αυτόματες ώρες (μόνο με "times": "auto" στο config)
     groups/<ομάδα>/group.json   κοινό brand (χρώματα, γραμματοσειρές, λογότυπα) και απαγορευμένες διατυπώσεις
 
 Ποιος πελάτης: όρισμα `--client K` ή μεταβλητή περιβάλλοντος OKP_CLIENT. Πού είναι το ιδιωτικό repo: OKP_WORK
 (προεπιλογή /home/claude/publisher-work). Σε αυτό το δημόσιο repo δεν γράφεται κανένα στοιχείο πελάτη.
 """
 import json, os, re
+from datetime import datetime, timezone
 from pathlib import Path
 
 WORK = Path(os.environ.get('OKP_WORK', '/home/claude/publisher-work'))
@@ -14,6 +16,8 @@ REPO_RAW = 'https://raw.githubusercontent.com/okpublisher/publisher/main/'
 KEY_RE = re.compile(r'^[A-Z0-9]{2,12}$')
 DAY_NAMES = ['Δευτέρα', 'Τρίτη', 'Τετάρτη', 'Πέμπτη', 'Παρασκευή', 'Σάββατο', 'Κυριακή']
 READY_MODES = ('fill_reel_slots_then_posts_then_next_month', 'all_in_month')
+TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+BEST_MAX_AGE_DAYS = 70   # αυτόματες ώρες παλιότερες από τόσες ημέρες αγνοούνται (ανανεώνονται κάθε μήνα στις 15)
 
 # Προεπιλογές για ό,τι δεν ορίζει ο πελάτης ή η ομάδα.
 DEFAULT_COLORS = {'primary': '#FFDD00', 'accent': '#E5007D', 'dark': '#004C8C', 'text': '#1F2328',
@@ -95,12 +99,39 @@ class Client:
         return {DAY_NAMES.index(d) if isinstance(d, str) else int(d) for d in days}
 
     @property
+    def times_mode(self):
+        """«auto»: ώρες από το clients/<K>/best_times.json (το γράφει το Apps Script στις 15 κάθε μήνα, από το πότε είναι
+        online οι ακόλουθοι). Οτιδήποτε άλλο (και χωρίς "times"): οι ώρες post_time / story_time του config, π.χ. όσες
+        όρισε ο ίδιος ο πελάτης."""
+        return 'auto' if self.config.get('times') == 'auto' else 'manual'
+
+    @property
+    def best_times(self):
+        """Οι αυτόματες ώρες, μόνο αν ισχύουν: "times": "auto", "mode": "auto", έγκυρες ώρες, όχι παλιότερες από 70 ημέρες.
+        Αλλιώς None (κάτω από 100 ακόλουθους, λίγα δεδομένα, παλιό αρχείο) και μένουν οι ώρες του config."""
+        p = self.dir / 'best_times.json'
+        if self.times_mode != 'auto' or not p.exists():
+            return None
+        try:
+            bt = json.loads(p.read_text(encoding='utf-8'))
+            updated = datetime.fromisoformat(str(bt.get('updated', '')).replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        if bt.get('mode') != 'auto' or not TIME_RE.match(str(bt.get('post_time', ''))) or not TIME_RE.match(str(bt.get('story_time', ''))):
+            return None
+        if updated.tzinfo is None or (datetime.now(timezone.utc) - updated).days > BEST_MAX_AGE_DAYS:
+            return None
+        return bt
+
+    @property
     def post_time(self):
-        return self.config.get('post_time', '22:00')
+        bt = self.best_times
+        return bt['post_time'] if bt else self.config.get('post_time', '22:00')
 
     @property
     def story_time(self):
-        return self.config.get('story_time', '10:00')
+        bt = self.best_times
+        return bt['story_time'] if bt else self.config.get('story_time', '10:00')
 
     @property
     def ready_reels_mode(self):

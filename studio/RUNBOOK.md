@@ -54,7 +54,7 @@
    `blurfaces` (με `--keep` μόνο για σίγουρα ενήλικες), φύλλα `*.after_*`, ονόματα → `blur --box`, αλλιώς απόρριψη
    (σημείωση στο `sources.json` ως `rejected`· η μετακίνηση σε ΑΠΟΡΡΙΦΘΗΚΑΝ γίνεται με `move_sources` μαζί με την έγκριση).
 6. `dedupe_check.py /home/claude/raw $OKP_WORK/clients/<K>/used_assets.txt` → όχι επαναλήψεις.
-7. Πλάνο στο `clients/<K>/batches/<ΕΕΕΕ-ΜΜ>/plan.md` (ημέρες/ώρες από το `config.json`, μείγμα θεμάτων και κανόνες από
+7. Πλάνο στο `clients/<K>/batches/<ΕΕΕΕ-ΜΜ>/plan.md` (ημέρες/ώρες από το `config.json` — με `"times": "auto"` οι ώρες έρχονται από το `best_times.json` που γράφει το Apps Script στις 15 του μήνα — μείγμα θεμάτων και κανόνες από
    τα `rules.md`). Λίγο υλικό → γραφικά (`engine.py`), ποτέ «γέμισμα» με αμφίβολες φωτογραφίες.
 8. Πηγές → `privacy_check.py clean` → `studio/assets/` (+ αντίγραφο στο `batches/<ΕΕΕΕ-ΜΜ>/assets/`). Script
    `batches/<ΕΕΕΕ-ΜΜ>/build.py` (`from engine import cover, text, point, list_card, quote, cta, story_photo, story_text, render_all, POST, STORY, CREAM`)

@@ -42,6 +42,7 @@ function makeEnv(opts) {
     if (qkey) return queues[qkey] === null ? resp(404, 'Not found') : resp(200, queues[qkey]);
     if (url.indexOf('https://graph.facebook.com') === 0) {
       if (graphFail(url, o)) return resp(400, { error: { message: 'mock failure', code: 1 } });
+      if (opts.graph) { const g = opts.graph(url, o, resp); if (g) return g; }
       if (/\/media(\?|$)/.test(url) && o.method === 'post') return resp(200, { id: 'C' + (++mediaN) });
       if (/media_publish/.test(url)) return resp(200, { id: 'M' + (++mediaN) });
       if (/fields=status_code/.test(url)) return resp(200, { status_code: 'FINISHED' });
@@ -73,10 +74,12 @@ function makeEnv(opts) {
         return {
           setValues: function (v) { v.forEach(function (row, i) { rows[r - 1 + i] = row.slice(); }); return this; },
           setFontWeight: function () { return this; }, setNumberFormat: function () { return this; },
+          getValues: function () { const out = []; for (let i = 0; i < nr; i++) out.push((rows[r - 1 + i] || []).slice(c - 1, c - 1 + nc)); return out; },
           clearContent: function () { for (let i = 0; i < nr; i++) rows[r - 1 + i] = []; return this; },
         };
       },
       appendRow: function (row) { rows.push(row); },
+      getDataRange: function () { return { getValues: function () { return rows.map(function (x) { return (x || []).slice(); }); } }; },
       getLastRow: function () { let n = rows.length; while (n && (!rows[n - 1] || !rows[n - 1].length)) n--; return n; },
       setFrozenRows: function () {},
     };
@@ -123,7 +126,7 @@ function makeEnv(opts) {
       getProjectTriggers: function () { return triggers.slice(); },
       deleteTrigger: function (t) { triggers.splice(triggers.indexOf(t), 1); },
       newTrigger: function (fn) { const t = { fn: fn, getHandlerFunction: () => fn, getEventType: () => 'CLOCK' };
-        const b = { timeBased: () => b, everyMinutes: () => b, everyDays: () => b, atHour: () => b, after: () => b, create: () => { triggers.push(t); return t; } }; return b; },
+        const b = { timeBased: () => b, everyMinutes: () => b, everyHours: () => b, everyDays: () => b, atHour: () => b, after: () => b, create: () => { triggers.push(t); return t; } }; return b; },
       EventType: { CLOCK: 'CLOCK' }, getService: function () { return { getUrl: () => '' }; },
     },
     DriveApp: opts.DriveApp || { getFolderById: function (id) { return folder(id, 'Φάκελος ' + id); } },
@@ -511,7 +514,8 @@ function approvalEnv(o) {
     return null;
   }
   const env = makeEnv({ props: Object.assign({ CLIENTS: 'ORE', NOTIFY_TO_ORE: 'center@example.com', FOLDER_ORE: 'ROOT', GITHUB_TOKEN: 'ghp_x',
-    NAME_ORE: 'Learning & Sensory Ωραιόκαστρο' }, o.props || {}), now: o.now || '2026-12-20T12:00:00+02:00', extraFetch: extraFetch, DriveApp: dm.DriveApp });
+    NAME_ORE: 'Learning & Sensory Ωραιόκαστρο' }, o.props || {}), now: o.now || '2026-12-20T12:00:00+02:00', extraFetch: extraFetch, DriveApp: dm.DriveApp,
+    graph: o.graph });
   env.gh = gh; env.puts = puts; env.sent = sent; env.gmail = mails; env.drive = dm;
   return env;
 }
@@ -647,6 +651,231 @@ test('checkApproval: μόνο έλεγχος, καμία αλλαγή', function
   assert.ok(/Gmail: OK/.test(out[1]));
   assert.ok(/\[ORE\].*εγκρίνοντες: 2/.test(out[2]), out[2]);
   assert.strictEqual(env.puts.length + env.sent.length + env.mails.length, 0);
+});
+
+// ------------------------------------------------------------------ στατιστικά, αυτόματες ώρες, μηνιαία αναφορά
+const MEDIA_STATS = {
+  MP1: { reach: 500, views: 900, likes: 40, comments: 5, shares: 3, saved: 7, total_interactions: 55 },
+  MP2: { reach: 1200, views: 3000, likes: 80, comments: 10, shares: 12, saved: 20, total_interactions: 122 },
+  MP3: { reach: 300, views: 400, likes: 15, comments: 2, shares: 1, saved: 2, total_interactions: 20 },
+  MS1: { reach: 100, views: 130, replies: 0, total_interactions: 2 },
+  MS2: { reach: 140, views: 160, replies: 1, total_interactions: 3 },
+};
+function onlineFollowers(days, endDate) {
+  const values = [];
+  for (let i = days; i >= 1; i--) {
+    const end = new Date(new Date(endDate).getTime() - (i - 1) * 864e5);
+    const v = {};
+    for (let h = 0; h < 24; h++) v[String(h)] = 50;
+    v['11'] = 300; v['12'] = 250; v['0'] = 200;
+    values.push({ value: v, end_time: end.toISOString().slice(0, 10) + 'T08:00:00+0000' });
+  }
+  values.push({ value: {}, end_time: 'x' });
+  return { data: [{ name: 'online_followers', period: 'lifetime', values: values }] };
+}
+function insightsGraph(o) {
+  o = o || {};
+  return function (url, opt, resp) {
+    if ((opt && opt.method) && opt.method !== 'get') return null;
+    const u = decodeURIComponent(url), q = u.split('?')[1] || '', path = u.split('?')[0].replace('https://graph.facebook.com/', '');
+    const metric = (q.match(/metric=([^&]*)/) || [])[1] || '';
+    if (path === 'IG1' && /fields=followers_count/.test(q)) return resp(200, { followers_count: o.followers === undefined ? 870 : o.followers, id: 'IG1' });
+    if (path === 'PAGE1' && /fields=followers_count/.test(q)) return resp(200, { followers_count: 930, fan_count: 925, id: 'PAGE1' });
+    if (path === 'IG1/insights') {
+      if (o.accountFail) return resp(400, { error: { message: 'Unsupported', code: 100 } });
+      if (metric === 'online_followers') return resp(200, o.online || onlineFollowers(10, '2026-12-15'));
+      if (metric === 'profile_links_taps') return resp(200, { data: [{ name: 'profile_links_taps', period: 'day', total_value: { value: 12,
+        breakdowns: [{ dimension_keys: ['contact_button_type'], results: [{ dimension_values: ['CALL'], value: 8 }, { dimension_values: ['DIRECTION'], value: 4 }] }] } }] });
+      return resp(200, { data: metric.split(',').map(function (m) { return { name: m, period: 'day', total_value: { value: { reach: 3240, views: 12500, accounts_engaged: 210, total_interactions: 410 }[m] } }; }) });
+    }
+    const mm = path.match(/^(M[PS]\d)\/insights$/);
+    if (mm) {
+      if ((o.mediaErr || {})[mm[1]]) return resp(400, { error: { message: 'Not enough viewers', code: 10 } });
+      const st = MEDIA_STATS[mm[1]] || {};
+      return resp(200, { data: metric.split(',').filter(function (m) { return st[m] !== undefined; }).map(function (m) { return { name: m, period: 'lifetime', values: [{ value: st[m] }] }; }) });
+    }
+    return null;
+  };
+}
+function decHistory(env, extra) {
+  const sh = env.ctx.sheet_('Ιστορικό', ['Χρόνος', 'Πελάτης', 'ID', 'Τύπος', 'Κατάσταση', 'Λεπτομέρειες']);
+  const rows = [
+    ['2026-11-28T22:01:00+02:00', 'ORE', 'ORE-2026-11-28-post', 'IMAGE', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/nov', 'MP9'],
+    ['2026-12-01T10:01:00+02:00', 'ORE', 'ORE-2026-12-01-story', 'STORY', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'MS1', 'MS1'],
+    ['2026-12-01T22:01:00+02:00', 'ORE', 'ORE-2026-12-01-post', 'CAROUSEL', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/a1', 'MP1'],
+    ['2026-12-01T22:02:00+02:00', 'ORE', 'ORE-2026-12-01-post', 'CAROUSEL', 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://www.facebook.com/F1', ''],
+    ['2026-12-04T22:01:00+02:00', 'ORE', 'ORE-2026-12-04-post', 'REEL', 'Instagram: ΣΦΑΛΜΑ 1/3', 'mock', ''],
+    ['2026-12-04T22:11:00+02:00', 'ORE', 'ORE-2026-12-04-post', 'REEL', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/r1', 'MP2'],
+    ['2026-12-04T22:13:00+02:00', 'ORE', 'ORE-2026-12-04-post', 'REEL', 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'VP1', ''],
+    ['2026-12-04T22:21:00+02:00', 'ORE', 'ORE-2026-12-04-reelstory', 'STORY', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'MS2', 'MS2'],
+    ['2026-12-06T22:01:00+02:00', 'ORE', 'ORE-2026-12-06-post', 'IMAGE', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/i1', 'MP3'],
+    ['2026-12-06T22:01:00+02:00', 'KAL', 'KAL-2026-12-06-post', 'IMAGE', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/k1', 'MK1'],
+  ].concat(extra || []);
+  rows.forEach(function (r) {
+    sh.appendRow([new Date(r[0]), r[1], r[2], r[3], r[4], r[5]]);
+    if (r[6] && /^Instagram: ΔΗΜ/.test(r[4])) env.props['done_' + r[2]] = JSON.stringify({ at: r[0], link: r[5], media: r[6] });
+  });
+}
+function insightsEnv(o) {
+  o = o || {};
+  const env = approvalEnv({ now: o.now, graph: insightsGraph(o.graph),
+    gh: Object.assign({ 'clients/ORE/config.json': JSON.stringify({ approver_to: 'center@example.com', approvers: ['center@example.com', 'person@example.com'],
+      times: o.times || 'auto', post_time: '22:00', story_time: '10:00' }) }, o.gh || {}),
+    props: Object.assign({ TOKEN_ORE: 'tokORE', IG_USER_ORE: 'IG1', FB_PAGE_ORE: 'PAGE1', START_AFTER: '2026-11-24T13:00:00+02:00',
+      FOLLOWERS_ORE: JSON.stringify({ month: '2026-11', ig: 854, fb: 922 }),
+      BEST_TIMES_ORE: JSON.stringify({ mode: 'auto', post_time: '21:00', story_time: '10:00', peak_time: '21:00' }) }, o.props || {}) });
+  decHistory(env, o.history);
+  if (o.stories !== false) {
+    const st = env.ctx.sheet_('Stories', ['Δημοσίευση', 'Πελάτης', 'ID', 'Media', 'Εμβέλεια', 'Προβολές', 'Αλληλεπιδράσεις', 'Απαντήσεις', 'Μέτρηση', 'Σημείωση']);
+    st.appendRow([new Date('2026-12-01T10:01:00+02:00'), 'ORE', 'ORE-2026-12-01-story', 'MS1', 100, 130, 2, 0, new Date(), '']);
+    st.appendRow([new Date('2026-12-04T22:21:00+02:00'), 'ORE', 'ORE-2026-12-04-reelstory', 'MS2', 140, 160, 3, 1, new Date(), '']);
+  }
+  return env;
+}
+function graphGets(env, re) { return env.calls.filter(function (c) { return c.url.indexOf('graph.facebook.com') >= 0 && re.test(decodeURIComponent(c.url)); }); }
+
+test('αναφορά: την 1η μετά τις 09:00, ΕΝΑ ξεχωριστό email ΜΟΝΟ στο email του πελάτη, σωστά νούμερα, αρχείο στο repo, ποτέ δεύτερη φορά', function () {
+  const env = insightsEnv({ now: '2027-01-01T09:30:00+02:00' });
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 1);
+  assert.strictEqual(env.sent[0].to, 'center@example.com');
+  assert.ok(!env.sent[0].meta.threadId, 'νέο thread, όχι μέσα στην έγκριση');
+  const raw = env.sent[0].raw, text = mimePart(raw, 'text/plain'), html = mimePart(raw, 'text/html');
+  assert.ok(/Αναφορά Δεκεμβρίου 2026/.test(text), text);
+  assert.ok(text.indexOf('Instagram: 3 posts (1 reel, 1 carousel, 1 εικόνα) και 2 stories') >= 0, text);
+  assert.ok(text.indexOf('Facebook: 2 posts και 0 stories') >= 0, text);
+  assert.ok(text.indexOf('3.240 λογαριασμοί είδαν') >= 0 && text.indexOf('12.500 προβολές') >= 0 && text.indexOf('410 αλληλεπιδράσεις') >= 0, text);
+  assert.ok(text.indexOf('12 πατήματα') >= 0, text);
+  assert.ok(text.indexOf('Instagram 854 → 870 (+16) · Facebook 922 → 930 (+8)') >= 0, text);
+  assert.ok(text.indexOf('1. 4/12 Reel: 1.200 λογαριασμοί, 122 αλληλεπιδράσεις — https://instagram.com/p/r1') >= 0, text);
+  assert.ok(text.indexOf('2 stories, κατά μέσο όρο 120 λογαριασμοί') >= 0, text);
+  assert.ok(text.indexOf('posts βγαίνουν στις 21:00 και τα stories στις 10:00') >= 0, text);
+  assert.ok(text.indexOf('τελευταίες 30 ημέρες') >= 0, 'Δεκέμβριος = 31 ημέρες');
+  assert.ok(text.indexOf('KAL') < 0 && text.indexOf('nov') < 0, 'μόνο ο πελάτης και ο μήνας');
+  assert.ok(/<a href="https:\/\/instagram.com\/p\/r1">/.test(html), html);
+  const rep = JSON.parse(env.gh['clients/ORE/reports/2026-12.json']);
+  assert.strictEqual(rep.counts.posts, 3); assert.strictEqual(rep.counts.stories, 2); assert.strictEqual(rep.errors.length, 0);
+  assert.strictEqual(env.props.REPORT_SENT_ORE, '2026-12');
+  assert.strictEqual(JSON.parse(env.props.FOLLOWERS_ORE).ig, 870);
+  assert.ok(!env.props.REPORT_SENDING_ORE);
+  assert.strictEqual(env.mails.length, 0, 'κανένα email συστήματος');
+  env.nowMs = new Date('2027-01-01T15:30:00+02:00').getTime();
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 1, 'ποτέ δεύτερη αναφορά');
+});
+
+test('αναφορά: όχι πριν τις 09:00, όχι για μήνα πριν από το START_AFTER, όχι με REPORT_<K>=false', function () {
+  let env = insightsEnv({ now: '2027-01-01T08:10:00+02:00' });
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 0);
+  env = insightsEnv({ now: '2026-12-01T10:00:00+02:00' });
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 0, 'ο Νοέμβριος δεν καλύφθηκε ολόκληρος');
+  assert.ok(/^2026-11/.test(env.props.REPORT_SENT_ORE));
+  env.nowMs = new Date('2027-01-01T10:00:00+02:00').getTime();
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 1, 'ο Δεκέμβριος κανονικά');
+  env = insightsEnv({ now: '2027-01-01T10:00:00+02:00', props: { REPORT_ORE: 'false' } });
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length + env.mails.length, 0);
+});
+
+test('αναφορά που κόπηκε στη μέση ΔΕΝ ξαναστέλνεται· ειδοποίηση μόνο στο okpublisher', function () {
+  const env = insightsEnv({ now: '2027-01-01T10:00:00+02:00', props: { REPORT_SENDING_ORE: '2026-12' } });
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 0);
+  assert.deepStrictEqual(env.mails.map(function (m) { return m.to; }), ['system@example.com']);
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length + env.mails.length - 1, 0);
+});
+
+test('αναφορά: αν λείψουν τα σύνολα λογαριασμού, φεύγει χωρίς αυτά· τα σφάλματα μόνο στο okpublisher', function () {
+  const env = insightsEnv({ now: '2027-01-02T12:00:00+02:00', graph: { accountFail: true } });
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.sent.length, 1);
+  const text = mimePart(env.sent[0].raw, 'text/plain');
+  assert.ok(text.indexOf('λογαριασμοί είδαν') < 0 && text.indexOf('Graph') < 0 && text.indexOf('Unsupported') < 0, text);
+  assert.ok(text.indexOf('197 αλληλεπιδράσεις στα posts') >= 0, text);
+  assert.deepStrictEqual(env.mails.map(function (m) { return m.to; }), ['system@example.com']);
+});
+
+test('αναφορά με ώρες του πελάτη (manual): λέει τις ώρες του, χωρίς αλλαγή', function () {
+  const env = insightsEnv({ now: '2027-01-01T10:00:00+02:00', times: 'manual' });
+  env.ctx.insightsCycle();
+  const text = mimePart(env.sent[0].raw, 'text/plain');
+  assert.ok(text.indexOf('στις ώρες που έχουν οριστεί (posts 22:00, stories 10:00)') >= 0, text);
+});
+
+test('αυτόματες ώρες: στις 15, από online_followers σε ώρα Ελλάδας, στο repo· καμία αποστολή, μία φορά τον μήνα', function () {
+  const env = insightsEnv({ now: '2026-12-15T07:00:00+02:00', stories: false });
+  env.ctx.insightsCycle();
+  const bt = JSON.parse(env.gh['clients/ORE/best_times.json']);
+  assert.strictEqual(bt.mode, 'auto');
+  assert.strictEqual(bt.post_time, '21:00');
+  assert.strictEqual(bt.story_time, '10:00');
+  assert.strictEqual(bt.peak_time, '21:00');
+  assert.strictEqual(bt.days, 10);
+  assert.strictEqual(env.props.BEST_TIMES_AT_ORE, '2026-12');
+  assert.strictEqual(env.sent.length + env.mails.length, 0);
+  const n = env.puts.filter(function (p) { return p.path === 'clients/ORE/best_times.json'; }).length;
+  env.nowMs += 6 * 36e5;
+  env.ctx.insightsCycle();
+  assert.strictEqual(env.puts.filter(function (p) { return p.path === 'clients/ORE/best_times.json'; }).length, n);
+});
+
+test('αυτόματες ώρες: κάτω από 100 ακόλουθους → προεπιλογές, χωρίς online_followers· πριν τις 15 τίποτα', function () {
+  let env = insightsEnv({ now: '2026-12-10T07:00:00+02:00', stories: false });
+  env.ctx.insightsCycle();
+  assert.ok(!env.gh['clients/ORE/best_times.json']);
+  env = insightsEnv({ now: '2026-12-16T07:00:00+02:00', stories: false, graph: { followers: 60 } });
+  env.ctx.insightsCycle();
+  const bt = JSON.parse(env.gh['clients/ORE/best_times.json']);
+  assert.strictEqual(bt.mode, 'default');
+  assert.ok(/100/.test(bt.reason));
+  assert.strictEqual(graphGets(env, /online_followers/).length, 0);
+});
+
+test('stories: στατιστικά μέσα στο 24ωρο στο φύλλο «Stories»· <5 προβολές σημειώνεται· η καλή μέτρηση δεν χάνεται', function () {
+  const gopt = { mediaErr: { MS3: true } };
+  const env = insightsEnv({ now: '2026-12-02T09:00:00+02:00', stories: false,
+    history: [['2026-12-02T08:01:00+02:00', 'ORE', 'ORE-2026-12-02-story', 'STORY', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'MS3', 'MS3']],
+    graph: gopt });
+  env.ctx.insightsCycle();
+  const rows = env.sheets.Stories.rows.slice(1);
+  assert.strictEqual(rows.length, 2);
+  assert.strictEqual(rows[0][2], 'ORE-2026-12-01-story'); assert.strictEqual(rows[0][4], 100);
+  assert.strictEqual(rows[1][9], 'λιγότερες από 5 προβολές');
+  // 3 ώρες μετά: το πρώτο story είναι ακόμα στο παράθυρο αλλά το Instagram δεν δίνει πια στοιχεία → μένει η μέτρηση 100
+  gopt.mediaErr.MS1 = true;
+  env.nowMs += 3 * 36e5;
+  env.ctx.insightsCycle();
+  assert.ok(graphGets(env, /MS1\/insights/).length >= 2, 'ξαναζητήθηκε');
+  assert.strictEqual(env.sheets.Stories.rows[1][4], 100);
+  assert.strictEqual(env.sent.length, 0);
+});
+
+test('previewReport / previewCurrentMonth: η αναφορά μόνο στο repo, κανένα email', function () {
+  let env = insightsEnv({ now: '2027-01-01T07:00:00+02:00' });
+  env.ctx.previewReport();
+  assert.strictEqual(env.sent.length + env.mails.length, 0);
+  let p = JSON.parse(env.gh['clients/ORE/reports/2026-12.preview.json']);
+  assert.ok(/Αναφορά Δεκεμβρίου 2026/.test(p.subject));
+  assert.ok(!env.props.REPORT_SENT_ORE && !env.props.REPORT_SENDING_ORE);
+  env = insightsEnv({ now: '2026-12-03T12:00:00+02:00' });
+  env.ctx.previewCurrentMonth();
+  assert.strictEqual(env.sent.length + env.mails.length, 0);
+  p = JSON.parse(env.gh['clients/ORE/reports/2026-12.preview.json']);
+  assert.strictEqual(p.data.counts.posts, 1, 'μόνο ό,τι βγήκε έως τώρα');
+  assert.ok(p.text.indexOf('Instagram: 1 post (1 carousel) και 1 story') >= 0, p.text);
+});
+
+test('checkInsights: μόνο έλεγχος, καμία αλλαγή', function () {
+  const env = insightsEnv({ now: '2026-12-20T12:00:00+02:00' });
+  const before = JSON.stringify(env.props);
+  const out = env.ctx.checkInsights();
+  assert.ok(/\[ORE\].*ακόλουθοι IG: 870.*insights: OK.*online_followers: OK/.test(out[0]), out[0]);
+  assert.strictEqual(env.puts.length + env.sent.length + env.mails.length, 0);
+  assert.strictEqual(JSON.stringify(env.props), before);
 });
 
 // Σύγκριση με τον παλιό LS Publisher: για την ίδια ουρά, οι ίδιες ακριβώς κλήσεις στο Meta (εκτός από το token).
