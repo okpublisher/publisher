@@ -4,9 +4,12 @@
 
 ```
 queue.json          η ουρά (μόνο εγκεκριμένα)
+media/<ΕΕΕΕ-ΜΜ>/<K>/ τα αρχεία της ουράς (σβήνονται 3 μέρες μετά τη δημοσίευση)
 PRIVACY.md          πολιτική απορρήτου της εφαρμογής Meta «OK Publisher»
-publisher/          Apps Script (Code.gs, Tidy.gs, Transfer.gs, Upload.gs, appsscript.json)
+publisher/          Apps Script (Code.gs, Approval.gs, Tidy.gs, Transfer.gs, Upload.gs, appsscript.json)
 publisher/test/     δοκιμές χωρίς internet: node publisher/test/run_tests.js
+studio/             παραγωγή (Python): γραφικά, θόλωμα, reels, έτοιμα reels, PDF έγκρισης, ουρά — βλ. studio/RUNBOOK.md
+studio/tests/       δοκιμές: python3 -m unittest discover -s studio/tests
 ```
 
 Ρυθμίσεις πελατών, πακέτα και κατάσταση: στο ιδιωτικό repo `okpublisher/publisher-work`. Σε αυτό το δημόσιο repo δεν μπαίνουν ποτέ emails, ονόματα προσώπων, IDs Drive ή κείμενα email (εξαίρεση: η πολιτική απορρήτου).
@@ -26,6 +29,8 @@ publisher/test/     δοκιμές χωρίς internet: node publisher/test/run_
 | `PAUSED_<K>`, `FB_ENABLED_<K>`, `REEL_STORY_<K>`, `TRIAL_REELS_<K>` | παύση, μόνο Instagram, story από reel, δοκιμαστικά reels |
 
 Γενικές: `START_AFTER` (ό,τι είναι πριν αγνοείται — **υποχρεωτικό σε κάθε μετάβαση**), `PAUSED`, `SYSTEM_NOTIFY_TO` (σφάλματα του ίδιου του συστήματος· κενό = ο λογαριασμός του okpublisher), `GRAPH_VERSION`.
+
+Έγκριση (`Approval.gs`): `GITHUB_TOKEN` (fine-grained, μόνο `okpublisher/publisher-work`, Contents: Read and write — το βάζεις εσύ), προαιρετικά `APPROVERS_<K>` (επιπλέον διευθύνσεις που μετράνε ως έγκριση· οι βασικές είναι στο `config.json` του πελάτη), `TEST_CLIENTS` (π.χ. `TST`: μόνο έγκριση, ποτέ δημοσίευση), `WORK_REPO`.
 
 Ειδοποιήσεις: ό,τι αφορά έναν πελάτη (παράλειψη, αποτυχία, τέλος ουράς, διπλότυπα) πάει **μόνο** στο `NOTIFY_TO_<K>` του. Σφάλματα ρύθμισης/ουράς πάνε στο inbox του okpublisher. Ποτέ σε προσωπικά email.
 
@@ -58,6 +63,14 @@ publisher/test/     δοκιμές χωρίς internet: node publisher/test/run_
 1. `START_AFTER` = η ώρα της αλλαγής (π.χ. `2026-11-24T15:00:00+02:00`).
 2. `setup` (έλεγχος κάθε 10′) και `setupDailyDedupe` (διπλότυπα + κόψιμο μεγάλων βίντεο κάθε βράδυ).
 3. Προαιρετικά `setupClientFolders` (υποφάκελος «REELS ΕΤΟΙΜΑ» σε κάθε πελάτη) και συντόμευση iPhone (`Upload.gs`).
+
+### 6. Έγκριση μέσω του Gmail του okpublisher (μία φορά)
+1. github.com → Settings → Developer settings → Fine-grained tokens → Generate: Resource owner **okpublisher**, Repository access **Only select: publisher-work**, Permissions → Contents: **Read and write**, λήξη 1 χρόνος → Ιδιότητα `GITHUB_TOKEN`.
+2. Επικόλληση `publisher/Approval.gs` (νέο αρχείο `Approval`) και του νέου `appsscript.json` (προστέθηκε άδεια Gmail).
+3. `checkApproval` → ζητάει νέα άδεια (Gmail). Η Google γράφει «δεν έχει επαληθευτεί»: Advanced → Μετάβαση στο okpublisher. Πρέπει να δείξει «GitHub: OK … (γράφει)», «Gmail: OK» και για κάθε πελάτη email, εγκρίνοντες, φάκελο.
+4. `setupApproval` (κύκλος κάθε 15′: εκτελεί τα αιτήματα του Claude και γράφει τις απαντήσεις των πελατών στο repo).
+
+Πώς δουλεύει: ο Claude γράφει αιτήματα στο `publisher-work/clients/<K>/outbox/` (email πακέτου, απάντηση στο thread, μετακίνηση πηγών, ειδοποίηση). Το Apps Script τα εκτελεί από τον λογαριασμό του okpublisher — **κάθε email μόνο στο `NOTIFY_TO_<K>`**, Drive μόνο μέσα στον φάκελο του πελάτη, τίποτα δεν σβήνεται — και γράφει το αποτέλεσμα δίπλα (`<id>.result.json`). Κάθε email από τις διευθύνσεις έγκρισης γράφεται στο `clients/<K>/inbox/`.
 
 ## Καθημερινά
 - Καρτέλα **Ουρά** στο Sheet: πρόγραμμα όλων των πελατών με κατάσταση και link. Καρτέλα **Ιστορικό**: κάθε δημοσίευση ή σφάλμα.

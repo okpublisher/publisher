@@ -14,7 +14,7 @@ function fmt(d, tz, f) {
   new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' })
     .formatToParts(d).forEach(function (p) { parts[p.type] = p.value; });
   const pad = function (s) { return ('0' + s).slice(-2); };
-  return f.replace('yyyy', parts.year).replace('MM', pad(parts.month)).replace('HH', pad(parts.hour === '24' ? '0' : parts.hour))
+  return f.replace('yyyy', parts.year).replace('MM', pad(parts.month)).replace('dd', pad(parts.day)).replace('HH', pad(parts.hour === '24' ? '0' : parts.hour))
     .replace('mm', parts.minute).replace(/\bd\b/, String(Number(parts.day))).replace(/\bM\b/, String(Number(parts.month)));
 }
 
@@ -31,7 +31,9 @@ function makeEnv(opts) {
   };
   function resp(code, body, headers) {
     const text = typeof body === 'string' ? body : JSON.stringify(body);
-    return { getResponseCode: () => code, getContentText: () => text, getAllHeaders: () => headers || {}, getContent: () => Buffer.from(text) };
+    const buf = Buffer.isBuffer(body) ? body : Buffer.from(text);
+    return { getResponseCode: () => code, getContentText: () => (Buffer.isBuffer(body) ? body.toString('utf8') : text), getAllHeaders: () => headers || {},
+      getContent: () => Array.from(buf), getBlob: function () { const b = { bytes: buf, name: '', setName: function (n) { b.name = n; return b; } }; return b; } };
   }
   function fetch(url, o) {
     o = o || {};
@@ -55,6 +57,7 @@ function makeEnv(opts) {
       return resp(200, {});
     }
     if (url.indexOf('https://rupload.facebook.com') === 0) return resp(200, { success: true });
+    if (opts.extraFetch) { const r = opts.extraFetch(url, o, resp); if (r) return r; }
     if (opts.driveTree && url.indexOf('https://www.googleapis.com/drive/v3/files?') === 0) {
       const m = decodeURIComponent(url).match(/'([^']+)' in parents/);
       return resp(200, { files: opts.driveTree[m[1]] || [] });
@@ -100,11 +103,15 @@ function makeEnv(opts) {
     } },
     UrlFetchApp: { fetch: fetch, fetchAll: function (reqs) { return reqs.map(function (r) { return fetch(r.url, r); }); } },
     MailApp: { sendEmail: function (a, b, c) { mails.push(typeof a === 'object' ? a : { to: a, subject: b, body: c }); } },
-    LockService: { getScriptLock: function () { return { tryLock: () => true, releaseLock: () => {} }; } },
+    LockService: { getScriptLock: function () { return { tryLock: () => true, releaseLock: () => {} }; },
+      getUserLock: function () { return { tryLock: () => true, releaseLock: () => {} }; } },
     Utilities: {
       formatDate: fmt, sleep: function () { env.nowMs += 1000; }, getUuid: function () { return 'abcd-ef01-2345-6789-abcdefabcdef'; },
       computeDigest: function () { return [1, 2, 3]; }, DigestAlgorithm: { MD5: 'md5' },
-      newBlob: function (b, m, n) { return { bytes: b, mime: m, name: n }; },
+      newBlob: function (b, m, n) { return { bytes: b, mime: m, name: n, getDataAsString: function () { return Buffer.from(b).toString('utf8'); } }; },
+      base64Encode: function (x, cs) { return (typeof x === 'string' ? Buffer.from(x, 'utf8') : Buffer.from(x)).toString('base64'); },
+      base64Decode: function (s) { return Array.from(Buffer.from(s, 'base64')); },
+      Charset: { UTF_8: 'UTF-8' },
     },
     SpreadsheetApp: { getActive: function () { return {
       getSheetByName: function (n) { return sheets[n] || null; },
@@ -406,6 +413,240 @@ test('dryRunReelFb: ανεβαίνει μόνο ως πρόχειρο (DRAFT) κ
   assert.strictEqual(env.mails.length, 0);
   const up = env.calls.filter(function (c) { return /rupload/.test(c.url); })[0];
   assert.strictEqual(up.headers.file_url, M + 'r.mp4');
+});
+
+
+// ------------------------------------------------------------------ έγκριση (Approval.gs)
+const GH_C = 'https://api.github.com/repos/okpublisher/publisher-work/contents/';
+function iter(a) { let i = 0; return { hasNext: () => i < a.length, next: () => a[i++] }; }
+function driveMock(seed) {
+  const nodes = {}; let n = 0;
+  function mk(id, name, parent, folder) { nodes[id] = { id: id, name: name, parents: parent ? [parent] : [], folder: folder }; return api(id); }
+  function kids(id, folder) { return Object.keys(nodes).map(function (k) { return nodes[k]; }).filter(function (x) { return x.parents.indexOf(id) >= 0 && x.folder === folder; }); }
+  function api(id) {
+    const x = nodes[id];
+    if (!x) throw new Error('Δεν υπάρχει: ' + id);
+    const base = { getId: () => x.id, getName: () => x.name, getUrl: () => 'https://drive.example/' + x.id };
+    if (x.folder) {
+      return Object.assign(base, {
+        getFoldersByName: function (nm) { return iter(kids(id, true).filter(function (c) { return c.name === nm; }).map(function (c) { return api(c.id); })); },
+        createFolder: function (nm) { return mk('F' + (++n), nm, id, true); },
+        createFile: function (blob) { return mk('D' + (++n), blob.name, id, false); },
+        getFiles: function () { return iter(kids(id, false).map(function (c) { return api(c.id); })); },
+      });
+    }
+    return Object.assign(base, {
+      getParents: function () { return iter(x.parents.map(api)); },
+      moveTo: function (f) { x.parents = [f.getId()]; return api(id); },
+    });
+  }
+  (seed || []).forEach(function (s) { mk(s[0], s[1], s[2], s[3]); });
+  return { nodes: nodes, path: function (id) { const out = []; let x = nodes[id]; while (x) { out.unshift(x.name); x = nodes[x.parents[0]]; } return out.join('/'); },
+    DriveApp: { getFolderById: api, getFileById: api } };
+}
+function msg(id, thread, from, subject, text, t, extra) {
+  return Object.assign({ id: id, threadId: thread, internalDate: String(new Date(t).getTime()), labelIds: ['INBOX'],
+    payload: { mimeType: 'multipart/alternative', headers: [{ name: 'From', value: from }, { name: 'Subject', value: subject },
+      { name: 'Message-ID', value: '<' + id + '@mail>' }],
+    parts: [{ mimeType: 'text/plain', body: { data: Buffer.from(text).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') } }] } }, extra || {});
+}
+function approvalEnv(o) {
+  o = o || {};
+  const gh = Object.assign({}, o.gh || {}), puts = [], sent = [];
+  const mails = Object.assign({}, o.mails || {});
+  const dm = driveMock(o.drive || [['ROOT', 'ΥΛΙΚΟ', null, true]]);
+  let sn = 0;
+  function extraFetch(url, opt, resp) {
+    const method = (opt && opt.method) || 'get', h = (opt && opt.headers) || {};
+    if (url === 'https://api.github.com/repos/okpublisher/publisher-work') return resp(200, { full_name: 'okpublisher/publisher-work', permissions: { push: true } });
+    if (url.indexOf(GH_C) === 0) {
+      const path = decodeURIComponent(url.slice(GH_C.length).replace(/\?ref=main$/, ''));
+      if (method === 'put') {
+        const b = JSON.parse(opt.payload);
+        if (gh[path] !== undefined && !b.sha) return resp(422, { message: 'sha wasn\'t supplied' });
+        gh[path] = Buffer.from(b.content, 'base64').toString('utf8'); puts.push({ path: path, message: b.message });
+        return resp(201, { content: { path: path } });
+      }
+      if (gh[path] !== undefined) {
+        if (h.Accept === 'application/vnd.github.raw') return resp(200, Buffer.isBuffer(gh[path]) ? gh[path] : (typeof gh[path] === 'string' ? gh[path] : JSON.stringify(gh[path])));
+        return resp(200, { sha: 'sha-' + path, path: path });
+      }
+      const kids = {};
+      Object.keys(gh).forEach(function (k) { if (k.indexOf(path + '/') === 0) { const rest = k.slice(path.length + 1); const nm = rest.split('/')[0]; kids[nm] = rest.indexOf('/') >= 0 ? 'dir' : 'file'; } });
+      if (Object.keys(kids).length) return resp(200, Object.keys(kids).map(function (nm) { return { name: nm, path: path + '/' + nm, type: kids[nm] }; }));
+      return resp(404, { message: 'Not Found' });
+    }
+    if (url.indexOf('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send') === 0) {
+      const body = String(opt.payload);
+      const meta = JSON.parse(body.split('Content-Type: application/json; charset=UTF-8\r\n\r\n')[1].split('\r\n')[0]);
+      const raw = body.split('Content-Type: message/rfc822\r\n\r\n')[1];
+      const id = 'S' + (++sn), th = meta.threadId || ('T' + id);
+      const to = (raw.match(/^To: (.*)$/m) || [])[1];
+      sent.push({ id: id, threadId: th, raw: raw, to: to, meta: meta });
+      mails[id] = msg(id, th, 'OK Publisher <okp@example.com>', 'x', 'x', env.nowMs, { labelIds: ['SENT'] });
+      return resp(200, { id: id, threadId: th });
+    }
+    if (url.indexOf('https://gmail.googleapis.com/gmail/v1/users/me') === 0) {
+      const p = url.slice('https://gmail.googleapis.com/gmail/v1/users/me'.length);
+      if (p === '/profile') return resp(200, { emailAddress: 'okp@example.com' });
+      let m = p.match(/^\/messages\?maxResults=\d+&q=(.*)$/);
+      if (m) {
+        const q = decodeURIComponent(m[1]);
+        const addrs = (q.match(/from:\(([^)]*)\)/) || [])[1].split(' OR ');
+        const ids = Object.keys(mails).filter(function (k) { const f = (mails[k].payload.headers.find(function (x) { return x.name === 'From'; }) || {}).value || '';
+          return addrs.some(function (a) { return f.toLowerCase().indexOf(a) >= 0; }); })
+          .sort(function (a, b) { return Number(mails[b].internalDate) - Number(mails[a].internalDate); });
+        return resp(200, { messages: ids.map(function (i) { return { id: i }; }) });
+      }
+      m = p.match(/^\/messages\/([^?]+)/);
+      if (m) return mails[m[1]] ? resp(200, mails[m[1]]) : resp(404, {});
+      m = p.match(/^\/threads\/([^?]+)/);
+      if (m) {
+        const th = decodeURIComponent(m[1]);
+        const ms = Object.keys(mails).map(function (k) { return mails[k]; }).filter(function (x) { return x.threadId === th; })
+          .sort(function (a, b) { return Number(a.internalDate) - Number(b.internalDate); });
+        return ms.length ? resp(200, { id: th, messages: ms }) : resp(404, {});
+      }
+    }
+    return null;
+  }
+  const env = makeEnv({ props: Object.assign({ CLIENTS: 'ORE', NOTIFY_TO_ORE: 'center@example.com', FOLDER_ORE: 'ROOT', GITHUB_TOKEN: 'ghp_x',
+    NAME_ORE: 'Learning & Sensory Ωραιόκαστρο' }, o.props || {}), now: o.now || '2026-12-20T12:00:00+02:00', extraFetch: extraFetch, DriveApp: dm.DriveApp });
+  env.gh = gh; env.puts = puts; env.sent = sent; env.gmail = mails; env.drive = dm;
+  return env;
+}
+const ORE_CFG = JSON.stringify({ approver_to: 'center@example.com', approvers: ['center@example.com', 'person@example.com'] });
+function result(env, K, id) { return env.gh['clients/' + K + '/outbox/' + id + '.result.json'] && JSON.parse(env.gh['clients/' + K + '/outbox/' + id + '.result.json']); }
+function mimePart(raw, type) {
+  const m = raw.split('Content-Type: ' + type + '; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1];
+  return m ? Buffer.from(m.split('\r\n--')[0].replace(/\r\n/g, ''), 'base64').toString('utf8') : '';
+}
+
+test('έγκριση: email πακέτου ΜΟΝΟ στο email του πελάτη, με PDF, ανέβασμα στο ΕΓΚΡΙΣΗ/<μήνας>, αποτέλεσμα στο repo, ποτέ δεύτερη αποστολή', function () {
+  const env = approvalEnv({ gh: {
+    'clients/ORE/config.json': ORE_CFG,
+    'clients/ORE/batches/2027-01/preview/1_Posts_και_Reels.pdf': Buffer.from('%PDF-1.4 δοκιμή'),
+    'clients/ORE/outbox/2027-01-01-send.json': JSON.stringify({ type: 'email', to: 'someone-else@example.com',
+      subject: 'Learning & Sensory — Πρόγραμμα social Ιανουάριος 2027 για έγκριση', html: '<p>Φάκελος: <a href="{{DRIVE_FOLDER_URL}}">εδώ</a></p>',
+      attach: ['clients/ORE/batches/2027-01/preview/1_Posts_και_Reels.pdf'], drive_folder: 'ΕΓΚΡΙΣΗ/2027-01',
+      drive_upload: [{ path: 'clients/ORE/batches/2027-01/preview/1_Posts_και_Reels.pdf', name: '1_Posts_και_Reels.pdf' }] }),
+  } });
+  env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 1);
+  assert.strictEqual(env.sent[0].to, 'center@example.com', 'μόνο στο NOTIFY_TO, όχι σε ό,τι γράφει το αίτημα');
+  assert.ok(/Content-Disposition: attachment/.test(env.sent[0].raw));
+  assert.ok(env.sent[0].raw.indexOf(Buffer.from('%PDF-1.4 δοκιμή').toString('base64').slice(0, 20)) > 0);
+  assert.ok(/^Subject: =\?UTF-8\?B\?/m.test(env.sent[0].raw));
+  const r = result(env, 'ORE', '2027-01-01-send');
+  assert.ok(r && r.ok, JSON.stringify(r));
+  assert.strictEqual(r.thread_id, env.sent[0].threadId);
+  assert.strictEqual(env.drive.path(r.drive_folder_id), 'ΥΛΙΚΟ/ΕΓΚΡΙΣΗ/2027-01');
+  assert.ok(mimePart(env.sent[0].raw, 'text/html').indexOf('https://drive.example/' + r.drive_folder_id) > 0, 'σύνδεσμος φακέλου στο email');
+  assert.ok(r.drive_files['1_Posts_και_Reels.pdf']);
+  env.nowMs += 15 * 60000; env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 1, 'δεύτερος κύκλος: τίποτα ξανά');
+  assert.ok(!Object.keys(env.props).some(function (k) { return /^OUTBOX_/.test(k); }));
+});
+
+test('έγκριση: απάντηση μέσα στο thread πάει ΜΟΝΟ στο κέντρο, ακόμα κι αν απάντησε το προσωπικό email', function () {
+  const mails = {
+    m1: msg('m1', 'T1', 'OK Publisher <okp@example.com>', 'Πρόγραμμα Ιανουάριος 2027', 'πακέτο', '2026-12-20T10:00:00+02:00', { labelIds: ['SENT'] }),
+    m2: msg('m2', 'T1', 'Λ. <person@example.com>', 'Re: Πρόγραμμα Ιανουάριος 2027', '#3 άλλη φωτογραφία', '2026-12-20T11:00:00+02:00'),
+  };
+  const env = approvalEnv({ mails: mails, gh: { 'clients/ORE/config.json': ORE_CFG,
+    'clients/ORE/outbox/2027-01-02-reply.json': JSON.stringify({ type: 'email', thread_id: 'T1', in_reply_to: '<m2@mail>', text: 'Έγινε η αλλαγή στο #3.' }) },
+  props: { MAILSEEN_ORE: JSON.stringify(['m2']) } });
+  env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 1);
+  const s = env.sent[0];
+  assert.strictEqual(s.to, 'center@example.com');
+  assert.strictEqual(s.meta.threadId, 'T1');
+  assert.ok(/^In-Reply-To: <m2@mail>$/m.test(s.raw));
+  assert.ok(s.raw.indexOf('person@example.com') < 0, 'ποτέ στο προσωπικό');
+  assert.strictEqual(mimePart(s.raw, 'text/plain'), 'Έγινε η αλλαγή στο #3.');
+  assert.ok(/=\?UTF-8\?B\?/.test(s.raw.match(/^Subject: (.*)$/m)[1]));
+  assert.strictEqual(Buffer.from(s.raw.match(/^Subject: =\?UTF-8\?B\?(.*)\?=$/m)[1], 'base64').toString('utf8'), 'Re: Πρόγραμμα Ιανουάριος 2027');
+});
+
+test('έγκριση: απαντήσεις μόνο από τις διευθύνσεις έγκρισης γράφονται στο inbox (χωρίς το παλιό κείμενο), μία φορά', function () {
+  const mails = {
+    a1: msg('a1', 'T1', 'Κέντρο <center@example.com>', 'Re: Πρόγραμμα', 'ΟΚ, όλα τέλεια 👍\n\nΣτις Κυρ 20 Δεκ 2026 στις 10:00 π.μ., ο χρήστης OK Publisher\n<okp@example.com> έγραψε:\n> πακέτο', '2026-12-20T11:30:00+02:00'),
+    a2: msg('a2', 'T9', 'Άγνωστος <spam@example.com>', 'Προσφορά', 'κάτι', '2026-12-20T11:40:00+02:00'),
+    a3: msg('a3', 'T1', 'person@example.com', 'Re: Πρόγραμμα', 'On Sun, Dec 20, 2026 at 10:00 AM OK Publisher <okp@example.com> wrote:\n> x', '2026-12-20T11:50:00+02:00'),
+  };
+  const env = approvalEnv({ mails: mails, gh: { 'clients/ORE/config.json': ORE_CFG } });
+  env.ctx.approvalCycle();
+  const files = Object.keys(env.gh).filter(function (k) { return /^clients\/ORE\/inbox\//.test(k); }).sort();
+  assert.strictEqual(files.length, 2, files.join(','));
+  const r1 = JSON.parse(env.gh[files[0]]);
+  assert.strictEqual(r1.from, 'center@example.com');
+  assert.strictEqual(r1.text, 'ΟΚ, όλα τέλεια 👍');
+  assert.strictEqual(r1.thread_id, 'T1');
+  assert.ok(/^clients\/ORE\/inbox\/2026-12-20T1130_a1\.json$/.test(files[0]), files[0]);
+  assert.strictEqual(JSON.parse(env.gh[files[1]]).text, '');
+  env.nowMs += 15 * 60000; env.ctx.approvalCycle();
+  assert.strictEqual(Object.keys(env.gh).filter(function (k) { return /^clients\/ORE\/inbox\//.test(k); }).length, 2, 'όχι δεύτερη φορά');
+});
+
+test('έγκριση: μετακίνηση πηγών μόνο από τον φάκελο υλικού / REELS ΕΤΟΙΜΑ, μόνο σε ΧΡΗΣΙΜΟΠΟΙΗΜΕΝΑ/ΑΠΟΡΡΙΦΘΗΚΑΝ, χωρίς σβήσιμο', function () {
+  const env = approvalEnv({ drive: [['ROOT', 'ΥΛΙΚΟ', null, true], ['RR', 'REELS ΕΤΟΙΜΑ', 'ROOT', true], ['OTHER', 'Άλλος', null, true],
+    ['f1', 'IMG_1.jpg', 'ROOT', false], ['f2', 'reel.mp4', 'RR', false], ['f3', 'ξένο.jpg', 'OTHER', false]],
+  gh: { 'clients/ORE/outbox/2027-01-03-move.json': JSON.stringify({ type: 'move_sources', to: 'ΧΡΗΣΙΜΟΠΟΙΗΜΕΝΑ/2027-01', files: [{ id: 'f1' }, { id: 'f2' }, { id: 'f3' }] }),
+    'clients/ORE/outbox/2027-01-04-move.json': JSON.stringify({ type: 'move_sources', to: 'ΕΓΚΡΙΣΗ/x', files: [{ id: 'f1' }] }) } });
+  env.ctx.approvalCycle();
+  const r = result(env, 'ORE', '2027-01-03-move');
+  assert.deepStrictEqual(r.moved, ['f1', 'f2']);
+  assert.strictEqual(r.errors.length, 1);
+  assert.ok(!r.ok);
+  assert.strictEqual(env.drive.path('f1'), 'ΥΛΙΚΟ/ΧΡΗΣΙΜΟΠΟΙΗΜΕΝΑ/2027-01/IMG_1.jpg');
+  assert.strictEqual(env.drive.path('f3'), 'Άλλος/ξένο.jpg');
+  const r2 = result(env, 'ORE', '2027-01-04-move');
+  assert.ok(!r2.ok && /Μη επιτρεπτός φάκελος/.test(r2.error));
+  assert.ok(env.mails.some(function (m) { return m.to === 'system@example.com'; }), 'σφάλματα → inbox του okpublisher');
+  assert.ok(!env.mails.some(function (m) { return m.to === 'center@example.com'; }));
+});
+
+test('έγκριση: αρχεία άλλου πελάτη, φάκελοι έξω από τον πελάτη και άγνωστα αιτήματα απορρίπτονται χωρίς αποστολή', function () {
+  const env = approvalEnv({ gh: { 'clients/KAL/secret.pdf': 'x',
+    'clients/ORE/outbox/a.json': JSON.stringify({ type: 'email', subject: 's', text: 't', attach: ['clients/KAL/secret.pdf'] }),
+    'clients/ORE/outbox/b.json': JSON.stringify({ type: 'email', subject: 's', text: 't', drive_folder: '../ΕΓΚΡΙΣΗ' }),
+    'clients/ORE/outbox/c.json': JSON.stringify({ type: 'delete_everything' }),
+    'clients/ORE/outbox/d.json': JSON.stringify({ type: 'email', subject: 's', text: 't', attach: ['clients/ORE/../KAL/secret.pdf'] }),
+    'clients/ORE/outbox/e.json': 'όχι json' } });
+  env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 0);
+  ['a', 'b', 'c', 'd', 'e'].forEach(function (id) { const r = result(env, 'ORE', id); assert.ok(r && !r.ok && r.error, id + ': ' + JSON.stringify(r)); });
+});
+
+test('έγκριση: αίτημα που κόπηκε στη μέση ΔΕΝ ξανατρέχει (όχι δεύτερο email)· αναφορά στο okpublisher', function () {
+  const env = approvalEnv({ gh: { 'clients/ORE/outbox/x.json': JSON.stringify({ type: 'email', subject: 's', text: 't' }) },
+    props: { OUTBOX_ORE_x: JSON.stringify({ id: 'x', started_at: '2026-12-20T11:50:00Z' }) } });
+  env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 0);
+  const r = result(env, 'ORE', 'x');
+  assert.strictEqual(r.status, 'unknown');
+  assert.ok(env.mails.some(function (m) { return m.to === 'system@example.com' && /έγκριση/.test(m.subject); }));
+  assert.ok(!env.props.OUTBOX_ORE_x);
+});
+
+test('έγκριση: notify πάει μόνο στο email του πελάτη· TEST_CLIENTS μόνο στην έγκριση, ποτέ στη δημοσίευση', function () {
+  const env = approvalEnv({ props: { TEST_CLIENTS: 'TST', NOTIFY_TO_TST: 'okp@example.com', FOLDER_TST: 'ROOT' },
+    gh: { 'clients/TST/outbox/n.json': JSON.stringify({ type: 'notify', subject: 'Το reel δεν πέρασε τον έλεγχο', text: 'Δεν δημοσιεύεται.' }) },
+    queues: {} });
+  env.ctx.approvalCycle();
+  assert.ok(result(env, 'TST', 'n').ok);
+  assert.deepStrictEqual(env.mails.map(function (m) { return m.to; }), ['okp@example.com']);
+  assert.strictEqual(JSON.stringify(env.ctx.clients_()), '["ORE"]');
+  assert.strictEqual(JSON.stringify(env.ctx.approvalClients_()), '["ORE","TST"]');
+});
+
+test('checkApproval: μόνο έλεγχος, καμία αλλαγή', function () {
+  const env = approvalEnv({ gh: { 'clients/ORE/config.json': ORE_CFG } });
+  const out = env.ctx.checkApproval();
+  assert.ok(/GitHub: OK .*γράφει/.test(out[0]), out[0]);
+  assert.ok(/Gmail: OK/.test(out[1]));
+  assert.ok(/\[ORE\].*εγκρίνοντες: 2/.test(out[2]), out[2]);
+  assert.strictEqual(env.puts.length + env.sent.length + env.mails.length, 0);
 });
 
 // Σύγκριση με τον παλιό LS Publisher: για την ίδια ουρά, οι ίδιες ακριβώς κλήσεις στο Meta (εκτός από το token).
