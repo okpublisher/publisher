@@ -26,7 +26,7 @@
  *   - Απαντήσεις μετράνε μόνο από τις διευθύνσεις έγκρισης (approvers στο clients/<K>/config.json, APPROVERS_<K>,
  *     NOTIFY_TO_<K>). Γράφονται ως δεδομένα· ο Claude εκτελεί μόνο εγκρίσεις/διορθώσεις του πακέτου.
  *
- * Ρυθμίσεις: GITHUB_TOKEN (fine-grained, μόνο okpublisher/publisher-work, Contents: Read and write — το βάζει ο Πέτρος),
+ * Ρυθμίσεις: GITHUB_TOKEN (fine-grained, μόνο okpublisher/publisher-work, Contents: Read and write — το βάζει ο διαχειριστής),
  *   προαιρετικά WORK_REPO (προεπιλογή okpublisher/publisher-work), TEST_CLIENTS (π.χ. TST: μόνο έγκριση, όχι δημοσίευση).
  * Συναρτήσεις: checkApproval() (έλεγχος, δεν αλλάζει τίποτα) · setupApproval() (κάθε 15′) · approvalCycle().
  */
