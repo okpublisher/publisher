@@ -1,0 +1,181 @@
+{
+ "source": "Pixabay Music (Pixabay Content License: εμπορική χρήση, χωρίς αναφορά δημιουργού). Μόνο links· το κάθε κομμάτι κατεβαίνει από το url του όταν χρειάζεται, σε cache εκτός repo. Ποτέ mp3 στο repo. Παιδικά/χαρούμενα κομμάτια επιλεγμένα 21/11/2026. mood: playful (κύρια χρήση), gentle/calm/warm (κριτικές, συμβουλευτική γονέων), energetic (σπάνια). Μην επαναλαμβάνεις το ίδιο κομμάτι σε κοντινές μέρες.",
+ "tracks": [
+  {
+   "id": "ls_01",
+   "brand": "LS",
+   "title": "Kids Playful",
+   "artist": "The_Mountain",
+   "mood": "playful",
+   "dur": 147.7,
+   "best_start": 44.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-kids-playful-634008/",
+   "url": "https://cdn.pixabay.com/audio/2026/11/08/audio_c763902029.mp3"
+  },
+  {
+   "id": "ls_02",
+   "brand": "LS",
+   "title": "Happy Ukulele",
+   "artist": "AtlasAudio",
+   "mood": "playful",
+   "dur": 64.8,
+   "best_start": 24.0,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-happy-ukulele-617574/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/09/audio_679409e404.mp3"
+  },
+  {
+   "id": "ls_03",
+   "brand": "LS",
+   "title": "Cute Piano",
+   "artist": "StudioKolomna",
+   "mood": "gentle",
+   "dur": 122.3,
+   "best_start": 98.0,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-cute-piano-636584/",
+   "url": "https://cdn.pixabay.com/audio/2026/11/13/audio_ee69b5de06.mp3"
+  },
+  {
+   "id": "ls_04",
+   "brand": "LS",
+   "title": "Warm Acoustic",
+   "artist": "AtlasAudio",
+   "mood": "warm",
+   "dur": 155.0,
+   "best_start": 84.0,
+   "page": "https://pixabay.com/music/acoustic-group-warm-acoustic-621617/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/16/audio_ff56c57ff2.mp3"
+  },
+  {
+   "id": "ls_05",
+   "brand": "LS",
+   "title": "Cheerful - Cheerful Music",
+   "artist": "PaulYudin",
+   "mood": "playful",
+   "dur": 148.4,
+   "best_start": 35.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-cheerful-cheerful-music-632473/",
+   "url": "https://cdn.pixabay.com/audio/2026/11/05/audio_edc50d681d.mp3"
+  },
+  {
+   "id": "ls_06",
+   "brand": "LS",
+   "title": "Kids",
+   "artist": "AtlasAudio",
+   "mood": "playful",
+   "dur": 98.2,
+   "best_start": 67.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-kids-625710/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/23/audio_1ff50e46eb.mp3"
+  },
+  {
+   "id": "ls_07",
+   "brand": "LS",
+   "title": "Kids",
+   "artist": "AtlasAudio",
+   "mood": "playful",
+   "dur": 90.0,
+   "best_start": 48.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-kids-617587/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/09/audio_524cfe8448.mp3"
+  },
+  {
+   "id": "ls_08",
+   "brand": "LS",
+   "title": "Lifestyle Vlog",
+   "artist": "The_Mountain",
+   "mood": "warm",
+   "dur": 87.6,
+   "best_start": 35.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-lifestyle-vlog-634009/",
+   "url": "https://cdn.pixabay.com/audio/2026/11/14/audio_6d207c9269.mp3"
+  },
+  {
+   "id": "ls_09",
+   "brand": "LS",
+   "title": "Children Ukulele Upbeat Positive Pop Rock",
+   "artist": "ikoliks",
+   "mood": "energetic",
+   "dur": 106.6,
+   "best_start": 17.5,
+   "page": "https://pixabay.com/music/upbeat-children-ukulele-upbeat-positive-pop-rock-622115/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/17/audio_4745e3d274.mp3"
+  },
+  {
+   "id": "ls_10",
+   "brand": "LS",
+   "title": "Happy Ukulele Kids",
+   "artist": "alexrockbeat",
+   "mood": "playful",
+   "dur": 107.0,
+   "best_start": 82.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-happy-ukulele-kids-595605/",
+   "url": "https://cdn.pixabay.com/audio/2026/09/01/audio_e879492f01.mp3"
+  },
+  {
+   "id": "ls_11",
+   "brand": "LS",
+   "title": "Kids Ukulele Music",
+   "artist": "331music",
+   "mood": "playful",
+   "dur": 132.8,
+   "best_start": 108.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-kids-ukulele-music-600484/",
+   "url": "https://cdn.pixabay.com/audio/2026/09/09/audio_aaa4d5be14.mp3"
+  },
+  {
+   "id": "ls_12",
+   "brand": "LS",
+   "title": "Kids Zone - Ukulele",
+   "artist": "Pocketbeats",
+   "mood": "playful",
+   "dur": 115.4,
+   "best_start": 70.0,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-kids-zone-ukulele-619696/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/13/audio_638c7a7eb6.mp3"
+  },
+  {
+   "id": "ls_13",
+   "brand": "LS",
+   "title": "Ukulele",
+   "artist": "NastelBom",
+   "mood": "playful",
+   "dur": 116.5,
+   "best_start": 92.5,
+   "page": "https://pixabay.com/music/happy-childrens-tunes-ukulele-454043/",
+   "url": "https://cdn.pixabay.com/audio/2025/12/19/audio_807aaa41f6.mp3"
+  },
+  {
+   "id": "ls_14",
+   "brand": "LS",
+   "title": "Romantic Ukulele",
+   "artist": "StudioKolomna",
+   "mood": "gentle",
+   "dur": 103.4,
+   "best_start": 68.0,
+   "page": "https://pixabay.com/music/acoustic-group-romantic-ukulele-632659/",
+   "url": "https://cdn.pixabay.com/audio/2026/11/05/audio_fd42fc71ba.mp3"
+  },
+  {
+   "id": "ls_15",
+   "brand": "LS",
+   "title": "Piano and Strings",
+   "artist": "zec53",
+   "mood": "calm",
+   "dur": 134.7,
+   "best_start": 88.6,
+   "page": "https://pixabay.com/music/modern-classical-piano-and-strings-ambient-confident-and-light-full-633882/",
+   "url": "https://cdn.pixabay.com/audio/2026/11/08/audio_1091784b7a.mp3"
+  },
+  {
+   "id": "ls_16",
+   "brand": "LS",
+   "title": "Beautiful Uplifting",
+   "artist": "Twisterium",
+   "mood": "warm",
+   "dur": 181.5,
+   "best_start": 154.6,
+   "page": "https://pixabay.com/music/ambient-beautiful-uplifting-music-618490/",
+   "url": "https://cdn.pixabay.com/audio/2026/10/10/audio_040cc78fa4.mp3"
+  }
+ ]
+}
