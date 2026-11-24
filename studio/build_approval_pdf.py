@@ -242,7 +242,7 @@ def cover(c, month, what, n, reels_link, round_no, changes):
     logo = str(CL.logo('on_primary'))
     if os.path.exists(logo):
         lw, lh = Image.open(logo).size
-        c.drawImage(logo, (W - 170) / 2, H - 150, 170, 170 * lh / lw)
+        c.drawImage(logo, (W - 170) / 2, H - 150, 170, 170 * lh / lw, mask='auto')   # διάφανο PNG: χωρίς μαύρο φόντο
     c.setFillColor(B); c.setFont('SB', 20); c.drawCentredString(W / 2, H - 190, f'Πρόγραμμα {month}')
     c.setFillColor(P); c.setFont('SB', 15); c.drawCentredString(W / 2, H - 214, f'{what} · {n}')
     if round_no and round_no > 1:
