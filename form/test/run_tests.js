@@ -52,7 +52,10 @@ function makeEnv() {
 const BASE = { name: 'Δοκιμή', business: 'Φούρνος Δοκιμή', email: 'lead@example.com', phone: '6900000000', plan: 'Μεσαίο',
   social: '@test', message: 'Γεια', lang: 'el', source: 'ig / bio', news: 'ναι' };
 const SETUP = { type: 'setup', business: 'Φούρνος Δοκιμή', name: 'Υπεύθυνος', email: 'owner@example.com', about: 'Ψωμί και γλυκά',
-  plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα', times: 'αυτόματες', reels: 'στις θέσεις των reels', terms: 'v1-2026-11-25' };
+  plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα', times: 'αυτόματες', reels: 'στις θέσεις των reels', terms: 'v1-2026-11-25',
+  bill_name: 'Φούρνος Δοκιμή ΙΚΕ', bill_afm: '123456783', bill_doy: 'Δοκιμαστική ΔΟΥ', bill_address: 'Οδός Δοκιμής 1, 00000 Πόλη' };
+const BILL_HEAD = ['Επωνυμία τιμολόγησης', 'ΑΦΜ', 'ΔΟΥ', 'Διεύθυνση τιμολόγησης', 'Έλεγχος τιμολόγησης'];
+function col(sh, h) { const i = Array.from(sh.head).indexOf(h); assert.ok(i >= 0, 'λείπει η στήλη ' + h); return i; }
 
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
@@ -128,11 +131,11 @@ test('σετάρισμα: καρτέλα «Σεταρίσματα» + email «Σ
   const sh = e.sheets['Σεταρίσματα'];
   assert.ok(sh);
   assert.strictEqual(sh.head[0], 'Χρόνος');
-  assert.strictEqual(sh.head[sh.head.length - 2], 'Κατάσταση');
-  assert.strictEqual(sh.head[sh.head.length - 1], 'Όροι (έκδοση)');
+  assert.strictEqual(col(sh, 'Όροι (έκδοση)'), col(sh, 'Κατάσταση') + 1);
+  assert.deepStrictEqual(Array.from(sh.head).slice(-5), BILL_HEAD, 'τα στοιχεία τιμολόγησης στο τέλος, μετά τους όρους');
   assert.strictEqual(sh.rows[0].length, sh.head.length);
-  assert.strictEqual(sh.rows[0][sh.rows[0].length - 2], 'νέο');
-  assert.strictEqual(sh.rows[0][sh.rows[0].length - 1], 'v1-2026-11-25');
+  assert.strictEqual(sh.rows[0][col(sh, 'Κατάσταση')], 'νέο');
+  assert.strictEqual(sh.rows[0][col(sh, 'Όροι (έκδοση)')], 'v1-2026-11-25');
   assert.ok(/Όροι: αποδοχή στη φόρμα, έκδοση v1-2026-11-25/.test(e.mails[0].body));
   assert.ok(!e.sheets['Ενδιαφέροντα'], 'δεν γράφει στα Ενδιαφέροντα');
   assert.strictEqual(e.mails[0].to, ME);
@@ -161,6 +164,62 @@ test('παλιά καρτέλα «Σεταρίσματα»: η στήλη όρω
   assert.strictEqual(old.head[oldHead.length], 'Όροι (έκδοση)');
   assert.strictEqual(old.rows[1][oldHead.length - 1], 'νέο');
   assert.strictEqual(old.rows[1][oldHead.length], 'v1-2026-11-25');
+});
+
+test('σετάρισμα: στοιχεία τιμολόγησης στο Sheet και στο email· ΑΦΜ ως κείμενο', function () {
+  const e = makeEnv();
+  e.post(Object.assign({}, SETUP, { bill_afm: 'EL 012-345.670' }));
+  const sh = e.sheets['Σεταρίσματα'], r = sh.rows[0];
+  assert.deepStrictEqual(Array.from(r.slice(-5)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
+  const body = e.mails[0].body;
+  assert.ok(/Τιμολόγηση:\nΕπωνυμία τιμολόγησης: Φούρνος Δοκιμή ΙΚΕ\nΑΦΜ: 012345670\nΔΟΥ: Δοκιμαστική ΔΟΥ\nΔιεύθυνση τιμολόγησης: Οδός Δοκιμής 1/.test(body), body);
+  assert.ok(!/⚠/.test(body));
+});
+
+test('σετάρισμα από παλιά σελίδα (χωρίς τιμολόγηση) → γράφεται κανονικά, με σημείωση τι λείπει', function () {
+  const e = makeEnv();
+  const d = Object.assign({}, SETUP); ['bill_name', 'bill_afm', 'bill_doy', 'bill_address'].forEach(function (k) { delete d[k]; });
+  assert.deepStrictEqual(e.post(d), { ok: true });
+  const sh = e.sheets['Σεταρίσματα'], r = sh.rows[0];
+  assert.strictEqual(r.length, sh.head.length);
+  assert.strictEqual(r[col(sh, 'ΑΦΜ')], '');
+  assert.strictEqual(r[col(sh, 'Έλεγχος τιμολόγησης')], 'Λείπουν: Επωνυμία τιμολόγησης, ΑΦΜ, ΔΟΥ, Διεύθυνση τιμολόγησης');
+  assert.ok(/⚠ Λείπουν: Επωνυμία τιμολόγησης/.test(e.mails[0].body));
+});
+
+test('ΑΦΜ που δεν περνά τον έλεγχο → γράφεται, με σημείωση (δεν χάνεται το σετάρισμα)', function () {
+  ['123456789', '12345678', '000000000', 'abcdefghi'].forEach(function (afm) {
+    const e = makeEnv();
+    assert.deepStrictEqual(e.post(Object.assign({}, SETUP, { bill_afm: afm })), { ok: true });
+    const sh = e.sheets['Σεταρίσματα'];
+    assert.strictEqual(sh.rows[0][col(sh, 'Έλεγχος τιμολόγησης')], 'Ο ΑΦΜ δεν περνά τον έλεγχο', afm);
+    assert.ok(/⚠ Ο ΑΦΜ δεν περνά τον έλεγχο/.test(e.mails[0].body));
+  });
+});
+
+test('έλεγχος ΑΦΜ (ψηφίο ελέγχου)', function () {
+  const e = makeEnv();
+  const ok = function (a) { return e.ctx.afmOk_(e.ctx.normAfm_(a)); };
+  assert.strictEqual(ok('123456783'), true);
+  assert.strictEqual(ok('012345670'), true);
+  assert.strictEqual(ok('EL123456783'), true);
+  assert.strictEqual(ok('gr 123 456 783'), true);
+  assert.strictEqual(ok('123456784'), false);
+  assert.strictEqual(ok('1234567830'), false);
+});
+
+test('καρτέλα με στήλη «Όροι» στο τέλος: τα στοιχεία τιμολόγησης μπαίνουν μετά, οι παλιές μένουν στη θέση τους', function () {
+  const e = makeEnv();
+  const ss = e.ctx.SpreadsheetApp.getActive();
+  const old = ss.insertSheet('Σεταρίσματα');
+  const oldHead = ['Χρόνος'].concat(Array.from(vm.runInContext('FORM_.SETUP', e.ctx)).map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)']);
+  old.getRange(1, 1, 1, oldHead.length).setValues([oldHead]);
+  old.appendRow(['t'].concat(oldHead.slice(1, -2).map(function () { return 'x'; }), ['νέο', 'v3-2026-11-25']));
+  e.post(SETUP);
+  assert.deepStrictEqual(Array.from(old.head).slice(0, oldHead.length), oldHead);
+  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD);
+  assert.strictEqual(old.rows[1][oldHead.length - 1], 'v1-2026-11-25');
+  assert.strictEqual(old.rows[1][oldHead.length], 'Φούρνος Δοκιμή ΙΚΕ');
 });
 
 test('σετάρισμα χωρίς «Τι κάνει» → απόρριψη', function () {
