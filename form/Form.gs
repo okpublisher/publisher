@@ -38,6 +38,8 @@ const FORM_ = {
     ['message', 'Άλλα', 3000]],
   BILL: [  // στοιχεία τιμολόγησης· στήλες στο τέλος (μετά τους «Όρους»), για να μη μετακινηθούν οι παλιές
     ['bill_name', 'Επωνυμία τιμολόγησης', 200], ['bill_afm', 'ΑΦΜ', 30], ['bill_doy', 'ΔΟΥ', 80], ['bill_address', 'Διεύθυνση τιμολόγησης', 200]],
+  EXTRA: [  // νεότερα πεδία· στήλες στο τέλος (μετά τον «Έλεγχο τιμολόγησης»), για να μη μετακινηθούν οι παλιές
+    ['music', 'Μουσική στα reels', 60]],
 };
 
 function doPost(e) {
@@ -95,21 +97,24 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης']);
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }));
+  const x = {};
+  FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
     const sh = sheet_(FORM_.SETUP_SHEET, head);
-    sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ']));
+    sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); })));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   if (me) {
     MailApp.sendEmail({
       to: me, replyTo: r.email, name: 'okpublisher.gr',
       subject: '[okpublisher.gr] Σετάρισμα: ' + r.business + ' (' + (r.plan.split(' ')[0] || '—') + ')',
-      body: FORM_.SETUP.map(function (f) { return f[1] + ': ' + (r[f[0]] || '—'); }).join('\n') +
+      body: FORM_.SETUP.concat(FORM_.EXTRA).map(function (f) { return f[1] + ': ' + (r[f[0]] || x[f[0]] || '—'); }).join('\n') +
         '\nΌροι: αποδοχή στη φόρμα, έκδοση ' + terms +
         '\n\nΤιμολόγηση:\n' + FORM_.BILL.map(function (f) { return f[1] + ': ' + (b[f[0]] || '—'); }).join('\n') +
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +

@@ -132,7 +132,8 @@ test('σετάρισμα: καρτέλα «Σεταρίσματα» + email «Σ
   assert.ok(sh);
   assert.strictEqual(sh.head[0], 'Χρόνος');
   assert.strictEqual(col(sh, 'Όροι (έκδοση)'), col(sh, 'Κατάσταση') + 1);
-  assert.deepStrictEqual(Array.from(sh.head).slice(-5), BILL_HEAD, 'τα στοιχεία τιμολόγησης στο τέλος, μετά τους όρους');
+  assert.deepStrictEqual(Array.from(sh.head).slice(col(sh, 'Όροι (έκδοση)') + 1, -1), BILL_HEAD, 'τα στοιχεία τιμολόγησης μετά τους όρους');
+  assert.strictEqual(sh.head[sh.head.length - 1], 'Μουσική στα reels', 'η μουσική τελευταία στήλη');
   assert.strictEqual(sh.rows[0].length, sh.head.length);
   assert.strictEqual(sh.rows[0][col(sh, 'Κατάσταση')], 'νέο');
   assert.strictEqual(sh.rows[0][col(sh, 'Όροι (έκδοση)')], 'v1-2026-11-25');
@@ -170,7 +171,7 @@ test('σετάρισμα: στοιχεία τιμολόγησης στο Sheet �
   const e = makeEnv();
   e.post(Object.assign({}, SETUP, { bill_afm: 'EL 012-345.670' }));
   const sh = e.sheets['Σεταρίσματα'], r = sh.rows[0];
-  assert.deepStrictEqual(Array.from(r.slice(-5)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
+  assert.deepStrictEqual(Array.from(r.slice(-6, -1)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
   const body = e.mails[0].body;
   assert.ok(/Τιμολόγηση:\nΕπωνυμία τιμολόγησης: Φούρνος Δοκιμή ΙΚΕ\nΑΦΜ: 012345670\nΔΟΥ: Δοκιμαστική ΔΟΥ\nΔιεύθυνση τιμολόγησης: Οδός Δοκιμής 1/.test(body), body);
   assert.ok(!/⚠/.test(body));
@@ -217,9 +218,26 @@ test('καρτέλα με στήλη «Όροι» στο τέλος: τα στο
   old.appendRow(['t'].concat(oldHead.slice(1, -2).map(function () { return 'x'; }), ['νέο', 'v3-2026-11-25']));
   e.post(SETUP);
   assert.deepStrictEqual(Array.from(old.head).slice(0, oldHead.length), oldHead);
-  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD);
+  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD.concat(['Μουσική στα reels']));
   assert.strictEqual(old.rows[1][oldHead.length - 1], 'v1-2026-11-25');
   assert.strictEqual(old.rows[1][oldHead.length], 'Φούρνος Δοκιμή ΙΚΕ');
+});
+
+test('μουσική στα reels: νέα στήλη στο τέλος, οι παλιές μένουν στη θέση τους· και στο email', function () {
+  const e = makeEnv();
+  const ss = e.ctx.SpreadsheetApp.getActive();
+  const old = ss.insertSheet('Σεταρίσματα');
+  const oldHead = ['Χρόνος'].concat(Array.from(vm.runInContext('FORM_.SETUP', e.ctx)).map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'], BILL_HEAD);
+  old.getRange(1, 1, 1, oldHead.length).setValues([oldHead]);
+  e.post(Object.assign({}, SETUP, { music: 'Ήρεμη' }));
+  assert.deepStrictEqual(Array.from(old.head).slice(0, oldHead.length), oldHead);
+  assert.strictEqual(old.head[oldHead.length], 'Μουσική στα reels');
+  assert.strictEqual(old.rows[0][oldHead.length], 'Ήρεμη');
+  assert.strictEqual(old.rows[0][oldHead.length - 1], 'ΟΚ');
+  assert.ok(/Μουσική στα reels: Ήρεμη/.test(e.mails[0].body), e.mails[0].body);
+  e.post(SETUP);                                                      // παλιά σελίδα χωρίς το πεδίο
+  assert.strictEqual(old.rows[1][oldHead.length], '');
+  assert.ok(/Μουσική στα reels: —/.test(e.mails[1].body));
 });
 
 test('σετάρισμα χωρίς «Τι κάνει» → απόρριψη', function () {
