@@ -43,10 +43,10 @@ studio/tests/       δοκιμές: python3 -m unittest discover -s studio/tests
 
 ### 2. Μόνιμο token σελίδας (για κάθε πελάτη)
 Προϋπόθεση: πλήρης έλεγχος στη σελίδα, Instagram επαγγελματικό και συνδεδεμένο με τη σελίδα.
-1. developers.facebook.com/tools/explorer → Meta App: **OK Publisher** → User Token → δικαιώματα `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `business_management` → **Generate Access Token** → επιλέγεις **μόνο** τη σελίδα του πελάτη και το Instagram της.
+1. developers.facebook.com/tools/explorer → Meta App: **OK Publisher** → User Token → δικαιώματα `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `business_management` (+ `instagram_manage_insights` για τις αναφορές) → **Generate Access Token** → στις σελίδες, στα Instagram και στις επιχειρήσεις **κρατάς τσεκαρισμένα όσα ήδη υπάρχουν** (αλλιώς η εφαρμογή χάνει την πρόσβαση στους άλλους πελάτες και σταματούν οι δημοσιεύσεις τους) και προσθέτεις του νέου πελάτη.
 2. developers.facebook.com/tools/debug/accesstoken → Debug → **Extend Access Token** → αντιγραφή.
 3. Graph API Explorer με το νέο token: `me/accounts?fields=name,access_token` → Submit.
-4. Το `access_token` της σελίδας → έλεγχος στο Debugger: **Type: Page, Expires: Never** → Ιδιότητα `TOKEN_<K>`.
+4. Το `access_token` της σελίδας **του νέου πελάτη** → έλεγχος στο Debugger: **Type: Page, Expires: Never** → Ιδιότητα `TOKEN_<K>`.
 
 ### 3. Google Sheet + Apps Script (στον λογαριασμό Google του okpublisher)
 1. Νέο Google Sheet **okpublisher** → Επεκτάσεις → Apps Script, όνομα έργου **okpublisher**.
