@@ -3,10 +3,7 @@
 # αντιστοιχεί, ελέγχει ότι η διεύθυνση /exec απαντά και, αν δεν υπάρχει ακόμα η ετικέτα deployed-form, τη βάζει εκεί
 # (από εκεί ξεκινά το αυτόματο ανέβασμα). Στο log: όχι κώδικας, όχι SCRIPT_ID (το repo είναι δημόσιο).
 name: Έλεγχος live (φόρμα)
-on:
-  workflow_dispatch:
-  push:
-    branches: [form-setup]   # μόνο για το πρώτο στήσιμο (πριν το merge)· φεύγει μετά
+on: workflow_dispatch
 permissions:
   contents: write
 concurrency:
@@ -37,7 +34,6 @@ jobs:
         run: |
           if [ -z "$CLASPRC_JSON" ] || [ -z "$FORM_SCRIPT_ID" ]; then
             msg="Λείπουν τα secrets CLASPRC_JSON / FORM_SCRIPT_ID (Settings → Secrets and variables → Actions)."
-            if [ "$GITHUB_EVENT_NAME" = push ]; then echo "::notice::$msg Τίποτα δεν ελέγχθηκε."; exit 0; fi
             echo "::error::$msg"; exit 1
           fi
           printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json && chmod 600 ~/.clasprc.json
