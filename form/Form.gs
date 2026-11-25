@@ -6,6 +6,7 @@
  *   - στέλνεται ως email στον λογαριασμό που τρέχει το script (okpublisher.gr) — σε κανέναν άλλον.
  * Προστασία: κρυφό πεδίο (website) για bots, όρια μήκους, το πολύ 30 αιτήματα την ώρα.
  * Η σελίδα setup.html στέλνει "type": "setup" → καρτέλα «Σεταρίσματα» + email «Σετάρισμα: …» (στοιχεία νέου πελάτη).
+ *   Υποχρεωτική η αποδοχή των όρων (terms.html): πεδίο terms = έκδοση (π.χ. v1-2026-11-25) → στήλη «Όροι (έκδοση)».
  * Στήλες Πηγή (utm_… του συνδέσμου ή ο ιστότοπος από τον οποίο ήρθε) και Νέα (ναι = συγκατάθεση για email με νέα/προσφορές,
  * από το τετραγωνάκι της φόρμας· χωρίς «ναι» δεν στέλνουμε διαφημιστικά email).
  *
@@ -25,6 +26,7 @@ const FORM_ = {
   MAX_PER_HOUR: 30,
   LEN: { name: 120, business: 160, email: 160, phone: 40, plan: 40, social: 160, message: 3000, lang: 4, source: 200, news: 4 },
   SETUP_SHEET: 'Σεταρίσματα',
+  TERMS_RE: /^v\d+-\d{4}-\d{2}-\d{2}$/,   // έκδοση όρων που αποδέχτηκε ο πελάτης (setup.html)
   SETUP: [  // [πεδίο, επικεφαλίδα, μέγιστο μήκος]
     ['business', 'Επιχείρηση', 160], ['name', 'Υπεύθυνος', 120], ['email', 'Email εγκρίσεων', 160], ['approvers', 'Άλλοι εγκρίνοντες', 400],
     ['plan', 'Πακέτο', 80], ['phones', 'Τηλέφωνα (posts)', 120], ['facebook', 'Facebook', 200], ['instagram', 'Instagram', 120],
@@ -76,16 +78,19 @@ function setup_(d) {
   const r = {};
   FORM_.SETUP.forEach(function (f) { r[f[0]] = clean_(d[f[0]], f[2]); });
   if (!r.business || !r.name || !r.about || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)) return out_({ ok: false, error: 'missing fields' });
+  const terms = clean_(d.terms, 40);
+  if (!FORM_.TERMS_RE.test(terms)) return out_({ ok: false, error: 'terms not accepted' });
   const cache = CacheService.getScriptCache();
   const n = Number(cache.get('n') || 0);
   if (n >= FORM_.MAX_PER_HOUR) return out_({ ok: false, error: 'busy' });
   cache.put('n', String(n + 1), 3600);
-  const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση']);
+  // «Όροι (έκδοση)» μετά την «Κατάσταση»: οι παλιές στήλες δεν μετακινούνται.
+  const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)']);
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
     const sh = sheet_(FORM_.SETUP_SHEET, head);
-    sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο']));
+    sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   if (me) {
@@ -93,6 +98,7 @@ function setup_(d) {
       to: me, replyTo: r.email, name: 'okpublisher.gr',
       subject: '[okpublisher.gr] Σετάρισμα: ' + r.business + ' (' + (r.plan.split(' ')[0] || '—') + ')',
       body: FORM_.SETUP.map(function (f) { return f[1] + ': ' + (r[f[0]] || '—'); }).join('\n') +
+        '\nΌροι: αποδοχή στη φόρμα, έκδοση ' + terms +
         '\n\nΕπόμενο: config του πελάτη στο publisher-work (ο Claude), πρόσβαση σελίδας/Instagram, φάκελος Drive, token.',
     });
   }
@@ -119,7 +125,8 @@ function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).set
 
 function testSetup() {
   const res = doPost({ postData: { contents: JSON.stringify({ type: 'setup', business: 'Δοκιμαστική επιχείρηση', name: 'Δοκιμή', email: 'test@example.com',
-    plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα · €100', about: 'Δοκιμή σεταρίσματος', times: 'αυτόματες', reels: 'στις θέσεις των reels' }) } });
+    plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα · €150', about: 'Δοκιμή σεταρίσματος', times: 'αυτόματες', reels: 'στις θέσεις των reels',
+    terms: 'v1-2026-11-25' }) } });
   console.log(res.getContent());
 }
 

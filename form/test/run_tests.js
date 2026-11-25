@@ -52,7 +52,7 @@ function makeEnv() {
 const BASE = { name: 'Δοκιμή', business: 'Φούρνος Δοκιμή', email: 'lead@example.com', phone: '6900000000', plan: 'Μεσαίο',
   social: '@test', message: 'Γεια', lang: 'el', source: 'ig / bio', news: 'ναι' };
 const SETUP = { type: 'setup', business: 'Φούρνος Δοκιμή', name: 'Υπεύθυνος', email: 'owner@example.com', about: 'Ψωμί και γλυκά',
-  plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα', times: 'αυτόματες', reels: 'στις θέσεις των reels' };
+  plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα', times: 'αυτόματες', reels: 'στις θέσεις των reels', terms: 'v1-2026-11-25' };
 
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
@@ -128,13 +128,39 @@ test('σετάρισμα: καρτέλα «Σεταρίσματα» + email «Σ
   const sh = e.sheets['Σεταρίσματα'];
   assert.ok(sh);
   assert.strictEqual(sh.head[0], 'Χρόνος');
-  assert.strictEqual(sh.head[sh.head.length - 1], 'Κατάσταση');
+  assert.strictEqual(sh.head[sh.head.length - 2], 'Κατάσταση');
+  assert.strictEqual(sh.head[sh.head.length - 1], 'Όροι (έκδοση)');
   assert.strictEqual(sh.rows[0].length, sh.head.length);
-  assert.strictEqual(sh.rows[0][sh.rows[0].length - 1], 'νέο');
+  assert.strictEqual(sh.rows[0][sh.rows[0].length - 2], 'νέο');
+  assert.strictEqual(sh.rows[0][sh.rows[0].length - 1], 'v1-2026-11-25');
+  assert.ok(/Όροι: αποδοχή στη φόρμα, έκδοση v1-2026-11-25/.test(e.mails[0].body));
   assert.ok(!e.sheets['Ενδιαφέροντα'], 'δεν γράφει στα Ενδιαφέροντα');
   assert.strictEqual(e.mails[0].to, ME);
   assert.strictEqual(e.mails[0].replyTo, 'owner@example.com');
   assert.strictEqual(e.mails[0].subject, '[okpublisher.gr] Σετάρισμα: Φούρνος Δοκιμή (Βασικό)');
+});
+
+test('σετάρισμα χωρίς αποδοχή όρων (ή με άκυρη τιμή) → απόρριψη, τίποτα στο Sheet', function () {
+  const e = makeEnv();
+  const d = Object.assign({}, SETUP); delete d.terms;
+  assert.deepStrictEqual(e.post(d), { ok: false, error: 'terms not accepted' });
+  assert.deepStrictEqual(e.post(Object.assign({}, SETUP, { terms: 'ναι' })), { ok: false, error: 'terms not accepted' });
+  assert.ok(!e.sheets['Σεταρίσματα']);
+  assert.strictEqual(e.mails.length, 0);
+});
+
+test('παλιά καρτέλα «Σεταρίσματα»: η στήλη όρων μπαίνει στο τέλος, οι υπόλοιπες μένουν στη θέση τους', function () {
+  const e = makeEnv();
+  const ss = e.ctx.SpreadsheetApp.getActive();
+  const old = ss.insertSheet('Σεταρίσματα');
+  const oldHead = ['Χρόνος'].concat(Array.from(vm.runInContext('FORM_.SETUP', e.ctx)).map(function (f) { return f[1]; }), ['Κατάσταση']);
+  old.getRange(1, 1, 1, oldHead.length).setValues([oldHead]);
+  old.appendRow(['t'].concat(oldHead.slice(1, -1).map(function () { return 'x'; }), ['νέο']));
+  e.post(SETUP);
+  assert.deepStrictEqual(Array.from(old.head).slice(0, oldHead.length), oldHead);
+  assert.strictEqual(old.head[oldHead.length], 'Όροι (έκδοση)');
+  assert.strictEqual(old.rows[1][oldHead.length - 1], 'νέο');
+  assert.strictEqual(old.rows[1][oldHead.length], 'v1-2026-11-25');
 });
 
 test('σετάρισμα χωρίς «Τι κάνει» → απόρριψη', function () {
