@@ -31,6 +31,11 @@ jobs:
           printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json && chmod 600 ~/.clasprc.json
       - name: clasp
         run: npm install -g @google/clasp@3.4.1
+      - name: Φύλακας (ενημερωτικά — τρέχουν οι triggers;)
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: node tools/gas/watchdog.js || true
       - name: Κατέβασμα live
         env:
           SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
