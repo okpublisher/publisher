@@ -5,7 +5,7 @@
     python3 music.py pick --client K --date ΕΕΕΕ-ΜΜ-ΗΗ [--mood playful] [--min-dur 20] [--record <αρχείο>]
     python3 music.py where <track_id>
     python3 music.py block <track_id> --reason "σίγαση στο Instagram (Rights Manager)"
-    python3 music.py add --set <σετ> --mood <διάθεση> --title <τίτλος> --artist <καλλιτέχνης> --page <σελίδα> --url <mp3>
+    python3 music.py add --set <σετ> --mood <διάθεση> --title <τίτλος> --artist <καλλιτέχνης> --page <σελίδα> --url <mp3> [--content-id]
     python3 music.py check
 
 - Βιβλιοθήκη: music_library.json (ή MUSIC_LIBRARY). Μόνο Pixabay (Pixabay Content License: εμπορική χρήση, χωρίς
@@ -13,7 +13,8 @@
 - Κάθε κομμάτι ανήκει σε ένα σετ (κλάδο, π.χ. kids) και έχει μία διάθεση (mood). Ο πελάτης παίρνει σετ και διαθέσεις
   από το "music" της ομάδας του (group.json) ή του config.json του. "none": true = χωρίς μουσική.
 - pick: κομμάτι του σετ, στη διάθεση που ζητήθηκε (αλλιώς στις διαθέσεις του πελάτη, με τη σειρά τους), όχι αποκλεισμένο,
-  αρκετά μεγάλο, και όχι ίδιο με όσα μπήκαν ±avoid_days ημέρες. Από αυτά: το λιγότερο χρησιμοποιημένο του πελάτη.
+  αρκετά μεγάλο, και όχι ίδιο με όσα μπήκαν ±avoid_days ημέρες. Από αυτά: το λιγότερο χρησιμοποιημένο του πελάτη,
+  και με ισοπαλία όσα ΔΕΝ είναι γραμμένα στο Content ID ("youtube_content_id": true = μεγαλύτερος κίνδυνος διεκδίκησης).
   Με --record γράφεται στο clients/<K>/music_log.json (ιδιωτικό repo): ημέρα, κομμάτι, αρχείο.
 - block: αν ένα κομμάτι πάθει σίγαση ή διεκδίκηση, δεν ξαναμπαίνει πουθενά. Το where δείχνει πού έχει ήδη μπει.
 """
@@ -133,7 +134,7 @@ def pick(cl, day, mood=None, min_dur=0.0, lib=None, log=None):
     if not fresh:
         notes.append(f'όλα τα κομμάτια έχουν μπει τις τελευταίες {avoid} ημέρες· μπήκε το πιο «μακρινό»')
         fresh = sorted(cands, key=lambda t: -near(t))[:1]
-    best = min(fresh, key=lambda t: (len(uses.get(t['id'], [])),
+    best = min(fresh, key=lambda t: (len(uses.get(t['id'], [])), bool(t.get('youtube_content_id')),
                                      hashlib.sha1((day + t['id']).encode()).hexdigest()))
     return best, notes
 
@@ -161,7 +162,7 @@ def best_window(levels, step=STEP, window=WINDOW):
 
 def analyse(mp3):
     """(διάρκεια, best_start) από το ίδιο το αρχείο (ffmpeg → mono 8 kHz → RMS ανά 0,5″)."""
-    pcm = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(mp3), '-ac', '1', '-ar', '8000', '-f', 's16le', '-'],
+    pcm = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-i', str(mp3), '-ac', '1', '-ar', '8000', '-f', 's16le', '-'],
                          check=True, capture_output=True).stdout
     a = array('h'); a.frombytes(pcm[:len(pcm) // 2 * 2])
     per = int(8000 * STEP)
@@ -189,6 +190,7 @@ def main(argv=None):
     p = sub.add_parser('add')
     for k in ('set', 'mood', 'title', 'artist', 'page', 'url'):
         p.add_argument('--' + k, required=True)
+    p.add_argument('--content-id', action='store_true', help='γραμμένο στο YouTube Content ID (το δείχνει η Pixabay)')
     sub.add_parser('check')
     a = ap.parse_args(argv)
     lib = load_library()
@@ -231,7 +233,7 @@ def main(argv=None):
         from story_video import download
         dur, start = analyse(download(a.url))
         t = {'id': next_id(lib, a.set), 'set': a.set, 'title': a.title, 'artist': a.artist, 'mood': a.mood,
-             'dur': dur, 'best_start': start, 'page': a.page, 'url': a.url}
+             'dur': dur, 'best_start': start, 'page': a.page, 'url': a.url, **({'youtube_content_id': True} if a.content_id else {})}
         lib['tracks'].append(t)
         save_library(lib)
         print(f"{t['id']}: {a.title} ({a.artist}) · {dur}″ · best_start {start}″")

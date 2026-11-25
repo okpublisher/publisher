@@ -400,6 +400,13 @@ class MusicTest(unittest.TestCase):
         self.assertEqual(t['id'], 'k1')                # όλα πρόσφατα → το πιο «μακρινό»
         self.assertTrue(notes)
 
+    def test_prefers_tracks_without_content_id(self):
+        lib = json.loads(json.dumps(self.lib))
+        next(x for x in lib['tracks'] if x['id'] == 'k1')['youtube_content_id'] = True
+        c = self.cl(music={'set': 'kids', 'moods': ['playful']})
+        picks = {self.music.pick(c, f'2027-02-{d:02d}', 'playful', min_dur=20, lib=lib, log=[])[0]['id'] for d in range(1, 29)}
+        self.assertEqual(picks, {'k2'})                # ίδια χρήση → πάντα αυτό χωρίς Content ID
+
     def test_none_and_missing_set(self):
         c = self.cl(music={'none': True})
         t, notes = self.music.pick(c, '2027-01-05', lib=self.lib, log=[])
