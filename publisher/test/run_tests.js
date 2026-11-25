@@ -988,6 +988,9 @@ test('πληρωμές: η πληρωμή με τον σύνδεσμο βρίσ�
   env.at('2027-01-29T10:00:00+02:00'); env.ctx.billingCycle();
   assert.strictEqual(env.state().tx, 'TX1');
   assert.strictEqual(env.state().months['2027-02'].st, 'paid');
+  assert.ok(/Λάβαμε την πληρωμή για τον Φεβρουάριο 2027/.test(env.mails[env.mails.length - 1].subject), 'επιβεβαίωση με email');
+  env.at('2027-01-29T11:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.mails.filter(function (m) { return /Λάβαμε την πληρωμή/.test(m.subject); }).length, 1, 'μία επιβεβαίωση μόνο');
   env.at('2027-02-01T10:00:00+02:00'); env.ctx.billingCycle();
   assert.strictEqual(env.viva.charges.length, 0, 'ο Φεβρουάριος είναι ήδη πληρωμένος');
   env.at('2027-03-01T08:30:00+02:00'); env.ctx.billingCycle();
