@@ -17,7 +17,7 @@
  *   FOLDER_<K>       φάκελος υλικού στο Drive (ID ή σύνδεσμος) — για διπλότυπα, κόψιμο βίντεο, συντόμευση
  *   QUEUE_URL_<K>    προαιρετικό: δική του ουρά (π.χ. μεταβατικά η ουρά του παλιού συστήματος)
  *   ALIAS_<K>        προαιρετικό: παλιά κλειδιά που ανήκουν σε αυτόν τον πελάτη, π.χ. ALIAS_ORE = LS
- *   PAUSED_<K>       true = παύση μόνο αυτού του πελάτη
+ *   PAUSED_<K>       true = παύση μόνο αυτού του πελάτη (BILLING_PAUSED_<K>: παύση για απλήρωτη συνδρομή, βλ. Billing.gs)
  *   FB_ENABLED_<K>   false = μόνο Instagram
  *   REEL_STORY_<K>   false = τα reels ΔΕΝ βγαίνουν και ως story (προεπιλογή: βγαίνουν 15′ μετά)
  *   TRIAL_REELS_<K>  true = δοκιμαστικά reels (πρώτα σε μη ακολούθους)
@@ -334,7 +334,8 @@ function targets_(item) {
   return t;
 }
 
-function paused_(K) { return prop_('PAUSED', 'false') === 'true' || (K && cprop_(K, 'PAUSED', 'false') === 'true'); }
+// Παύση: όλων (PAUSED), ενός πελάτη (PAUSED_<K>), ή λόγω απλήρωτης συνδρομής (BILLING_PAUSED_<K>, το διαχειρίζεται το Billing.gs).
+function paused_(K) { return prop_('PAUSED', 'false') === 'true' || (K && (cprop_(K, 'PAUSED', 'false') === 'true' || cprop_(K, 'BILLING_PAUSED', 'false') === 'true')); }
 
 // Δημοσιεύει ό,τι έχει έρθει η ώρα του για έναν πελάτη. Επιστρέφει false αν τελείωσε ο χρόνος της εκτέλεσης.
 // Ό,τι δεν προλαβαίνει, βγαίνει στον επόμενο κύκλο (10′ μετά), ώστε μια δημοσίευση να μη διακοπεί ποτέ στη μέση.

@@ -100,6 +100,18 @@ studio/tests/       δοκιμές: python3 -m unittest discover -s studio/tests
 
 Μετά: κάθε αλλαγή στο `form/Form.gs` ή `form/appsscript.json` στο `main` → **Deploy φόρμας**: δοκιμές → έλεγχος editor → `clasp push` → νέα έκδοση στην **ίδια** ανάπτυξη (ο σύνδεσμος `/exec` του site δεν αλλάζει) → έλεγχος ότι απαντά, αλλιώς επιστροφή στην προηγούμενη έκδοση.
 
+### 10. Πληρωμές συνδρομής μέσω Viva (`publisher/Billing.gs`)
+Μετά τον δωρεάν μήνα: σύνδεσμος πληρωμής με κάρτα (μία φορά) → αυτόματη χρέωση την 1η κάθε μήνα (από τις 09:00) → αν δεν περάσει: νέος σύνδεσμος, υπενθύμιση στις 8, **παύση στις 16** (`BILLING_PAUSED_<K>`), αυτόματη επανεκκίνηση μόλις πληρώσει. Ποτέ δεύτερη χρέωση για τον ίδιο μήνα. Όλα τα email μόνο στο `NOTIFY_TO_<K>`· καρτέλα **Πληρωμές** στο Sheet.
+
+Πρώτα στη **demo** της Viva (δωρεάν λογαριασμός στο demo.vivapayments.com, ψεύτικες κάρτες), μετά live:
+1. Στη Viva (demo, μετά live): **Settings → API Access** → τσεκάρισμα «Allow recurring payments and pre-auth captures via API». Από την ίδια σελίδα: Merchant ID, API Key, Smart Checkout Client ID / Client Secret.
+2. **Sales → Online Payments → Websites/Apps** → νέα πηγή: domain `okpublisher.gr`, Success URL `/pay-ok.html`, Failure URL `/pay-failed.html` → κωδικός πηγής (4 ψηφία).
+3. Script Properties: `VIVA_ENV` (`demo` ή `live`), `VIVA_CLIENT_ID`, `VIVA_CLIENT_SECRET`, `VIVA_MERCHANT_ID`, `VIVA_API_KEY`, `VIVA_SOURCE_CODE`. Τα κλειδιά τα βάζει μόνο ο διαχειριστής.
+4. `checkBilling` (έλεγχος κλειδιών, καμία χρέωση) → `setupBilling` (κύκλος κάθε ώρα).
+5. Δοκιμή στη demo με τον TST: αίτημα `billing_start` → πληρωμή με δοκιμαστική κάρτα στον σύνδεσμο → μέσα σε μία ώρα «πληρώθηκε» στην καρτέλα Πληρωμές → `demoChargeNow` (μία μηνιαία χρέωση τώρα, μόνο στη demo).
+
+Αιτήματα (από τον Claude, στο outbox): `billing_start { plan, amount_eur (με ΦΠΑ), start: "2027-02" }` όταν ο πελάτης πει «ναι» μετά τον δωρεάν μήνα · `billing_stop { after: "2027-05" }` όταν λύσει. Το νόμιμο παραστατικό κάθε πληρωμής δεν το βγάζει η Viva (λογιστής).
+
 **Φύλακας** (κάθε ώρα, workflow «Φύλακας»): το `run()` γράφει σε κάθε κύκλο «Τελευταίος κύκλος» στην καρτέλα Ουρά. Αν το Sheet δεν αλλάξει για πάνω από 40′ (π.χ. χάθηκε η άδεια της Google και σταμάτησαν οι triggers), το run αποτυγχάνει και το GitHub στέλνει email. Λύση: στον editor Run της `setup` (και `setupApproval`) με νέα έγκριση.
 
 ## Καθημερινά

@@ -16,6 +16,8 @@
  *                  Στο κείμενο, το {{DRIVE_FOLDER_URL}} γίνεται ο σύνδεσμος του drive_folder.
  *   move_sources   { to: "ΧΡΗΣΙΜΟΠΟΙΗΜΕΝΑ/2027-01", files: [{id, name}] }
  *   notify         { subject, text }                                 → απλό email στον πελάτη
+ *   billing_start  { plan, amount_eur, start: "2027-02" }          → συνδρομή Viva (βλ. Billing.gs)
+ *   billing_stop   { after: "2027-05" }                              → καμία χρέωση μετά
  *
  * Ασφάλεια (δεν αλλάζει από κανένα αίτημα):
  *   - Κάθε email πάει ΜΟΝΟ στο NOTIFY_TO_<K> (το email του πελάτη). Ποτέ αλλού, ποτέ σε προσωπικά.
@@ -45,7 +47,7 @@ const APPR_ = {
   MAX_ATTACH_BYTES: 20 * 1024 * 1024,
   TEXT_MAX: 8000,
   FULL_MAX: 20000,
-  TYPES: ['ensure_folder', 'email', 'move_sources', 'notify'],
+  TYPES: ['ensure_folder', 'email', 'move_sources', 'notify', 'billing_start', 'billing_stop'],
 };
 
 // ------------------------------------------------------------------ κύκλος
@@ -160,6 +162,10 @@ function doRequest_(K, req, res) {
   }
   if (req.type === 'move_sources') {
     moveSources_(K, req, res);
+    return;
+  }
+  if (req.type === 'billing_start' || req.type === 'billing_stop') {
+    billingRequest_(K, req, res);
     return;
   }
   // email

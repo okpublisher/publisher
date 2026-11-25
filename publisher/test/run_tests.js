@@ -927,6 +927,201 @@ test('checkInsights: μόνο έλεγχος, καμία αλλαγή', function
   assert.strictEqual(JSON.stringify(env.props), before);
 });
 
+// ------------------------------------------------------------------ πληρωμές Viva (Billing.gs)
+// Ψεύτικη Viva: token, παραγγελίες, έλεγχος πληρωμής ανά παραγγελία, μηνιαία χρέωση.
+function vivaFake() {
+  const v = { orders: [], charges: [], paid: {}, chargeFail: false, n: 0 };
+  v.fetch = function (url, o, resp) {
+    if (!/vivapayments\.com/.test(url)) return null;
+    if (/\/connect\/token$/.test(url)) return resp(200, { access_token: 'VT', expires_in: 3600 });
+    if (/\/checkout\/v2\/orders$/.test(url) && o.method === 'post') {
+      const b = JSON.parse(o.payload); v.orders.push(b); return resp(200, { orderCode: 9000000000000000 + (++v.n) });
+    }
+    let m = url.match(/\/api\/transactions\/\?ordercode=(\d+)/);
+    if (m) return resp(200, v.paid[m[1]] ? { Transactions: [{ TransactionId: v.paid[m[1]], StatusId: 'F', Amount: 186 }], ErrorCode: 0 } : { Transactions: [], ErrorCode: 0 });
+    if (/\/api\/transactions\/\?date=/.test(url)) return resp(200, { Transactions: [], ErrorCode: 0 });
+    m = url.match(/\/api\/transactions\/([^/?]+)$/);
+    if (m && o.method === 'post') {
+      v.charges.push({ tx: decodeURIComponent(m[1]), body: JSON.parse(o.payload), auth: o.headers.Authorization });
+      return v.chargeFail ? resp(200, { StatusId: 'E', ErrorCode: 10051, ErrorText: 'Insufficient funds', Success: false })
+        : resp(200, { StatusId: 'F', TransactionId: 'R' + (++v.n), ErrorCode: 0, Success: true });
+    }
+    return resp(404, { message: 'unknown viva call' });
+  };
+  return v;
+}
+const VIVA_PROPS = { VIVA_CLIENT_ID: 'cid', VIVA_CLIENT_SECRET: 'csec', VIVA_MERCHANT_ID: 'mid', VIVA_API_KEY: 'mkey' };
+function billEnv(now, extra, queue) {
+  const v = vivaFake();
+  const props = Object.assign({}, BASE_PROPS, VIVA_PROPS, { QUEUE_URL_ORE: 'https://example.com/q.json' }, extra || {});
+  const env = makeEnv({ props: props, now: now, queues: { 'https://example.com/q.json': queue || { version: 1, items: [] } }, extraFetch: v.fetch });
+  env.viva = v;
+  env.at = function (t) { env.nowMs = new Date(t).getTime(); };
+  env.state = function () { return JSON.parse(env.props.BILLING_ORE); };
+  env.req = function (r) { const res = {}; env.ctx.doRequest_('ORE', r, res); return res; };
+  return env;
+}
+function lastOrderCode(env) { return String(9000000000000000 + env.viva.n); }
+const PAID_FEB = { plan: 'Βασικό', amount: 18600, start: '2027-02', stop_after: null, tx: 'TX1', months: { '2027-02': { st: 'paid', tx: 'TX1' } } };
+
+test('πληρωμές: billing_start → παραγγελία με αποθήκευση κάρτας, σύνδεσμος ΜΟΝΟ στο email του πελάτη', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00');
+  const res = env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  assert.strictEqual(env.viva.orders.length, 1);
+  const o = env.viva.orders[0];
+  assert.strictEqual(o.amount, 18600);
+  assert.strictEqual(o.allowRecurring, true);
+  assert.strictEqual(o.customer.email, 'center@example.com');
+  assert.ok(o.paymentTimeout >= 86400);
+  assert.ok(/^https:\/\/demo\.vivapayments\.com\/web\/checkout\?ref=\d+/.test(res.link));
+  assert.strictEqual(env.mails.length, 1);
+  assert.strictEqual(env.mails[0].to, 'center@example.com');
+  assert.ok(env.mails[0].body.indexOf(res.link) >= 0 && /186,00/.test(env.mails[0].body));
+  assert.strictEqual(env.state().months['2027-02'].st, 'pending');
+  assert.ok(env.sheets['Πληρωμές'] && env.sheets['Πληρωμές'].rows.length >= 2);
+});
+
+test('πληρωμές: η πληρωμή με τον σύνδεσμο βρίσκεται μόνη της· αυτόματη χρέωση την 1η από τις 09:00, μία φορά', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00');
+  env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  env.viva.paid[lastOrderCode(env)] = 'TX1';
+  env.at('2027-01-29T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.state().tx, 'TX1');
+  assert.strictEqual(env.state().months['2027-02'].st, 'paid');
+  env.at('2027-02-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0, 'ο Φεβρουάριος είναι ήδη πληρωμένος');
+  env.at('2027-03-01T08:30:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0, 'πριν τις 09:00 καμία χρέωση');
+  env.at('2027-03-01T09:05:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 1);
+  assert.deepStrictEqual([env.viva.charges[0].tx, env.viva.charges[0].body.amount], ['TX1', 18600]);
+  assert.ok(/^Basic /.test(env.viva.charges[0].auth));
+  assert.strictEqual(env.state().months['2027-03'].st, 'paid');
+  assert.ok(env.mails.some(function (m) { return /Χρεώθηκε η συνδρομή για τον Μάρτιο 2027/.test(m.subject) && m.to === 'center@example.com'; }));
+  env.at('2027-03-01T10:05:00+02:00'); env.ctx.billingCycle();
+  env.at('2027-03-20T10:05:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 1, 'ποτέ δεύτερη χρέωση για τον ίδιο μήνα');
+});
+
+test('πληρωμές: χρέωση που δεν περνά → σύνδεσμος, υπενθύμιση στις 8, παύση στις 16 χωρίς δημοσιεύσεις, επανεκκίνηση με την πληρωμή', function () {
+  const queue = { version: 1, items: [{ id: 'ORE-2027-03-16-post', account: 'ORE', type: 'IMAGE', publish_at: '2027-03-16T10:00:00+02:00', images: ['https://example.com/i.jpg'], caption: 'x' }] };
+  const env = billEnv('2027-03-01T09:30:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB) }, queue);
+  env.viva.chargeFail = true;
+  env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 1);
+  assert.strictEqual(env.viva.orders.length, 1);
+  assert.strictEqual(env.state().months['2027-03'].st, 'pending');
+  assert.ok(/δεν πέρασε/.test(env.mails[0].subject) && env.mails[0].to === 'center@example.com');
+  env.at('2027-03-05T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.mails.length, 1, 'καμία ειδοποίηση πριν τις 8');
+  env.at('2027-03-08T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.mails.length, 2);
+  assert.ok(/Υπενθύμιση/.test(env.mails[1].subject));
+  assert.strictEqual(env.viva.orders.length, 2, 'νέος σύνδεσμος (ο παλιός λήγει)');
+  env.at('2027-03-09T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.mails.length, 2, 'μία υπενθύμιση μόνο');
+  env.at('2027-03-16T10:05:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.props.BILLING_PAUSED_ORE, 'true');
+  assert.ok(/σταμάτησαν προσωρινά/.test(env.mails[2].subject));
+  env.ctx.run();
+  assert.strictEqual(graphPosts(env).length, 0, 'σε παύση δεν δημοσιεύεται τίποτα');
+  assert.strictEqual(env.viva.charges.length, 1, 'καμία δεύτερη αυτόματη χρέωση');
+  env.viva.paid[lastOrderCode(env)] = 'TX2';
+  env.at('2027-03-16T11:00:00+02:00'); env.ctx.billingCycle();
+  assert.ok(!('BILLING_PAUSED_ORE' in env.props));
+  assert.strictEqual(env.state().tx, 'TX2');
+  assert.ok(/συνεχίζονται/.test(env.mails[env.mails.length - 1].subject));
+  env.ctx.run();
+  assert.ok(graphPosts(env).length > 0, 'μετά την πληρωμή οι δημοσιεύσεις συνεχίζονται');
+  assert.ok(env.mails.every(function (m) { return m.to === 'center@example.com'; }), 'όλα τα email μόνο στον πελάτη');
+});
+
+test('πληρωμές: η χειροκίνητη παύση (PAUSED_<K>) δεν αναιρείται από την πληρωμή', function () {
+  const st = JSON.parse(JSON.stringify(PAID_FEB));
+  st.months['2027-03'] = { st: 'pending', order: '9000000000000777', order_at: '2027-03-16T10:00:00+02:00', paused: '2027-03-16T10:00:00+02:00' };
+  const env = billEnv('2027-03-17T10:00:00+02:00', { BILLING_ORE: JSON.stringify(st), BILLING_PAUSED_ORE: 'true', PAUSED_ORE: 'true' });
+  env.viva.paid['9000000000000777'] = 'TX3';
+  env.ctx.billingCycle();
+  assert.ok(!('BILLING_PAUSED_ORE' in env.props));
+  assert.strictEqual(env.props.PAUSED_ORE, 'true');
+});
+
+test('πληρωμές: billing_stop → καμία χρέωση μετά τον τελευταίο μήνα', function () {
+  const env = billEnv('2027-02-10T10:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB) });
+  env.req({ type: 'billing_stop', after: '2027-02' });
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  env.at('2027-04-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0);
+  assert.strictEqual(env.mails.length, 0);
+});
+
+test('πληρωμές: απλήρωτος προηγούμενος μήνας → ο νέος μήνας δεν χρεώνεται', function () {
+  const st = JSON.parse(JSON.stringify(PAID_FEB));
+  st.months['2027-02'] = { st: 'pending', order: '9000000000000555', order_at: '2027-02-01T10:00:00+02:00', reminded: 'x', paused: 'x' };
+  const env = billEnv('2027-03-01T10:00:00+02:00', { BILLING_ORE: JSON.stringify(st), BILLING_PAUSED_ORE: 'true' });
+  env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0);
+  assert.ok(!env.state().months['2027-03']);
+});
+
+test('πληρωμές: χρέωση που κόπηκε στη μέση δεν ξαναγίνεται (email μόνο στο okpublisher)', function () {
+  const st = JSON.parse(JSON.stringify(PAID_FEB));
+  st.months['2027-03'] = { st: 'charging', at: '2027-03-01T09:00:00+02:00' };
+  const env = billEnv('2027-03-01T11:00:00+02:00', { BILLING_ORE: JSON.stringify(st) });
+  env.ctx.billingCycle();
+  env.at('2027-03-01T12:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0);
+  assert.strictEqual(env.mails.length, 1, 'ένα email την ημέρα, όχι κάθε ώρα');
+  assert.strictEqual(env.mails[0].to, 'system@example.com');
+});
+
+test('πληρωμές: χωρίς κλειδιά Viva → καμία χρέωση, τίποτα «στη μέση», email στο okpublisher', function () {
+  const env = billEnv('2027-03-01T10:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB), VIVA_API_KEY: '' });
+  env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0);
+  assert.ok(!env.state().months['2027-03']);
+  assert.strictEqual(env.mails.length, 1);
+  assert.strictEqual(env.mails[0].to, 'system@example.com');
+  assert.ok(/VIVA_API_KEY/.test(env.mails[0].body));
+});
+
+test('πληρωμές: άκυρο billing_start → σφάλμα, τίποτα στη Viva, κανένα email', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00');
+  assert.throws(function () { env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 0, start: '2027-02' }); }, /ποσό/);
+  assert.throws(function () { env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186 }); }, /πρώτος μήνας/);
+  env.props.BILLING_ORE = JSON.stringify(PAID_FEB);
+  assert.throws(function () { env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-03' }); }, /ενεργή συνδρομή/);
+  assert.strictEqual(env.viva.orders.length, 0);
+  assert.strictEqual(env.mails.length, 0);
+});
+
+test('πληρωμές: δοκιμαστικός πελάτης TST (TEST_CLIENTS) · demoChargeNow μόνο στη demo', function () {
+  const st = JSON.parse(JSON.stringify(PAID_FEB));
+  const env = billEnv('2027-02-10T10:00:00+02:00', { TEST_CLIENTS: 'TST', NOTIFY_TO_TST: 'test@example.com', BILLING_TST: JSON.stringify(st) });
+  const c = env.ctx.demoChargeNow();
+  assert.ok(c.ok);
+  assert.strictEqual(env.viva.charges.length, 1);
+  assert.strictEqual(env.viva.charges[0].tx, 'TX1');
+  assert.ok(!JSON.parse(env.props.BILLING_TST).months['demo'], 'οι μήνες του πελάτη δεν αλλάζουν');
+  env.props.VIVA_ENV = 'live';
+  assert.throws(function () { env.ctx.demoChargeNow(); }, /μόνο με VIVA_ENV=demo/);
+  assert.strictEqual(env.viva.charges.length, 1);
+  env.props.VIVA_ENV = 'demo';
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.ok(env.viva.charges.some(function (x) { return x.body.merchantTrns === 'okp TST 2027-03'; }), 'ο TST χρεώνεται κι αυτός από τον κύκλο');
+});
+
+test('πληρωμές: VIVA_ENV=live → πραγματικοί διακομιστές της Viva', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00', { VIVA_ENV: 'live' });
+  const seen = [];
+  const orig = env.ctx.UrlFetchApp.fetch;
+  env.ctx.UrlFetchApp.fetch = function (u, o) { seen.push(u); return orig(u.replace('://accounts.', '://demo-accounts.').replace('://api.', '://demo-api.').replace('://www.', '://demo.'), o); };
+  const res = env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  assert.ok(seen.indexOf('https://accounts.vivapayments.com/connect/token') >= 0);
+  assert.ok(seen.indexOf('https://api.vivapayments.com/checkout/v2/orders') >= 0);
+  assert.ok(/^https:\/\/www\.vivapayments\.com\/web\/checkout\?ref=/.test(res.link));
+});
+
 // Σύγκριση με τον παλιό LS Publisher: για την ίδια ουρά, οι ίδιες ακριβώς κλήσεις στο Meta (εκτός από το token).
 if (OLD_DIR) {
   test('ίδιες κλήσεις Meta με τον παλιό LS Publisher (carousel, story, reel, reel-story, εικόνα)', function () {
