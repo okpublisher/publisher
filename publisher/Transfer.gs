@@ -8,7 +8,8 @@
  *     κοινοποίηση με τον φάκελο υλικού.
  *   - Για κάθε βίντεο γράφεται και ένα «<όνομα>__<id>.manifest.json» με το MD5 του πρωτοτύπου και κάθε κομματιού,
  *     ώστε το ξαναένωμα να ελέγχεται byte προς byte (studio/join_parts.py).
- *   - Ό,τι έχει ήδη κοπεί δεν ξανακόβεται. Αν δεν προλάβει (όριο 6 λεπτών), συνεχίζει μόνο του σε 1 λεπτό.
+ *   - Ό,τι έχει ήδη κοπεί δεν ξανακόβεται ούτε ξανακατεβαίνει: το MD5 των κομματιών που υπάρχουν έρχεται από το Drive.
+ *     Αν δεν προλάβει (όριο 6 λεπτών), συνεχίζει μόνο του σε 1 λεπτό από εκεί που σταμάτησε.
  *   - Κομμάτια παλιότερα από 14 ημέρες πάνε στον κάδο (είναι προσωρινά αντίγραφα του okpublisher).
  * Τρέχει και κάθε βράδυ, αμέσως μετά τον έλεγχο διπλοτύπων (dedupeMaterial).
  */
@@ -47,9 +48,7 @@ function splitClient_(K, deadline) {
   const dir = sub.hasNext() ? sub.next() : root.createFolder(XFER_.DIR);
   xferCleanupOld_(dir);
 
-  const existing = {};
-  const ef = dir.getFiles();
-  while (ef.hasNext()) existing[ef.next().getName()] = true;
+  const existing = xferExisting_(dir.getId());
 
   // Μόνο απευθείας αρχεία του φακέλου υλικού και του «REELS ΕΤΟΙΜΑ» (όχι ΧΡΗΣΙΜΟΠΟΙΗΜΕΝΑ / ΑΠΟΡΡΙΦΘΗΚΑΝ / ΕΓΚΡΙΣΗ).
   const sources = [root.getId()];
@@ -74,6 +73,9 @@ function splitClient_(K, deadline) {
     for (let k = 0; k < n; k++) {
       const name = base + '.p' + ('0' + (k + 1)).slice(-2);
       const a = k * XFER_.CHUNK, b = Math.min(size, a + XFER_.CHUNK) - 1;
+      const have = existing[name];
+      if (have && have.size === b - a + 1 && have.md5) { man.push({ name: name, size: have.size, md5: have.md5 }); continue; }
+      if (have) throw new Error('Το κομμάτι ' + name + ' υπάρχει με λάθος μέγεθος (' + have.size + ' αντί ' + (b - a + 1) + ')· θέλει έλεγχο.');
       if (Date.now() > deadline) { unfinished = true; break; }
       const r = UrlFetchApp.fetch(TIDY_.API + '/' + f.id + '?alt=media&supportsAllDrives=true', {
         headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken(), Range: 'bytes=' + a + '-' + b }, muteHttpExceptions: true });
@@ -81,7 +83,7 @@ function splitClient_(K, deadline) {
       const bytes = r.getContent();
       if (bytes.length !== b - a + 1) throw new Error('Λάθος μέγεθος κομματιού ' + name + ': ' + bytes.length);
       man.push({ name: name, size: bytes.length, md5: xferMd5_(bytes) });
-      if (!existing[name]) { dir.createFile(Utilities.newBlob(bytes, 'application/octet-stream', name)); parts++; }
+      dir.createFile(Utilities.newBlob(bytes, 'application/octet-stream', name)); parts++;
     }
     if (unfinished) break;
     dir.createFile(Utilities.newBlob(JSON.stringify({ id: f.id, name: f.name, size: size, md5: f.md5Checksum,
@@ -93,6 +95,19 @@ function splitClient_(K, deadline) {
 }
 
 function xferBase_(f) { return f.name + '__' + f.id; }
+
+// Αρχεία του «_ΜΕΤΑΦΟΡΑ» με μέγεθος και MD5 (από το Drive, χωρίς κατέβασμα).
+function xferExisting_(dirId) {
+  const out = {};
+  let pt = '';
+  do {
+    const j = tidyJson_(UrlFetchApp.fetch(tidyListUrl_(dirId, pt),
+      { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true }));
+    (j.files || []).forEach(function (f) { out[f.name] = { size: Number(f.size), md5: f.md5Checksum || '' }; });
+    pt = j.nextPageToken || '';
+  } while (pt);
+  return out;
+}
 
 function xferMd5_(bytes) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, bytes)

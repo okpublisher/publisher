@@ -1,0 +1,24 @@
+# Φύλακας: κάθε ώρα ελέγχει ότι το Apps Script του okpublisher τρέχει (ο κύκλος run() κάθε 10′ αλλάζει το Sheet).
+# Αν όχι, το run αποτυγχάνει και το GitHub στέλνει email. Δεν αλλάζει τίποτα πουθενά.
+name: Φύλακας (τρέχει το Apps Script;)
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Έλεγχος
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+          MAX_MIN: '40'
+        run: node tools/gas/watchdog.js

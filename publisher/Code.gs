@@ -496,6 +496,8 @@ function syncSheet_(queues) {
     sh.getRange(2, 1, rows.length, H.length).setValues(rows);
     sh.getRange(2, 2, rows.length, 1).setNumberFormat('ddd dd/MM HH:mm');
   }
+  // Σήμα ζωής: αλλάζει σε κάθε κύκλο, ώστε ο «Φύλακας» (GitHub) να βλέπει αν σταμάτησαν οι triggers.
+  sh.getRange(1, H.length + 2, 1, 2).setValues([['Τελευταίος κύκλος', new Date()]]);
 }
 
 function allQueues_() {

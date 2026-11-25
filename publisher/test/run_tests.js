@@ -72,7 +72,7 @@ function makeEnv(opts) {
       name: name, rows: rows,
       getRange: function (r, c, nr, nc) {
         return {
-          setValues: function (v) { v.forEach(function (row, i) { rows[r - 1 + i] = row.slice(); }); return this; },
+          setValues: function (v) { v.forEach(function (row, i) { const cur = c === 1 ? [] : (rows[r - 1 + i] || []).slice(); row.forEach(function (x, j) { cur[c - 1 + j] = x; }); if (c > 1) { for (let k = 0; k < c - 1; k++) if (!(k in cur)) cur[k] = ''; } rows[r - 1 + i] = cur; }); return this; },
           setFontWeight: function () { return this; }, setNumberFormat: function () { return this; },
           getValues: function () { const out = []; for (let i = 0; i < nr; i++) out.push((rows[r - 1 + i] || []).slice(c - 1, c - 1 + nc)); return out; },
           clearContent: function () { for (let i = 0; i < nr; i++) rows[r - 1 + i] = []; return this; },
@@ -355,6 +355,35 @@ test('Sheet: στήλη Πελάτης και όλες οι εγγραφές', f
   assert.strictEqual(rows[0][0], 'Πελάτης');
   assert.strictEqual(rows.length, 7);
   assert.ok(rows.slice(1).every(function (r) { return r[0] === 'ORE'; }));
+  assert.strictEqual(rows[0][11], 'Τελευταίος κύκλος', 'σήμα ζωής για τον Φύλακα');
+  assert.strictEqual(rows[0][12].getTime(), env.nowMs);
+});
+
+test('μεγάλα βίντεο: τα κομμάτια που υπάρχουν ΔΕΝ ξανακατεβαίνουν (MD5 από το Drive)· κατεβαίνει μόνο ό,τι λείπει', function () {
+  const made = [];
+  const X = { getId: () => 'X', getFiles: () => iter([]),
+    createFile: function (b) { made.push(b); return { getId: () => 'N' + made.length }; } };
+  const ROOT = { getId: () => 'ROOT', getFoldersByName: function (n) { return iter(n === '_ΜΕΤΑΦΟΡΑ' ? [X] : []); },
+    createFolder: function () { throw new Error('δεν πρέπει'); } };
+  const tree = {
+    ROOT: [{ id: 'v1', name: 'big.mov', size: '25', md5Checksum: 'vmd5', createdTime: '2026-11-24T10:00:00Z', mimeType: 'video/quicktime' }],
+    X: [{ id: 'p1', name: 'big.mov__v1.p01', size: '10', md5Checksum: 'h1' },
+        { id: 'p2', name: 'big.mov__v1.p02', size: '10', md5Checksum: 'h2' }],
+  };
+  const ranges = [];
+  const env = makeEnv({ props: { CLIENTS: 'ORE', FOLDER_ORE: 'ROOT' }, driveTree: tree, DriveApp: { getFolderById: function () { return ROOT; } },
+    extraFetch: function (url, o, resp) {
+      if (/\/files\/v1\?alt=media/.test(url)) { ranges.push(o.headers.Range); const m = o.headers.Range.match(/(\d+)-(\d+)/); return resp(206, Buffer.alloc(Number(m[2]) - Number(m[1]) + 1, 7)); }
+    } });
+  vm.runInContext('XFER_.CHUNK = 10; XFER_.MIN_SIZE = 15;', env.ctx);
+  const r = env.ctx.splitBigVideos(env.nowMs + 60000);
+  assert.deepStrictEqual(ranges, ['bytes=20-24'], 'μόνο το 3ο κομμάτι κατέβηκε');
+  assert.deepStrictEqual(made.map(function (b) { return b.name; }), ['big.mov__v1.p03', 'big.mov__v1.manifest.json']);
+  const man = JSON.parse(made[1].getDataAsString());
+  assert.deepStrictEqual(man.parts.map(function (p) { return [p.name, p.size, p.md5]; }),
+    [['big.mov__v1.p01', 10, 'h1'], ['big.mov__v1.p02', 10, 'h2'], ['big.mov__v1.p03', 5, '010203']]);
+  assert.strictEqual(r.done, 1); assert.strictEqual(r.parts, 1); assert.strictEqual(r.left, 0);
+  assert.strictEqual(env.triggers.length, 0, 'τίποτα δεν έμεινε → κανένας νέος κύκλος');
 });
 
 test('συντόμευση iPhone: κάθε πελάτης μόνο με το δικό του κλειδί, στον δικό του φάκελο', function () {
