@@ -1,9 +1,23 @@
 {
- "source": "Pixabay Music (Pixabay Content License: εμπορική χρήση, χωρίς αναφορά δημιουργού). Μόνο links· το κάθε κομμάτι κατεβαίνει από το url του όταν χρειάζεται, σε cache εκτός repo. Ποτέ mp3 στο repo. Παιδικά/χαρούμενα κομμάτια επιλεγμένα 21/11/2026. mood: playful (κύρια χρήση), gentle/calm/warm (κριτικές, συμβουλευτική γονέων), energetic (σπάνια). Μην επαναλαμβάνεις το ίδιο κομμάτι σε κοντινές μέρες.",
+ "source": "Pixabay Music (Pixabay Content License: εμπορική χρήση, χωρίς αναφορά δημιουργού). Μόνο links· το κάθε κομμάτι κατεβαίνει από το url του όταν χρειάζεται, σε cache εκτός repo. Ποτέ mp3 στο repo. Επιλογή και καταγραφή: music.py (pick / add / block / check).",
+ "sets": {
+  "kids": "Παιδικά, χαρούμενα: κέντρα θεραπείας και μάθησης, παιδότοποι, παιδικά τμήματα (επιλογή 21/11/2026)"
+ },
+ "moods": {
+  "playful": "χαρούμενο, παιχνιδιάρικο",
+  "gentle": "τρυφερό, απαλό",
+  "calm": "ήρεμο, χαλαρό",
+  "warm": "ζεστό, ακουστικό",
+  "energetic": "ζωντανό, γρήγορο",
+  "elegant": "κομψό, εκλεπτυσμένο"
+ },
+ "id_prefix": {
+  "kids": "ls"
+ },
  "tracks": [
   {
    "id": "ls_01",
-   "brand": "LS",
+   "set": "kids",
    "title": "Kids Playful",
    "artist": "The_Mountain",
    "mood": "playful",
@@ -14,7 +28,7 @@
   },
   {
    "id": "ls_02",
-   "brand": "LS",
+   "set": "kids",
    "title": "Happy Ukulele",
    "artist": "AtlasAudio",
    "mood": "playful",
@@ -25,7 +39,7 @@
   },
   {
    "id": "ls_03",
-   "brand": "LS",
+   "set": "kids",
    "title": "Cute Piano",
    "artist": "StudioKolomna",
    "mood": "gentle",
@@ -36,7 +50,7 @@
   },
   {
    "id": "ls_04",
-   "brand": "LS",
+   "set": "kids",
    "title": "Warm Acoustic",
    "artist": "AtlasAudio",
    "mood": "warm",
@@ -47,7 +61,7 @@
   },
   {
    "id": "ls_05",
-   "brand": "LS",
+   "set": "kids",
    "title": "Cheerful - Cheerful Music",
    "artist": "PaulYudin",
    "mood": "playful",
@@ -58,7 +72,7 @@
   },
   {
    "id": "ls_06",
-   "brand": "LS",
+   "set": "kids",
    "title": "Kids",
    "artist": "AtlasAudio",
    "mood": "playful",
@@ -69,7 +83,7 @@
   },
   {
    "id": "ls_07",
-   "brand": "LS",
+   "set": "kids",
    "title": "Kids",
    "artist": "AtlasAudio",
    "mood": "playful",
@@ -80,7 +94,7 @@
   },
   {
    "id": "ls_08",
-   "brand": "LS",
+   "set": "kids",
    "title": "Lifestyle Vlog",
    "artist": "The_Mountain",
    "mood": "warm",
@@ -91,7 +105,7 @@
   },
   {
    "id": "ls_09",
-   "brand": "LS",
+   "set": "kids",
    "title": "Children Ukulele Upbeat Positive Pop Rock",
    "artist": "ikoliks",
    "mood": "energetic",
@@ -102,7 +116,7 @@
   },
   {
    "id": "ls_10",
-   "brand": "LS",
+   "set": "kids",
    "title": "Happy Ukulele Kids",
    "artist": "alexrockbeat",
    "mood": "playful",
@@ -113,7 +127,7 @@
   },
   {
    "id": "ls_11",
-   "brand": "LS",
+   "set": "kids",
    "title": "Kids Ukulele Music",
    "artist": "331music",
    "mood": "playful",
@@ -124,7 +138,7 @@
   },
   {
    "id": "ls_12",
-   "brand": "LS",
+   "set": "kids",
    "title": "Kids Zone - Ukulele",
    "artist": "Pocketbeats",
    "mood": "playful",
@@ -135,7 +149,7 @@
   },
   {
    "id": "ls_13",
-   "brand": "LS",
+   "set": "kids",
    "title": "Ukulele",
    "artist": "NastelBom",
    "mood": "playful",
@@ -146,7 +160,7 @@
   },
   {
    "id": "ls_14",
-   "brand": "LS",
+   "set": "kids",
    "title": "Romantic Ukulele",
    "artist": "StudioKolomna",
    "mood": "gentle",
@@ -157,7 +171,7 @@
   },
   {
    "id": "ls_15",
-   "brand": "LS",
+   "set": "kids",
    "title": "Piano and Strings",
    "artist": "zec53",
    "mood": "calm",
@@ -168,7 +182,7 @@
   },
   {
    "id": "ls_16",
-   "brand": "LS",
+   "set": "kids",
    "title": "Beautiful Uplifting",
    "artist": "Twisterium",
    "mood": "warm",

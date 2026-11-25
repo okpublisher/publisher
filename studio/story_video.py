@@ -3,7 +3,7 @@
 
   python3 story_video.py <story.jpg> <track_id> <out.mp4> [διάρκεια_s=12]
 
-track_id από το music_library.json (π.χ. ls_01). Το κομμάτι κατεβαίνει από το url του
+track_id από το music_library.json (π.χ. ls_01· διάλεξέ το με `music.py pick`). Το κομμάτι κατεβαίνει από το url του
 (cdn.pixabay.com) σε cache έξω από το repo· ΠΟΤΕ δεν μπαίνει ήχος στο repo.
 Βίντεο: πολύ αργό zoom 1.00→1.025 στο κέντρο (το περιθώριο των σχεδίων καλύπτει την περικοπή),
 H.264 30fps yuv420p, AAC 128k 48kHz, -16 LUFS, fade in 0,4″ / fade out 1,5″, faststart.
@@ -13,16 +13,30 @@ import hashlib, json, os, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.environ.get('MUSIC_CACHE', '/tmp/music_cache')
 
-def track(tid):
-    lib = json.load(open(os.path.join(HERE, 'music_library.json')))['tracks']
-    t = next(x for x in lib if x['id'] == tid)
+def library():
+    path = os.environ.get('MUSIC_LIBRARY') or os.path.join(HERE, 'music_library.json')
+    return json.load(open(path, encoding='utf-8'))['tracks']
+
+def download(url, name='track'):
+    """Το mp3 στο cache (εκτός repo)· κατεβαίνει μόνο την πρώτη φορά."""
     os.makedirs(CACHE, exist_ok=True)
-    path = os.path.join(CACHE, tid + '_' + hashlib.sha1(t['url'].encode()).hexdigest()[:8] + '.mp3')
+    path = os.path.join(CACHE, name + '_' + hashlib.sha1(url.encode()).hexdigest()[:8] + '.mp3')
     if not os.path.exists(path) or os.path.getsize(path) < 10000:
-        subprocess.run(['curl', '-sSfL', '-A', 'Mozilla/5.0', '-o', path, t['url']], check=True)
-    return t, path
+        subprocess.run(['curl', '-sSfL', '-A', 'Mozilla/5.0', '-o', path, url], check=True)
+    return path
+
+def track(tid):
+    """(κομμάτι, mp3). Αρνείται άγνωστα και αποκλεισμένα κομμάτια (music.py block)."""
+    t = next((x for x in library() if x['id'] == tid), None)
+    if t is None:
+        raise SystemExit(f'Δεν υπάρχει κομμάτι «{tid}» στο music_library.json (music.py list).')
+    if t.get('blocked'):
+        raise SystemExit(f'Το κομμάτι {tid} είναι αποκλεισμένο ({t["blocked"]}). Διάλεξε άλλο: music.py pick …')
+    return t, download(t['url'], tid)
 
 def make(img, tid, out, dur=12.0):
+    if tid == 'none':
+        raise SystemExit('Χωρίς μουσική (επιλογή του πελάτη): το story μένει εικόνα (jpg), χωρίς βίντεο.')
     t, mp3 = track(tid)
     start = max(0.0, min(float(t.get('best_start', 0)), float(t.get('dur', 9999)) - dur - 0.5))
     fps, z = 30, 0.025

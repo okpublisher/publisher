@@ -22,7 +22,8 @@
 - Παιδιά: κάθε πρόσωπο που μπορεί να είναι παιδιού θολώνεται (`privacy_check.py blurfaces`, στην αμφιβολία θόλωμα).
   Ό,τι δεν θολώνεται αξιόπιστα ΔΕΝ χρησιμοποιείται (κόψιμο σημείου ή απόρριψη). Ονόματα παιδιών ποτέ (και σε
   ζωγραφιές/καρτελάκια/τοίχους → `blur --box` ή απόρριψη).
-- Ο ήχος των δικών μας βίντεο αφαιρείται πάντα (`make_reel.py`)· μουσική μόνο από το `music_library.json`.
+- Ο ήχος των δικών μας βίντεο αφαιρείται πάντα (`make_reel.py`)· μουσική μόνο από το `music_library.json`, από το σετ
+  του πελάτη και μόνο με `music.py pick` (βλ. 6). Ποτέ αποκλεισμένο κομμάτι.
   Τα **έτοιμα reels** του πελάτη μένουν όπως είναι (και ο ήχος τους) — βλ. 2.4.
 - Τίποτα στο δημόσιο repo χωρίς: `privacy_check.py clean` → `verify` → **οπτικός έλεγχος κάθε φύλλου** → `mark ok`.
   Το `make_queue.py` αρνείται οτιδήποτε άλλο.
@@ -58,7 +59,8 @@
    τα `rules.md`). Λίγο υλικό → γραφικά (`engine.py`), ποτέ «γέμισμα» με αμφίβολες φωτογραφίες.
 8. Πηγές → `privacy_check.py clean` → `studio/assets/` (+ αντίγραφο στο `batches/<ΕΕΕΕ-ΜΜ>/assets/`). Script
    `batches/<ΕΕΕΕ-ΜΜ>/build.py` (`from engine import cover, text, point, list_card, quote, cta, story_photo, story_text, render_all, POST, STORY, CREAM`)
-   → `batches/<ΕΕΕΕ-ΜΜ>/<K>/`. Stories με μουσική: `story_video.py`. Reels: `make_reel.py`. Λεζάντες: `captions.json`
+   → `batches/<ΕΕΕΕ-ΜΜ>/<K>/`. Για κάθε reel και κάθε story-βίντεο: `music.py pick --date <ημ/νία> --mood <διάθεση> --min-dur <διάρκεια> --record <αρχείο>`
+   → `track_id` (βλ. 6). Stories με μουσική: `story_video.py`. Reels: `make_reel.py` (`none` = χωρίς μουσική). Λεζάντες: `captions.json`
    (`<K>|<ημ/νία>`). Πηγές (ID Drive → asset): `sources.json`.
 9. `privacy_check.py verify batches/<ΕΕΕΕ-ΜΜ>` → κοίτα ΚΑΘΕ φύλλο στο `_review/` → `mark ok|reject … --note`.
 10. `git pull` στο publisher-work → διάβασε `outbox/<ΕΕΕΕ-ΜΜ>-01-folder.result.json`. Αν δεν υπάρχει ακόμα, ξαναδοκίμασε
@@ -108,6 +110,29 @@
    `pip install --break-system-packages git-filter-repo` και ένα πρόσφατο `git pull` (κανένα άλλο push στη μέση). Αν το
    force push απορριφθεί: ξανά χωρίς `--purge-history` και σημείωση στο τελικό μήνυμα προς τον διαχειριστή.
 6. Commit & push του publisher-work (state, inbox που επεξεργάστηκες, αιτήματα) — πάντα στο τέλος.
+
+## 6. Μουσική
+- **Σετ ανά κλάδο** στο `music_library.json` (`sets`, π.χ. `kids`), όχι ανά πελάτη. Κάθε κομμάτι: ένα σετ, μία διάθεση
+  (`moods`). Μόνο Pixabay (Pixabay Content License). Ο πελάτης παίρνει σετ και διαθέσεις από το `"music"` της ομάδας του
+  (`group.json`) ή του `config.json` του: `{"set": "kids", "moods": ["playful", "gentle"], "avoid_days": 10}` ή
+  `{"none": true}` (χωρίς μουσική: reels με σιωπηλό ήχο, stories μένουν εικόνες).
+- **Παραγωγή:** `music.py pick --client K --date ΕΕΕΕ-ΜΜ-ΗΗ --mood <διάθεση> --min-dur <διάρκεια βίντεο> --record <αρχείο>`
+  για κάθε reel / story-βίντεο, με τη σειρά των ημερών. Γράφει στο ιδιωτικό `clients/<K>/music_log.json` (commit μαζί με
+  την παρτίδα), ώστε να μην ξαναμπαίνει το ίδιο κομμάτι σε ±`avoid_days` ημέρες. Διάθεση από το θέμα: χαρούμενα θέματα →
+  η 1η του πελάτη· κριτικές/συμβουλές → `calm` / `gentle` / `warm`. Σημείωση στο stderr = δες την και διάλεξε αλλιώς αν δεν ταιριάζει.
+- **Σίγαση ή διεκδίκηση** (ειδοποίηση της Meta ή του πελάτη, reel χωρίς ήχο): `music.py block <id> --reason "…"`
+  (χωρίς ονόματα πελατών: το repo είναι δημόσιο) → commit & push του publisher → `music.py where <id>` δείχνει πού
+  άλλου έχει μπει → σημείωση στον διαχειριστή. Δεν ξαναμπαίνει πουθενά.
+- **Νέος κλάδος** (στο σετάρισμα πελάτη που το σετ του δεν υπάρχει): νέο κλειδί στα `sets` (λατινικά, π.χ. `beauty`,
+  `cafe`, `fitness`, `stay`, `general`) και 12–20 κομμάτια, σε 3–4 διαθέσεις, από pixabay.com/music: ορχηστρικά (χωρίς
+  φωνή), όχι «ήχοι ειδοποίησης», διάρκεια ≥ 60″. Για καθένα:
+  `music.py add --set <σετ> --mood <διάθεση> --title … --artist … --page <σελίδα Pixabay> --url <mp3 cdn.pixabay.com>`
+  (υπολογίζει διάρκεια και `best_start` από τον ήχο). Μετά `music.py check` και `"music"` στο `config.json` του πελάτη.
+  Ο διαχειριστής ακούει τα κομμάτια από τις σελίδες τους πριν από την 1η παραγωγή.
+- **Επιλογή του πελάτη στο σετάρισμα** (στήλη «Μουσική στα reels») → `moods`: Ήρεμη → `calm, warm, gentle` ·
+  Ζωντανή → `energetic, playful, warm` · Κομψή → `elegant, calm` · Χαρούμενη → `playful, warm` · Χωρίς μουσική →
+  `"none": true` · «Αφήστε το σε εμάς» → οι διαθέσεις που ταιριάζουν στον κλάδο.
+- Τα **έτοιμα reels** του πελάτη κρατούν τον δικό τους ήχο (ευθύνη του πελάτη, όροι Α.5)· δεν περνούν από το `music.py`.
 
 ## 4. Δοκιμαστικός πελάτης (TST)
 Πακέτο με `"test": true`: στην έγκριση γίνεται μόνο η απάντηση στο thread (και, αν ζητηθεί, μια δοκιμαστική

@@ -318,5 +318,142 @@ class CleanupTest(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+class MusicTest(unittest.TestCase):
+    """music.py: σετ ανά κλάδο, διαθέσεις, όχι επαναλήψεις, αποκλεισμός, «χωρίς μουσική» (χωρίς internet)."""
+
+    def setUp(self):
+        import client, music, story_video
+        self.client, self.music, self.story_video = client, music, story_video
+        self.tmp = tempfile.mkdtemp()
+        make_work(self.tmp)
+        def tr(tid, s, mood, dur=120.0, **kw):
+            return {'id': tid, 'set': s, 'mood': mood, 'title': tid, 'artist': 'x', 'dur': dur, 'best_start': 10.0,
+                    'page': 'https://pixabay.com/music/x-1/', 'url': f'https://cdn.pixabay.com/audio/{tid}.mp3', **kw}
+        self.lib = {'sets': {'kids': 'παιδικά', 'cafe': 'καφέ'},
+                    'moods': {'playful': '', 'calm': '', 'warm': '', 'elegant': ''},
+                    'tracks': [tr('k1', 'kids', 'playful'), tr('k2', 'kids', 'playful'), tr('k3', 'kids', 'calm'),
+                               tr('k4', 'kids', 'playful', blocked='2026-12-01: σίγαση'), tr('k5', 'kids', 'playful', dur=15.0),
+                               tr('c1', 'cafe', 'warm')]}
+        self.libfile = Path(self.tmp) / 'music_library.json'
+        self.libfile.write_text(json.dumps(self.lib), encoding='utf-8')
+        self.old_env = os.environ.get('MUSIC_LIBRARY')
+        os.environ['MUSIC_LIBRARY'] = str(self.libfile)
+
+    def tearDown(self):
+        if self.old_env is None:
+            os.environ.pop('MUSIC_LIBRARY', None)
+        else:
+            os.environ['MUSIC_LIBRARY'] = self.old_env
+        shutil.rmtree(self.tmp)
+
+    def cl(self, music=None, group_music=None):
+        root = Path(self.tmp)
+        cfg_p = root / 'clients' / 'TST' / 'config.json'
+        cfg = json.loads(cfg_p.read_text(encoding='utf-8'))
+        cfg.pop('music', None)
+        if music is not None:
+            cfg['music'] = music
+        cfg_p.write_text(json.dumps(cfg), encoding='utf-8')
+        g_p = root / 'groups' / 'demo' / 'group.json'
+        g = json.loads(g_p.read_text(encoding='utf-8'))
+        g.pop('music', None)
+        if group_music is not None:
+            g['music'] = group_music
+        g_p.write_text(json.dumps(g), encoding='utf-8')
+        return self.client.load('TST', self.tmp)
+
+    def test_real_library_is_valid(self):
+        real = json.loads((STUDIO / 'music_library.json').read_text(encoding='utf-8'))
+        self.assertEqual(self.music.problems(real), [])
+        self.assertIn('kids', real['sets'])
+        self.assertTrue(all(t['set'] in real['sets'] for t in real['tracks']))
+
+    def test_problems_found(self):
+        bad = json.loads(json.dumps(self.lib))
+        bad['tracks'].append(dict(bad['tracks'][0]))                        # διπλό id
+        bad['tracks'][1]['url'] = 'https://example.com/a.mp3'                # όχι Pixabay
+        bad['tracks'][2]['mood'] = 'sad'                                     # άγνωστη διάθεση
+        p = self.music.problems(bad)
+        self.assertTrue(any('διπλό' in x for x in p) and any('url' in x for x in p) and any('διάθεση' in x for x in p))
+
+    def test_group_music_and_client_override(self):
+        c = self.cl(group_music={'set': 'kids', 'moods': ['playful', 'calm']}, music={'avoid_days': 5})
+        self.assertEqual(c.music, {'set': 'kids', 'moods': ['playful', 'calm'], 'avoid_days': 5})
+        self.assertEqual(self.cl().music, {'avoid_days': 10, 'moods': []})
+
+    def test_pick_set_mood_blocked_and_length(self):
+        c = self.cl(group_music={'set': 'kids', 'moods': ['playful', 'calm']})
+        seen = {self.music.pick(c, f'2027-01-{d:02d}', 'playful', min_dur=20, lib=self.lib, log=[])[0]['id'] for d in range(1, 29)}
+        self.assertEqual(seen, {'k1', 'k2'})           # όχι το αποκλεισμένο k4, όχι το μικρό k5, όχι άλλο σετ
+        t, notes = self.music.pick(c, '2027-01-03', 'calm', lib=self.lib, log=[])
+        self.assertEqual(t['id'], 'k3')
+        t, notes = self.music.pick(c, '2027-01-03', 'elegant', lib=self.lib, log=[])
+        self.assertEqual(t['mood'], 'playful')         # δεν υπάρχει elegant στο σετ → η 1η διάθεση του πελάτη
+        self.assertTrue(notes)
+
+    def test_no_repeat_within_avoid_days(self):
+        c = self.cl(music={'set': 'kids', 'moods': ['playful'], 'avoid_days': 10})
+        log = [{'date': '2027-01-01', 'track': 'k1', 'item': 'a.mp4'}]
+        self.assertEqual(self.music.pick(c, '2027-01-05', 'playful', min_dur=20, lib=self.lib, log=log)[0]['id'], 'k2')
+        log.append({'date': '2027-01-06', 'track': 'k2', 'item': 'b.mp4'})
+        t, notes = self.music.pick(c, '2027-01-08', 'playful', min_dur=20, lib=self.lib, log=log)
+        self.assertEqual(t['id'], 'k1')                # όλα πρόσφατα → το πιο «μακρινό»
+        self.assertTrue(notes)
+
+    def test_none_and_missing_set(self):
+        c = self.cl(music={'none': True})
+        t, notes = self.music.pick(c, '2027-01-05', lib=self.lib, log=[])
+        self.assertIsNone(t)
+        with self.assertRaises(SystemExit):
+            self.music.pick(self.cl(), '2027-01-05', lib=self.lib, log=[])                  # χωρίς σετ
+        with self.assertRaises(SystemExit):
+            self.music.pick(self.cl(music={'set': 'beauty'}), '2027-01-05', lib=self.lib, log=[])  # σετ που δεν υπάρχει
+
+    def test_record_and_cli(self):
+        self.cl(music={'set': 'kids', 'moods': ['playful']})
+        env = dict(os.environ, OKP_WORK=self.tmp, OKP_CLIENT='TST', MUSIC_LIBRARY=str(self.libfile))
+        out = subprocess.run([sys.executable, str(STUDIO / 'music.py'), 'pick', '--date', '2027-01-04', '--mood', 'playful',
+                              '--record', '2027-01-04_reel.mp4'], env=env, capture_output=True, text=True, check=True).stdout
+        tid = out.split('\t')[0]
+        log = json.loads((Path(self.tmp) / 'clients' / 'TST' / 'music_log.json').read_text(encoding='utf-8'))
+        self.assertEqual([(e['date'], e['track'], e['item']) for e in log], [('2027-01-04', tid, '2027-01-04_reel.mp4')])
+        out2 = subprocess.run([sys.executable, str(STUDIO / 'music.py'), 'pick', '--date', '2027-01-07', '--mood', 'playful'],
+                              env=env, capture_output=True, text=True, check=True).stdout
+        self.assertNotEqual(out2.split('\t')[0], tid)  # όχι το ίδιο 3 ημέρες μετά
+        where = subprocess.run([sys.executable, str(STUDIO / 'music.py'), 'where', tid], env=env,
+                               capture_output=True, text=True, check=True).stdout
+        self.assertIn('TST\t2027-01-04\t2027-01-04_reel.mp4', where)
+        subprocess.run([sys.executable, str(STUDIO / 'music.py'), 'block', tid, '--reason', 'σίγαση στο Instagram'],
+                       env=env, capture_output=True, text=True, check=True)
+        lib = json.loads(self.libfile.read_text(encoding='utf-8'))
+        self.assertIn('σίγαση', next(t for t in lib['tracks'] if t['id'] == tid)['blocked'])
+
+    def test_track_refuses_blocked_and_unknown(self):
+        with self.assertRaises(SystemExit):
+            self.story_video.track('k4')               # αποκλεισμένο: σταματά πριν από οποιοδήποτε κατέβασμα
+        with self.assertRaises(SystemExit):
+            self.story_video.track('xx')
+        with self.assertRaises(SystemExit):
+            self.story_video.make('a.jpg', 'none', 'out.mp4')
+
+    def test_best_window_and_ids(self):
+        levels = [0.1] * 40 + [1.0] * 60 + [0.1] * 40   # δυνατό κομμάτι 20″–50″ (βήμα 0,5″)
+        self.assertEqual(self.music.best_window(levels), 20.0)
+        self.assertEqual(self.music.best_window([1.0] * 10), 0.0)
+        self.assertEqual(self.music.next_id({'id_prefix': {'kids': 'ls'}, 'tracks': [{'id': 'ls_16'}, {'id': 'k1'}]}, 'kids'), 'ls_17')
+        self.assertEqual(self.music.next_id({'tracks': []}, 'cafe'), 'cafe_01')
+
+    @unittest.skipUnless(FFMPEG, 'χρειάζεται ffmpeg')
+    def test_reel_without_music(self):
+        img = Path(self.tmp) / 'p.jpg'
+        Image.new('RGB', (1080, 1920), (200, 100, 50)).save(img)
+        out = Path(self.tmp) / 'r.mp4'
+        subprocess.run([sys.executable, str(STUDIO / 'make_reel.py'), str(out), 'none', f'{img}@1'],
+                       check=True, capture_output=True)
+        streams = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', str(out)],
+                                 capture_output=True, text=True).stdout.split()
+        self.assertEqual(sorted(streams), ['audio', 'video'])
+
+
 if __name__ == '__main__':
     unittest.main()

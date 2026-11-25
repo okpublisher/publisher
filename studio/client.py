@@ -144,6 +144,16 @@ class Client:
     def ready_reels_dir(self):
         return self.config.get('ready_reels_dir') or 'REELS ΕΤΟΙΜΑ'
 
+    # ------------------------------------------------------------ μουσική
+    @property
+    def music(self):
+        """Μουσική reels/stories (music.py): {"set": σετ του music_library.json (ανά κλάδο), "moods": [διαθέσεις κατά
+        προτίμηση], "avoid_days": όχι το ίδιο κομμάτι σε τόσες ημέρες (10), "none": true = χωρίς μουσική}.
+        Από την ομάδα (group.json) και, από πάνω, από τον πελάτη (config.json)."""
+        m = _merge({'avoid_days': 10}, _merge(self.group.get('music'), self.config.get('music')))
+        m['moods'] = list(m.get('moods') or [])
+        return m
+
     # ------------------------------------------------------------ κείμενα
     @property
     def phones(self):

@@ -3,6 +3,8 @@
 
     python3 make_reel.py <έξοδος.mp4> <track_id> <κομμάτι> [<κομμάτι> …] [--end <κάρτα.jpg>] [--end-sec 3]
 
+track_id: από το `music.py pick --client K --date … --record <έξοδος>`· «none» = χωρίς μουσική (επιλογή του πελάτη).
+
 κομμάτι:  video.mp4@12.5-16.0   (από–έως σε δευτερόλεπτα)   ή   photo.jpg@3   (φωτογραφία, 3″ με αργό zoom)
 
 Κανόνες:
@@ -64,12 +66,17 @@ def main():
                                    capture_output=True, text=True).stdout)
         if dur > 60:
             sys.exit(f'Reel {dur:.1f}″: πάνω από 60″ (όριο story). Κόψε κομμάτια.')
-        t, mp3 = track(a.track)
-        start = max(0.0, min(float(t.get('best_start', 0)), float(t.get('dur', 9999)) - dur - 0.5))
-        af = (f"atrim=0:{dur},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st={max(0, dur - 2)}:d=2,"
-              f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000")
-        run(['ffmpeg', '-v', 'error', '-y', '-i', silent, '-ss', f'{start:.2f}', '-i', mp3,
-             '-filter_complex', f'[1:a]{af}[a]', '-map', '0:v', '-map', '[a]', '-t', f'{dur}',
+        if a.track == 'none':   # ο πελάτης θέλει χωρίς μουσική: σιωπηλός ήχος (ο ήχος των βίντεο μένει πάντα εκτός)
+            t = {'title': 'χωρίς μουσική', 'artist': 'επιλογή του πελάτη'}
+            audio_in, af = ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'], 'anull'
+        else:
+            t, mp3 = track(a.track)
+            start = max(0.0, min(float(t.get('best_start', 0)), float(t.get('dur', 9999)) - dur - 0.5))
+            audio_in = ['-ss', f'{start:.2f}', '-i', mp3]
+            af = (f"atrim=0:{dur},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st={max(0, dur - 2)}:d=2,"
+                  f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000")
+        run(['ffmpeg', '-v', 'error', '-y', '-i', silent] + audio_in +
+            ['-filter_complex', f'[1:a]{af}[a]', '-map', '0:v', '-map', '[a]', '-t', f'{dur}',
              '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'high', '-r', str(FPS),
              '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-map_metadata', '-1', '-movflags', '+faststart', a.out])
         cover = a.out[:-4] + '_cover.jpg'
