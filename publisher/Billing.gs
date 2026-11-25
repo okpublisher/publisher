@@ -170,12 +170,15 @@ function billingRequest_(K, req, res) {
     if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Λείπει το NOTIFY_TO_' + K);
     const old = billState_(K);
     if (old && old.tx && !old.stop_after) throw new Error('billing_start: ο πελάτης έχει ήδη ενεργή συνδρομή');
-    const st = { plan: String(req.plan), amount: amount, start: req.start, stop_after: null, tx: (old && old.tx) || null, months: (old && old.months) || {} };
-    st.months[req.start] = st.months[req.start] || { st: 'pending' };
-    if (st.months[req.start].st === 'paid') throw new Error('billing_start: ο μήνας ' + req.start + ' έχει ήδη πληρωθεί');
+    // Από την παλιά κατάσταση κρατάμε μόνο ό,τι πληρώθηκε (ιστορικό)· τίποτα μισό ή απλήρωτο.
+    const months = {};
+    Object.keys((old && old.months) || {}).forEach(function (m) { if (old.months[m].st === 'paid') months[m] = old.months[m]; });
+    if (months[req.start]) throw new Error('billing_start: ο μήνας ' + req.start + ' έχει ήδη πληρωθεί');
+    const st = { plan: String(req.plan), amount: amount, start: req.start, stop_after: null, tx: (old && old.tx) || null, months: months };
+    st.months[req.start] = { st: 'pending' };
+    const link = freshLink_(K, st, req.start);   // αν η Viva αρνηθεί, δεν αποθηκεύεται τίποτα
     billSave_(K, st);
-    const link = freshLink_(K, st, req.start);
-    billSave_(K, st);
+    P_().deleteProperty('BILLING_PAUSED_' + K);  // οι απλήρωτοι μήνες της παλιάς κατάστασης δεν μετράνε πια
     notify_(K, 'Πληρωμή συνδρομής για τον ' + monthLabel_(req.start),
       'Ευχαριστούμε που συνεχίζουμε μαζί!\n\n' +
       'Πακέτο: ' + st.plan + ' · €' + euros_(amount) + ' τον μήνα (με ΦΠΑ).\n' +

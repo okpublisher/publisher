@@ -1114,6 +1114,27 @@ test('πληρωμές: δοκιμαστικός πελάτης TST (TEST_CLIENT
   assert.ok(env.viva.charges.some(function (x) { return x.body.merchantTrns === 'okp TST 2027-03'; }), 'ο TST χρεώνεται κι αυτός από τον κύκλο');
 });
 
+test('πληρωμές: η Viva αρνείται την παραγγελία → καμία κατάσταση, κανένα email· νέο billing_start καθαρίζει ό,τι απλήρωτο', function () {
+  const env = billEnv('2026-11-25T18:00:00+02:00');
+  const ok = env.viva.fetch;
+  env.viva.fetch = function (url, o, resp) {
+    if (/\/checkout\/v2\/orders$/.test(url)) return resp(403, { status: 403, message: 'no source with code 7901' });
+    return ok(url, o, resp);
+  };
+  env.ctx.UrlFetchApp.fetch = (function (orig) { return function (u, o) { const r = env.viva.fetch(u, o || {}, function (c, b) { return { getResponseCode: () => c, getContentText: () => JSON.stringify(b) }; }); return r || orig(u, o); }; })(env.ctx.UrlFetchApp.fetch);
+  assert.throws(function () { env.req({ type: 'billing_start', plan: 'Δοκιμή', amount_eur: 1, start: '2026-12' }); }, /403/);
+  assert.ok(!('BILLING_ORE' in env.props), 'τίποτα μισό');
+  assert.strictEqual(env.mails.length, 0);
+  // παλιά «μισή» κατάσταση (από την προηγούμενη έκδοση): το νέο billing_start την καθαρίζει
+  env.viva.fetch = ok;
+  env.props.BILLING_ORE = JSON.stringify({ plan: 'Δοκιμή', amount: 100, start: '2026-11', tx: null, months: { '2026-11': { st: 'pending' } } });
+  env.props.BILLING_PAUSED_ORE = 'true';
+  env.req({ type: 'billing_start', plan: 'Δοκιμή', amount_eur: 1, start: '2026-12' });
+  assert.deepStrictEqual(Object.keys(env.state().months), ['2026-12']);
+  assert.ok(env.state().months['2026-12'].order);
+  assert.ok(!('BILLING_PAUSED_ORE' in env.props));
+});
+
 test('πληρωμές: VIVA_ENV=live → πραγματικοί διακομιστές της Viva', function () {
   const env = billEnv('2027-01-28T12:00:00+02:00', { VIVA_ENV: 'live' });
   const seen = [];
