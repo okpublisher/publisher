@@ -31,6 +31,18 @@
    ]
   },
   {
+   "id": "OKP-2026-11-26-post",
+   "account": "OKP",
+   "type": "CAROUSEL",
+   "publish_at": "2026-11-26T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-11/OKP/2026-11-26_post_01.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-11/OKP/2026-11-26_post_02.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-11/OKP/2026-11-26_post_03.jpg"
+   ],
+   "caption": "Γεια σας! Είμαστε το okpublisher 👋\n\nΦτιάχνουμε και δημοσιεύουμε τα posts, τα reels και τα stories της επιχείρησής σας στο Instagram και στο Facebook. Εσείς ανεβάζετε φωτογραφίες από το κινητό και απαντάτε σε ένα email τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.\n\nΣύρετε για να δείτε πώς δουλεύει. Περισσότερα στο okpublisher.gr\n\n#okpublisher #μικρέςεπιχειρήσεις #socialmedia"
+  },
+  {
    "id": "LS-2026-11-27-story",
    "account": "LS",
    "type": "STORY",
@@ -95,6 +107,15 @@
    ]
   },
   {
+   "id": "OKP-2026-11-30-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-11-30T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-11/OKP/2026-11-30_story_01.jpg"
+   ]
+  },
+  {
    "id": "LS-2026-12-01-story",
    "account": "LS",
    "type": "STORY",
@@ -104,12 +125,35 @@
    ]
   },
   {
+   "id": "OKP-2026-12-01-post",
+   "account": "OKP",
+   "type": "CAROUSEL",
+   "publish_at": "2026-12-01T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-01_post_01.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-01_post_02.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-01_post_03.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-01_post_04.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-01_post_05.jpg"
+   ],
+   "caption": "Δεν χρειάζεστε κάμερα για καλές φωτογραφίες. Το κινητό σας αρκεί, αν προσέξετε 4 πράγματα: φως, φόντο, κάθετο κάδρο και καθόλου zoom.\n\nΑποθηκεύστε το για την επόμενη φορά που θα φωτογραφίσετε κάτι στη δουλειά 📌\n\n#okpublisher #instagramtips #μικρέςεπιχειρήσεις #επιχειρηματικότητα"
+  },
+  {
    "id": "LS-2026-12-02-story",
    "account": "LS",
    "type": "STORY",
    "publish_at": "2026-12-02T10:00:00+02:00",
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-02_story_01.jpg"
+   ]
+  },
+  {
+   "id": "OKP-2026-12-02-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-02T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-02_story_01.jpg"
    ]
   },
   {
@@ -132,6 +176,16 @@
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-03_story_01.jpg"
    ]
+  },
+  {
+   "id": "OKP-2026-12-03-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-03T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-03_post_01.jpg"
+   ],
+   "caption": "«Πόσο συχνά πρέπει να ανεβάζω;»\n\nΗ απάντηση: λίγα, αλλά σταθερά. Δύο posts την εβδομάδα, κάθε εβδομάδα, δείχνουν ότι η επιχείρηση είναι ζωντανή. Αυτό είναι που χτίζει εμπιστοσύνη, όχι ο όγκος.\n\nΓι' αυτό και για τους πελάτες μας δημοσιεύουμε 2 posts και 2 stories κάθε εβδομάδα.\n\n#okpublisher #socialmedia #μικρέςεπιχειρήσεις"
   },
   {
    "id": "LS-2026-12-04-story",
@@ -189,6 +243,15 @@
    ]
   },
   {
+   "id": "OKP-2026-12-07-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-07T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-07_story_01.jpg"
+   ]
+  },
+  {
    "id": "LS-2026-12-07-post",
    "account": "LS",
    "type": "CAROUSEL",
@@ -211,12 +274,31 @@
    ]
   },
   {
+   "id": "OKP-2026-12-08-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-08T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-08_post_01.jpg"
+   ],
+   "caption": "Δεν ξέρετε τι να φωτογραφίσετε; Ορίστε 5 ιδέες για αύριο το πρωί, πριν έρθουν οι πρώτοι πελάτες.\n\nΚαι μια συμβουλή: για να φωτογραφίσετε ανθρώπους της ομάδας σας, ρωτήστε τους πρώτα.\n\n#okpublisher #instagramtips #ελληνικέςεπιχειρήσεις #μικρέςεπιχειρήσεις"
+  },
+  {
    "id": "LS-2026-12-09-story",
    "account": "LS",
    "type": "STORY",
    "publish_at": "2026-12-09T10:00:00+02:00",
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-09_story_01.jpg"
+   ]
+  },
+  {
+   "id": "OKP-2026-12-09-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-09T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-09_story_01.jpg"
    ]
   },
   {
@@ -243,6 +325,20 @@
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-10_story_01.jpg"
    ]
+  },
+  {
+   "id": "OKP-2026-12-10-post",
+   "account": "OKP",
+   "type": "CAROUSEL",
+   "publish_at": "2026-12-10T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-10_post_01.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-10_post_02.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-10_post_03.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-10_post_04.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-10_post_05.jpg"
+   ],
+   "caption": "Τι γίνεται όταν δεν υπάρχουν αρκετές φωτογραφίες; Φτιάχνουμε γραφικά με τα χρώματα και το λογότυπο της επιχείρησης: ιστορίες, προϊόντα, συμβουλές, νέα.\n\nΣύρετε για ένα δείγμα για τον «Στάχυ», έναν φανταστικό φούρνο. Με το δικό σας υλικό γίνονται posts, carousels και reels.\n\n#okpublisher #socialmedia #μικρέςεπιχειρήσεις"
   },
   {
    "id": "LS-2026-12-11-story",
@@ -303,6 +399,15 @@
    ]
   },
   {
+   "id": "OKP-2026-12-14-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-14T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-14_story_01.jpg"
+   ]
+  },
+  {
    "id": "LS-2026-12-14-post",
    "account": "LS",
    "type": "CAROUSEL",
@@ -325,12 +430,31 @@
    ]
   },
   {
+   "id": "OKP-2026-12-15-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-15T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-15_post_01.jpg"
+   ],
+   "caption": "Μια καλή κριτική στο Google λέει περισσότερα από κάθε διαφήμιση, γιατί τη γράφει πελάτης, όχι εσείς.\n\nΤις μετατρέπουμε σε posts αυτούσιες, χωρίς ονόματα, μόνο με αρχικά. Έχετε κριτικές που δεν έχει δει κανείς στο Instagram; Είναι έτοιμο περιεχόμενο ⭐\n\n#okpublisher #μικρέςεπιχειρήσεις #socialmedia"
+  },
+  {
    "id": "LS-2026-12-16-story",
    "account": "LS",
    "type": "STORY",
    "publish_at": "2026-12-16T10:00:00+02:00",
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-16_story_01.jpg"
+   ]
+  },
+  {
+   "id": "OKP-2026-12-16-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-16T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-16_story_01.jpg"
    ]
   },
   {
@@ -351,6 +475,19 @@
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-17_story_01.jpg"
    ]
+  },
+  {
+   "id": "OKP-2026-12-17-post",
+   "account": "OKP",
+   "type": "CAROUSEL",
+   "publish_at": "2026-12-17T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-17_post_01.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-17_post_02.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-17_post_03.jpg",
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-17_post_04.jpg"
+   ],
+   "caption": "Η λεζάντα δεν χρειάζεται να είναι μεγάλη. Χρειάζεται τρία πράγματα: τι βλέπουμε, γιατί να μας νοιάζει και πώς να σας βρουν.\n\nΣύρετε για τα παραδείγματα.\n\n#okpublisher #instagramtips #μικρέςεπιχειρήσεις"
   },
   {
    "id": "LS-2026-12-18-story",
@@ -408,6 +545,15 @@
    ]
   },
   {
+   "id": "OKP-2026-12-21-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-21T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-21_story_01.jpg"
+   ]
+  },
+  {
    "id": "LS-2026-12-21-post",
    "account": "LS",
    "type": "CAROUSEL",
@@ -430,12 +576,31 @@
    ]
   },
   {
+   "id": "OKP-2026-12-22-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-22T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-22_post_01.jpg"
+   ],
+   "caption": "Πριν δημοσιευτεί οτιδήποτε, ελέγχουμε κάθε φωτογραφία και κάθε βίντεο.\n\nΤα πρόσωπα παιδιών θολώνονται πάντα. Ονόματα δεν γράφονται ποτέ. Και τίποτα δεν βγαίνει χωρίς το ΟΚ σας.\n\n#okpublisher #socialmedia #μικρέςεπιχειρήσεις"
+  },
+  {
    "id": "LS-2026-12-23-story",
    "account": "LS",
    "type": "STORY",
    "publish_at": "2026-12-23T10:00:00+02:00",
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-23_story_01.jpg"
+   ]
+  },
+  {
+   "id": "OKP-2026-12-23-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-23T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-23_story_01.jpg"
    ]
   },
   {
@@ -456,6 +621,16 @@
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-24_story_01.jpg"
    ]
+  },
+  {
+   "id": "OKP-2026-12-24-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-24T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-24_post_01.jpg"
+   ],
+   "caption": "Καλά Χριστούγεννα! 🎄\n\nΣε όλους τους επαγγελματίες που κρατάνε τα φώτα αναμμένα, και στις οικογένειές τους: χρόνια πολλά!\n\n#okpublisher #καλάχριστούγεννα"
   },
   {
    "id": "LS-2026-12-25-story",
@@ -519,6 +694,15 @@
    ]
   },
   {
+   "id": "OKP-2026-12-28-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-28T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-28_story_01.jpg"
+   ]
+  },
+  {
    "id": "LS-2026-12-28-post",
    "account": "LS",
    "type": "CAROUSEL",
@@ -542,12 +726,31 @@
    ]
   },
   {
+   "id": "OKP-2026-12-29-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-29T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-29_post_01.jpg"
+   ],
+   "caption": "Το 2027 θέλετε η σελίδα της επιχείρησής σας να είναι ζωντανή κάθε εβδομάδα, χωρίς να σας παίρνει χρόνο;\n\nΕσείς ανεβάζετε φωτογραφίες από το κινητό και απαντάτε σε ένα email τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς. Πείτε μας για την επιχείρησή σας στο okpublisher.gr\n\n#okpublisher #μικρέςεπιχειρήσεις #socialmedia #επιχειρηματικότητα"
+  },
+  {
    "id": "LS-2026-12-30-story",
    "account": "LS",
    "type": "STORY",
    "publish_at": "2026-12-30T10:00:00+02:00",
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-30_story_01.jpg"
+   ]
+  },
+  {
+   "id": "OKP-2026-12-30-story",
+   "account": "OKP",
+   "type": "STORY",
+   "publish_at": "2026-12-30T11:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-30_story_01.jpg"
    ]
   },
   {
@@ -569,6 +772,16 @@
    "images": [
     "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/ORE/2026-12-31_story_01.jpg"
    ]
+  },
+  {
+   "id": "OKP-2026-12-31-post",
+   "account": "OKP",
+   "type": "IMAGE",
+   "publish_at": "2026-12-31T20:00:00+02:00",
+   "images": [
+    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-12/OKP/2026-12-31_post_01.jpg"
+   ],
+   "caption": "Καλή χρονιά! 🥂\n\nΕυχαριστούμε που μας διαβάσατε τον πρώτο μας μήνα. Το 2027 συνεχίζουμε με συμβουλές για σελίδες που μένουν ζωντανές χωρίς να σας τρώνε χρόνο.\n\n#okpublisher #καλήχρονιά #μικρέςεπιχειρήσεις"
   }
  ]
 }
