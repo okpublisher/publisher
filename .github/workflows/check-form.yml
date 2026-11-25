@@ -1,0 +1,101 @@
+# Έλεγχος: τι τρέχει τώρα στο Apps Script «okpublisher form» (φόρμα του okpublisher.gr); Δεν αλλάζει τίποτα στο live.
+# Δείχνει τα ονόματα αρχείων και το appsscript.json του live (δεν έχει κάτι ιδιωτικό), βρίσκει σε ποιο commit του form/
+# αντιστοιχεί, ελέγχει ότι η διεύθυνση /exec απαντά και, αν δεν υπάρχει ακόμα η ετικέτα deployed-form, τη βάζει εκεί
+# (από εκεί ξεκινά το αυτόματο ανέβασμα). Στο log: όχι κώδικας, όχι SCRIPT_ID (το repo είναι δημόσιο).
+name: Έλεγχος live (φόρμα)
+on:
+  workflow_dispatch:
+  push:
+    branches: [form-setup]   # μόνο για το πρώτο στήσιμο (πριν το merge)· φεύγει μετά
+permissions:
+  contents: write
+concurrency:
+  group: gas-form
+  cancel-in-progress: false
+env:
+  GAS_DIR: form
+  GAS_MAIN: Form.gs
+  GAS_ALIAS: Κώδικας=Form,Code=Form
+  # Η ανάπτυξη «form v1»: ίδια με τη διεύθυνση FORM_URL στο index.html του site (δημόσια από τη φύση της).
+  DEPLOYMENT_ID: AKfycbzgDYs8OVVCYGqSMgI4MCoZuALfNdv_PgxSuFqnwWF9dD0SBWP2LhTLQF3a0EeIW4BuMg
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Κλειδιά
+        id: keys
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          FORM_SCRIPT_ID: ${{ secrets.FORM_SCRIPT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$FORM_SCRIPT_ID" ]; then
+            msg="Λείπουν τα secrets CLASPRC_JSON / FORM_SCRIPT_ID (Settings → Secrets and variables → Actions)."
+            if [ "$GITHUB_EVENT_NAME" = push ]; then echo "::notice::$msg Τίποτα δεν ελέγχθηκε."; exit 0; fi
+            echo "::error::$msg"; exit 1
+          fi
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json && chmod 600 ~/.clasprc.json
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: clasp
+        if: steps.keys.outputs.ready == 'true'
+        run: npm install -g @google/clasp@3.4.1
+      - name: Κατέβασμα live
+        if: steps.keys.outputs.ready == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.FORM_SCRIPT_ID }}
+        run: |
+          node tools/gas/stage.js pull /tmp/live
+          (cd /tmp/live && clasp pull >/dev/null)
+          echo "Αρχεία στο live: $(ls /tmp/live/src | tr '\n' ' ')"
+          echo "appsscript.json του live:"
+          node -e "const s=(o)=>Array.isArray(o)?o.map(s):o&&typeof o==='object'?Object.keys(o).sort().reduce((r,k)=>(r[k]=s(o[k]),r),{}):o;console.log(JSON.stringify(s(JSON.parse(require('fs').readFileSync('/tmp/live/src/appsscript.json','utf8'))),null,2))"
+      - name: Ανάπτυξη /exec
+        id: dep
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          cd /tmp/live
+          v=$(clasp list-deployments --json | node -e "let t='';process.stdin.on('data',d=>t+=d).on('end',()=>{const a=JSON.parse(t.slice(t.indexOf('['),t.lastIndexOf(']')+1));const d=a.find(x=>x.deploymentId===process.env.DEPLOYMENT_ID);console.log(d?(d.versionNumber||'HEAD'):'')})")
+          if [ -n "$v" ]; then echo "Η ανάπτυξη της φόρμας δείχνει την έκδοση @$v"; echo "version=$v" >> "$GITHUB_OUTPUT"
+          else echo "::error::Δεν βρέθηκε η ανάπτυξη της φόρμας (DEPLOYMENT_ID) σε αυτό το script — λάθος FORM_SCRIPT_ID;"; exit 1; fi
+          r=$(curl -sL --max-time 30 "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec" || true)
+          if grep -q '"service":"okpublisher form"' <<<"$r"; then
+            echo "✓ Η διεύθυνση /exec απαντά."; else echo "::warning::Η διεύθυνση /exec δεν απάντησε όπως περιμέναμε."; fi
+      - name: Σύγκριση με το repo
+        id: cmp
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          chmod +x tools/gas/repo_at.sh
+          tools/gas/repo_at.sh HEAD /tmp/head
+          if node tools/gas/compare.js /tmp/live/src /tmp/head; then echo "same_head=true" >> "$GITHUB_OUTPUT"; fi
+          match=""
+          for c in $(git log --format=%H -- form/Form.gs form/appsscript.json); do
+            tools/gas/repo_at.sh "$c" /tmp/c
+            if node tools/gas/compare.js /tmp/live/src /tmp/c >/dev/null; then match="$c"; break; fi
+          done
+          echo "match=$match" >> "$GITHUB_OUTPUT"
+          if [ -n "$match" ]; then echo "Το live = commit $(git log -1 --format='%h %s' "$match")"; else echo "::warning::Το live δεν ταιριάζει με κανένα commit του form/."; fi
+      - name: Ετικέτα deployed-form (μόνο αν δεν υπάρχει)
+        if: steps.cmp.outputs.match != ''
+        run: |
+          if git rev-parse -q --verify refs/tags/deployed-form >/dev/null; then
+            echo "Η ετικέτα υπάρχει ήδη: $(git log -1 --format='%h' deployed-form)"
+          else
+            git tag deployed-form "${{ steps.cmp.outputs.match }}"
+            git push -q origin refs/tags/deployed-form
+            echo "Μπήκε η ετικέτα deployed-form στο ${{ steps.cmp.outputs.match }}"
+          fi
+      - name: Σύνοψη
+        if: always()
+        run: |
+          {
+            echo "### Έλεγχος live (φόρμα)"
+            echo "- Ίδιο με το repo: ${{ steps.cmp.outputs.same_head == 'true' && 'ναι' || 'όχι' }}"
+            echo "- Αντιστοιχεί στο commit: ${{ steps.cmp.outputs.match || '—' }}"
+            echo "- Έκδοση στο /exec: ${{ steps.dep.outputs.version || '—' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,133 @@
+# Αυτόματο ανέβασμα της φόρμας του okpublisher.gr (Apps Script «okpublisher form», χωριστό από τη δημοσίευση):
+# αλλαγή στο form/Form.gs ή form/appsscript.json στο main → δοκιμές → έλεγχος ότι κανείς δεν άλλαξε κώδικα στον editor →
+# clasp push → επαλήθευση → νέα έκδοση στην ΙΔΙΑ ανάπτυξη (ίδιος σύνδεσμος /exec) → έλεγχος ότι το /exec απαντά
+# (αλλιώς επιστροφή στην προηγούμενη έκδοση) → ετικέτα deployed-form.
+# Αλλαγές στο main μόνο μετά από ρητό ΟΚ του Πέτρου (βλ. CLAUDE.md του publisher-work).
+# Χωρίς την ετικέτα deployed-form δεν ανεβαίνει τίποτα: πρώτα το «Έλεγχος live (φόρμα)».
+# Στο log: όχι κώδικας, όχι SCRIPT_ID (το repo είναι δημόσιο).
+name: Deploy φόρμας (Apps Script)
+on:
+  push:
+    branches: [main]
+    paths: ['form/Form.gs', 'form/appsscript.json']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: gas-form
+  cancel-in-progress: false
+env:
+  GAS_DIR: form
+  GAS_MAIN: Form.gs
+  GAS_ALIAS: Κώδικας=Form,Code=Form
+  # Η ανάπτυξη «form v1»: ίδια με τη διεύθυνση FORM_URL στο index.html του site (δημόσια από τη φύση της).
+  DEPLOYMENT_ID: AKfycbzgDYs8OVVCYGqSMgI4MCoZuALfNdv_PgxSuFqnwWF9dD0SBWP2LhTLQF3a0EeIW4BuMg
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Υπάρχει ετικέτα deployed-form;
+        id: gate
+        run: |
+          if git rev-parse -q --verify refs/tags/deployed-form >/dev/null; then echo "go=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::Δεν έχει γίνει ακόμα «Έλεγχος live (φόρμα)» — δεν ανεβαίνει τίποτα."; fi
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          node-version: 22
+      - name: Δοκιμές
+        if: steps.gate.outputs.go == 'true'
+        run: node form/test/run_tests.js
+      - name: Κλειδιά
+        if: steps.gate.outputs.go == 'true'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          FORM_SCRIPT_ID: ${{ secrets.FORM_SCRIPT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$FORM_SCRIPT_ID" ]; then
+            echo "::error::Λείπουν τα secrets CLASPRC_JSON / FORM_SCRIPT_ID."; exit 1
+          fi
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json && chmod 600 ~/.clasprc.json
+      - name: clasp
+        if: steps.gate.outputs.go == 'true'
+        run: npm install -g @google/clasp@3.4.1
+      - name: Έλεγχος — άλλαξε κάτι στον editor εκτός repo;
+        id: drift
+        if: steps.gate.outputs.go == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.FORM_SCRIPT_ID }}
+        run: |
+          chmod +x tools/gas/repo_at.sh
+          node tools/gas/stage.js pull /tmp/live
+          (cd /tmp/live && clasp pull >/dev/null)
+          tools/gas/repo_at.sh deployed-form /tmp/base
+          tools/gas/repo_at.sh HEAD /tmp/head
+          if ! node tools/gas/compare.js /tmp/live/src /tmp/base; then
+            if node tools/gas/compare.js /tmp/live/src /tmp/head; then
+              echo "::notice::Το live είναι ήδη ίδιο με το repo."
+            else
+              echo "::error::Ο κώδικας της φόρμας άλλαξε στον editor έξω από το repo. Δεν ανέβηκε τίποτα. Πρώτα να μπουν αυτές οι αλλαγές στο repo."
+              exit 1
+            fi
+          fi
+          if node tools/gas/compare.js /tmp/live/src /tmp/head >/dev/null; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+          # Νέα έκδοση στο /exec χρειάζεται αν αλλάζει ο κώδικας ή αν η προηγούμενη φορά δεν ολοκληρώθηκε (η ετικέτα δεν έφτασε στο HEAD).
+          if git diff --quiet deployed-form HEAD -- form/Form.gs form/appsscript.json && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+            echo "redeploy=false" >> "$GITHUB_OUTPUT"; else echo "redeploy=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Ανέβασμα (clasp push)
+        if: steps.drift.outputs.changed == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.FORM_SCRIPT_ID }}
+        run: |
+          node tools/gas/stage.js push /tmp/push
+          cd /tmp/push && clasp push --force
+      - name: Επαλήθευση
+        if: steps.gate.outputs.go == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.FORM_SCRIPT_ID }}
+        run: |
+          node tools/gas/stage.js pull /tmp/live2
+          (cd /tmp/live2 && clasp pull >/dev/null)
+          node tools/gas/compare.js /tmp/live2/src /tmp/head
+      - name: Νέα έκδοση στο ίδιο /exec
+        id: redeploy
+        if: steps.drift.outputs.redeploy == 'true' || steps.drift.outputs.changed == 'true'
+        run: |
+          cd /tmp/live2
+          ver() { clasp list-deployments --json | node -e "let t='';process.stdin.on('data',d=>t+=d).on('end',()=>{const a=JSON.parse(t.slice(t.indexOf('['),t.lastIndexOf(']')+1));const d=a.find(x=>x.deploymentId===process.env.DEPLOYMENT_ID);console.log(d?(d.versionNumber||''):'')})"; }
+          before=$(ver)
+          if [ -z "$before" ]; then echo "::error::Δεν βρέθηκε η ανάπτυξη της φόρμας (DEPLOYMENT_ID) ή δεν έχει έκδοση."; exit 1; fi
+          clasp update-deployment "$DEPLOYMENT_ID" -d "form ${GITHUB_SHA::7}" >/dev/null
+          after=$(ver)
+          echo "Έκδοση στο /exec: @$before → @$after"
+          echo "version=$after" >> "$GITHUB_OUTPUT"
+          ok=""
+          for i in 1 2 3 4 5 6; do
+            r=$(curl -sL --max-time 30 "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec" || true)
+            if grep -q '"service":"okpublisher form"' <<<"$r"; then ok=1; break; fi
+            sleep 10
+          done
+          if [ -z "$ok" ] || [ -z "$after" ] || [ "$after" = "$before" ]; then
+            echo "::error::Η νέα έκδοση δεν απαντά στο /exec — επιστροφή στην @$before."
+            clasp update-deployment "$DEPLOYMENT_ID" -V "$before" -d "επιστροφή (αποτυχία ${GITHUB_SHA::7})" >/dev/null
+            exit 1
+          fi
+          echo "✓ Το /exec απαντά με την @$after."
+      - name: Ετικέτα
+        if: steps.gate.outputs.go == 'true'
+        run: |
+          git tag -f deployed-form HEAD
+          git push -qf origin refs/tags/deployed-form
+      - name: Σύνοψη
+        if: always()
+        run: |
+          {
+            echo "### Deploy φόρμας"
+            echo "- Commit: ${GITHUB_SHA::7}"
+            echo "- Ανέβηκε νέος κώδικας: ${{ steps.drift.outputs.changed == 'true' && 'ναι' || 'όχι' }}"
+            echo "- Έκδοση στο /exec: ${{ steps.redeploy.outputs.version || '—' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

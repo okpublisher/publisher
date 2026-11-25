@@ -6,6 +6,8 @@
 const fs = require('fs'), path = require('path');
 const [a, b] = process.argv.slice(2, 4);
 const ALIAS = { 'Κώδικας': 'Code' };
+// GAS_ALIAS="Κώδικας=Form,Code=Form": άλλα ονόματα για το ίδιο αρχείο (π.χ. η φόρμα, αν στον editor λέγεται «Κώδικας»).
+String(process.env.GAS_ALIAS || '').split(',').forEach(function (p) { const kv = p.split('='); if (kv.length === 2 && kv[0].trim() && kv[1].trim()) ALIAS[kv[0].trim()] = kv[1].trim(); });
 function key(f) { const ext = path.extname(f); const base = path.basename(f, ext); return (ALIAS[base] || base) + (ext === '.js' ? '.gs' : ext); }
 function sortKeys(v) {
   if (Array.isArray(v)) return v.map(sortKeys);
