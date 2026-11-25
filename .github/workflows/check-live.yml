@@ -1,0 +1,71 @@
+# Έλεγχος: ποιος κώδικας τρέχει τώρα στο Apps Script του okpublisher; Δεν αλλάζει τίποτα στο live.
+# Συγκρίνει το live με το repo και βρίσκει σε ποιο commit αντιστοιχεί. Αν δεν υπάρχει ακόμα η ετικέτα
+# deployed-gas και το live ταιριάζει με κάποιο commit, τη βάζει εκεί (από εκεί ξεκινά το αυτόματο deploy).
+# Στο log γράφονται μόνο ονόματα αρχείων — όχι κώδικας ή IDs (το repo είναι δημόσιο).
+name: Έλεγχος live (Apps Script)
+on: workflow_dispatch
+permissions:
+  contents: write
+concurrency:
+  group: gas
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Κλειδιά
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT_ID" ]; then
+            echo "::error::Λείπουν τα secrets CLASPRC_JSON / SCRIPT_ID (Settings → Secrets and variables → Actions)."; exit 1
+          fi
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json && chmod 600 ~/.clasprc.json
+      - name: clasp
+        run: npm install -g @google/clasp@3.4.1
+      - name: Κατέβασμα live
+        env:
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          node tools/gas/stage.js pull /tmp/live
+          (cd /tmp/live && clasp pull >/dev/null)
+          ls /tmp/live/src
+      - name: Σύγκριση με το repo
+        id: cmp
+        run: |
+          chmod +x tools/gas/repo_at.sh
+          tools/gas/repo_at.sh HEAD /tmp/head
+          if node tools/gas/compare.js /tmp/live/src /tmp/head; then echo "same_head=true" >> "$GITHUB_OUTPUT"; fi
+          match=""
+          for c in $(git log --format=%H -- publisher/*.gs publisher/appsscript.json); do
+            tools/gas/repo_at.sh "$c" /tmp/c
+            if node tools/gas/compare.js /tmp/live/src /tmp/c >/dev/null; then match="$c"; break; fi
+          done
+          echo "match=$match" >> "$GITHUB_OUTPUT"
+          if [ -n "$match" ]; then echo "Το live = commit $(git log -1 --format='%h %s' "$match")"; else echo "::warning::Το live δεν ταιριάζει με κανένα commit (αλλαγή στον editor εκτός repo;)."; fi
+      - name: Ετικέτα deployed-gas (μόνο αν δεν υπάρχει)
+        if: steps.cmp.outputs.match != ''
+        run: |
+          if git rev-parse -q --verify refs/tags/deployed-gas >/dev/null; then
+            echo "Η ετικέτα υπάρχει ήδη: $(git log -1 --format='%h' deployed-gas)"
+          else
+            git tag deployed-gas "${{ steps.cmp.outputs.match }}"
+            git push -q origin refs/tags/deployed-gas
+            echo "Μπήκε η ετικέτα deployed-gas στο ${{ steps.cmp.outputs.match }}"
+          fi
+      - name: Σύνοψη
+        if: always()
+        run: |
+          {
+            echo "### Έλεγχος live"
+            echo "- Ίδιο με το repo (main): ${{ steps.cmp.outputs.same_head == 'true' && 'ναι' || 'όχι' }}"
+            echo "- Αντιστοιχεί στο commit: ${{ steps.cmp.outputs.match || '—' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

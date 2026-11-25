@@ -84,6 +84,15 @@ studio/tests/       δοκιμές: python3 -m unittest discover -s studio/tests
 - **Αυτόματες ώρες (στις 15 του μήνα):** από το `online_followers` (30 ημέρες, σε ώρα Ελλάδας). Post στην ώρα με τους περισσότερους ακόλουθους online (08:00–22:00), story σε άλλη ώρα με πολλούς online (08:00–20:00, τουλάχιστον 3 ώρες μακριά). Γράφονται στο `publisher-work/clients/<K>/best_times.json`. Το studio τις χρησιμοποιεί **μόνο** αν το `config.json` έχει `"times": "auto"`· αλλιώς ισχύουν τα `post_time`/`story_time` (π.χ. όσα όρισε ο πελάτης). Κάτω από 100 ακόλουθους → προεπιλεγμένες ώρες.
 - **Αναφορά (την 1η του μήνα, από τις 09:00):** ξεχωριστό email μόνο στο `NOTIFY_TO_<K>`: τι δημοσιεύτηκε, εμβέλεια, προβολές, αλληλεπιδράσεις, πατήματα σε κλήση/οδηγίες, ακόλουθοι πριν/μετά, τα 3 καλύτερα posts, stories, ώρες. Αντίγραφο στο `clients/<K>/reports/<μήνας>.json`. Μόνο για μήνες που κάλυψε ολόκληρους το okpublisher (από `START_AFTER`). Ποτέ δεύτερη αποστολή· `REPORT_<K>=false` = καμία αναφορά.
 
+### 8. Αυτόματο ανέβασμα κώδικα (αντί για επικόλληση)
+Από εδώ και πέρα ο κώδικας **δεν αλλάζει ποτέ στον editor**: το `clasp push` αντικαθιστά όλα τα αρχεία του project.
+1. Στον λογαριασμό του okpublisher: https://script.google.com/home/usersettings → Google Apps Script API: **On**.
+2. Κλειδί clasp του ίδιου λογαριασμού (π.χ. από το Google Cloud Shell: `npx -y @google/clasp@3.4.1 login --no-localhost`, μετά `cat ~/.clasprc.json`, μετά `rm ~/.clasprc.json`).
+3. Στο GitHub (Settings → Secrets and variables → Actions) δύο secrets: `CLASPRC_JSON` (όλο το περιεχόμενο του `.clasprc.json`) και `SCRIPT_ID` (Project Settings → Script ID). Το ID **δεν** μπαίνει μέσα στο repo.
+4. Actions → **Έλεγχος live (Apps Script)** → Run workflow: βρίσκει ποιο commit τρέχει και βάζει εκεί την ετικέτα `deployed-gas`. Δεν αλλάζει τίποτα.
+
+Μετά: κάθε αλλαγή στο `publisher/*.gs` ή `appsscript.json` στο `main` ανεβαίνει μόνη της (**Deploy Apps Script**: δοκιμές → έλεγχος ότι δεν άλλαξε τίποτα στον editor → `clasp push` → επαλήθευση). Οι triggers και τα Script Properties δεν επηρεάζονται. Νέα άδεια Google (νέο scope) θέλει πάντα μία εκτέλεση από τον editor για έγκριση.
+
 ## Καθημερινά
 - Καρτέλα **Ουρά** στο Sheet: πρόγραμμα όλων των πελατών με κατάσταση και link. Καρτέλα **Ιστορικό**: κάθε δημοσίευση ή σφάλμα.
 - Μετά από 3 αποτυχίες ή καθυστέρηση πάνω από 3 ώρες η δημοσίευση παραλείπεται, ώστε να μη βγει ποτέ διπλή.

@@ -1,0 +1,94 @@
+# Αυτόματο ανέβασμα του Apps Script του okpublisher: αλλαγή στο publisher/*.gs (ή appsscript.json) στο main →
+# δοκιμές → έλεγχος ότι κανείς δεν άλλαξε κώδικα στον editor → clasp push → επαλήθευση → ετικέτα deployed-gas.
+# Αλλαγές στο main μόνο μετά από ρητό ΟΚ του Πέτρου (βλ. CLAUDE.md του publisher-work).
+# Χωρίς την ετικέτα deployed-gas δεν ανεβαίνει τίποτα: πρώτα το «Έλεγχος live».
+# Στο log γράφονται μόνο ονόματα αρχείων — όχι κώδικας ή IDs (το repo είναι δημόσιο).
+name: Deploy Apps Script
+on:
+  push:
+    branches: [main]
+    paths: ['publisher/*.gs', 'publisher/appsscript.json']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: gas
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Υπάρχει ετικέτα deployed-gas;
+        id: gate
+        run: |
+          if git rev-parse -q --verify refs/tags/deployed-gas >/dev/null; then echo "go=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::Δεν έχει γίνει ακόμα «Έλεγχος live» — δεν ανεβαίνει τίποτα."; fi
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          node-version: 22
+      - name: Δοκιμές
+        if: steps.gate.outputs.go == 'true'
+        run: node publisher/test/run_tests.js
+      - name: Κλειδιά
+        if: steps.gate.outputs.go == 'true'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT_ID" ]; then
+            echo "::error::Λείπουν τα secrets CLASPRC_JSON / SCRIPT_ID."; exit 1
+          fi
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json && chmod 600 ~/.clasprc.json
+      - name: clasp
+        if: steps.gate.outputs.go == 'true'
+        run: npm install -g @google/clasp@3.4.1
+      - name: Έλεγχος — άλλαξε κάτι στον editor εκτός repo;
+        id: drift
+        if: steps.gate.outputs.go == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          chmod +x tools/gas/repo_at.sh
+          node tools/gas/stage.js pull /tmp/live
+          (cd /tmp/live && clasp pull >/dev/null)
+          tools/gas/repo_at.sh deployed-gas /tmp/base
+          tools/gas/repo_at.sh HEAD /tmp/head
+          if ! node tools/gas/compare.js /tmp/live/src /tmp/base; then
+            if node tools/gas/compare.js /tmp/live/src /tmp/head; then
+              echo "::notice::Το live είναι ήδη ίδιο με το repo."
+            else
+              echo "::error::Ο κώδικας στο Apps Script άλλαξε έξω από το repo. Δεν ανέβηκε τίποτα. Πρώτα να μπουν αυτές οι αλλαγές στο repo."
+              exit 1
+            fi
+          fi
+          if node tools/gas/compare.js /tmp/live/src /tmp/head >/dev/null; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Ανέβασμα (clasp push)
+        if: steps.drift.outputs.changed == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          node tools/gas/stage.js push /tmp/push
+          cd /tmp/push && clasp push --force
+      - name: Επαλήθευση και ετικέτα
+        if: steps.gate.outputs.go == 'true'
+        env:
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          node tools/gas/stage.js pull /tmp/live2
+          (cd /tmp/live2 && clasp pull >/dev/null)
+          node tools/gas/compare.js /tmp/live2/src /tmp/head
+          git tag -f deployed-gas HEAD
+          git push -qf origin refs/tags/deployed-gas
+      - name: Σύνοψη
+        if: always()
+        run: |
+          {
+            echo "### Deploy Apps Script"
+            echo "- Commit: ${GITHUB_SHA::7}"
+            echo "- Ανέβηκε νέος κώδικας: ${{ steps.drift.outputs.changed == 'true' && 'ναι' || 'όχι' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
