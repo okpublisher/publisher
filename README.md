@@ -93,6 +93,13 @@ studio/tests/       δοκιμές: python3 -m unittest discover -s studio/tests
 
 Μετά: κάθε αλλαγή στο `publisher/*.gs` ή `appsscript.json` στο `main` ανεβαίνει μόνη της (**Deploy Apps Script**: δοκιμές → έλεγχος ότι δεν άλλαξε τίποτα στον editor → `clasp push` → επαλήθευση). Οι triggers και τα Script Properties δεν επηρεάζονται. Νέα άδεια Google (νέο scope) θέλει πάντα μία εκτέλεση από τον editor για έγκριση.
 
+### 9. Φόρμα του site (Apps Script «okpublisher form», χωριστό project)
+Ο κώδικας της φόρμας του okpublisher.gr ζει στο `form/` (δοκιμές: `node form/test/run_tests.js`) και ανεβαίνει με τον ίδιο τρόπο, με το ίδιο κλειδί `CLASPRC_JSON`.
+1. Secret `FORM_SCRIPT_ID` (Apps Script της φόρμας → Project Settings → Script ID). Το ID **δεν** μπαίνει μέσα στο repo.
+2. Actions → **Έλεγχος live (φόρμα)**: δείχνει τι τρέχει, ελέγχει ότι το `/exec` απαντά και βάζει την ετικέτα `deployed-form`. Δεν αλλάζει τίποτα.
+
+Μετά: κάθε αλλαγή στο `form/Form.gs` ή `form/appsscript.json` στο `main` → **Deploy φόρμας**: δοκιμές → έλεγχος editor → `clasp push` → νέα έκδοση στην **ίδια** ανάπτυξη (ο σύνδεσμος `/exec` του site δεν αλλάζει) → έλεγχος ότι απαντά, αλλιώς επιστροφή στην προηγούμενη έκδοση.
+
 **Φύλακας** (κάθε ώρα, workflow «Φύλακας»): το `run()` γράφει σε κάθε κύκλο «Τελευταίος κύκλος» στην καρτέλα Ουρά. Αν το Sheet δεν αλλάξει για πάνω από 40′ (π.χ. χάθηκε η άδεια της Google και σταμάτησαν οι triggers), το run αποτυγχάνει και το GitHub στέλνει email. Λύση: στον editor Run της `setup` (και `setupApproval`) με νέα έγκριση.
 
 ## Καθημερινά
