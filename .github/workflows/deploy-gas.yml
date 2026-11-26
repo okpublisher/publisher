@@ -132,7 +132,7 @@ jobs:
             exit 1
           fi
           echo "version=$after" >> "$GITHUB_OUTPUT"
-          echo "✓ Το /exec απαντά με την @$after.
+          echo "✓ Το /exec απαντά με την @$after."
       - name: Σύνοψη
         if: always()
         run: |
