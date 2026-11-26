@@ -1627,6 +1627,7 @@ function admEnv(extraProps, opts) {
     },
   });
   env.viva = opts.viva;
+  env.ghStore = gh;
   env.ctx.Utilities.getUuid = function () { uuid++; return ('0000000' + uuid).slice(-8) + '-aaaa-4bbb-8ccc-' + ('00000000000' + uuid * 7).slice(-12); };
   const ss = env.ctx.SpreadsheetApp.getActive();
   const q = ss.insertSheet('Ουρά');
@@ -1993,6 +1994,64 @@ test('διαχειριστικό: «Χωρίς έγκριση» ↔ «με email
   assert.ok(!('approval' in env.gh('clients/OKP/config.json')));
   assert.ok(/Διάλεξε/.test(env.act({ act: 'client_approval', client: 'OKP', mode: 'x' }).error));
   assert.ok(env.mails.some(function (m) { return /Έγκριση: OK-0000/.test(m.subject); }));
+});
+
+test('διαχειριστικό: ομάδα (αλυσίδα) σε πελάτη και σε σετάρισμα· νέα ομάδα από όνομα· μόνο διαχειριστής', function () {
+  const env = actEnv(), gh = env.ghStore;
+  gh['groups'] = [{ name: 'learning-sensory', type: 'dir' }, { name: 'README.md', type: 'file' }];
+  gh['groups/learning-sensory/group.json'] = { key: 'learning-sensory', name: 'Learning & Sensory', members: ['ORE'], planned_members: ['KAL', 'NEA'], brand: { colors: { primary: '#FFDD00' } }, music: { set: 'kids' } };
+  let d = env.act({ act: 'data' }).data;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.groups)), [{ key: 'learning-sensory', name: 'Learning & Sensory', brand: true }]);
+  // πελάτης → υπάρχουσα ομάδα
+  let r = env.act({ act: 'client_group', client: 'OKP', group: 'learning-sensory' });
+  assert.ok(/Στην ομάδα Learning & Sensory: παίρνει το κοινό brand από την επόμενη παραγωγή\.$/.test(r.message), r.message || r.error);
+  assert.strictEqual(env.gh('clients/OKP/config.json').group, 'learning-sensory');
+  assert.strictEqual(env.gh('clients/OKP/config.json').code, 'OK-0000', 'τα υπόλοιπα πεδία μένουν');
+  const gj = env.gh('groups/learning-sensory/group.json');
+  assert.deepStrictEqual([gj.members, gj.planned_members, gj.music.set, gj.brand.colors.primary], [['ORE', 'OKP'], ['KAL', 'NEA'], 'kids', '#FFDD00']);
+  assert.ok(/ήδη στην ομάδα/.test(env.act({ act: 'client_group', client: 'OKP', group: 'learning-sensory' }).message));
+  assert.ok(/Άγνωστη ομάδα/.test(env.act({ act: 'client_group', client: 'OKP', group: 'xyz' }).error));
+  assert.strictEqual(env.act({ act: 'data' }).data.clients.find(function (c) { return c.key === 'OKP'; }).group, 'learning-sensory');
+  assert.ok(env.mails.some(function (m) { return /Ομάδα: OK-0000/.test(m.subject); }));
+  // νέα ομάδα με ελληνικό όνομα → λατινικό κλειδί, βγαίνει από την παλιά
+  r = env.act({ act: 'client_group', client: 'OKP', group: '+', name: '  Φούρνοι  Κώστα ' });
+  assert.ok(/Στην ομάδα Φούρνοι Κώστα: .*δεν έχει ακόμα brand/.test(r.message), r.message || r.error);
+  const ng = env.gh('groups/fournoi-kosta/group.json');
+  assert.deepStrictEqual([ng.key, ng.name, ng.members, ng.brand], ['fournoi-kosta', 'Φούρνοι Κώστα', ['OKP'], null]);
+  assert.strictEqual(env.gh('clients/OKP/config.json').group, 'fournoi-kosta');
+  assert.deepStrictEqual(env.gh('groups/learning-sensory/group.json').members, ['ORE'], 'βγήκε από την παλιά');
+  assert.ok(/όνομα/.test(env.act({ act: 'client_group', client: 'OKP', group: '+', name: ' ' }).error));
+  // ίδιο όνομα με υπάρχουσα → εκείνη (όχι διπλή)
+  r = env.act({ act: 'client_group', client: 'OKP', group: '+', name: 'learning & sensory' });
+  assert.ok(/Στην ομάδα Learning & Sensory/.test(r.message), r.message || r.error);
+  // χωρίς ομάδα
+  r = env.act({ act: 'client_group', client: 'OKP', group: '' });
+  assert.ok(/Χωρίς ομάδα: δικό του brand/.test(r.message), r.message || r.error);
+  assert.ok(!('group' in env.gh('clients/OKP/config.json')));
+  // σετάρισμα (OK-0002, δεν έγινε ακόμα πελάτης) → setups/OK-0002/admin.json + στα δεδομένα
+  r = env.act({ act: 'setup_group', code: 'OK-0002', group: 'learning-sensory' });
+  assert.ok(/όταν στηθεί ο πελάτης/.test(r.message), r.message || r.error);
+  const a = env.gh('setups/OK-0002/admin.json');
+  assert.deepStrictEqual([a.code, a.group, a.group_name, a.by], ['OK-0002', 'learning-sensory', 'Learning & Sensory', 'system@example.com']);
+  d = env.act({ act: 'data' }).data;
+  assert.strictEqual(d.setups.find(function (s) { return s.code === 'OK-0002'; }).group, 'learning-sensory');
+  assert.ok(/Άγνωστο σετάρισμα/.test(env.act({ act: 'setup_group', code: 'OK-0099', group: '' }).error));
+  // σετάρισμα που έγινε πελάτης → αλλάζει τον πελάτη
+  r = env.act({ act: 'setup_group', code: 'OK-0000', group: 'learning-sensory' });
+  assert.ok(/από την επόμενη παραγωγή/.test(r.message), r.message || r.error);
+  assert.strictEqual(env.gh('clients/OKP/config.json').group, 'learning-sensory');
+  // πωλητής: καμία αλλαγή, αλλά βλέπει το όνομα της ομάδας
+  env.act({ act: 'save_user', email: 'sales@example.com', name: 'Ν', role: 'sales' });
+  const sal = env.loginAs('sales@example.com');
+  assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: 'client_group', token: sal, client: 'OKP', group: '' }).error));
+  assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: 'setup_group', token: sal, code: 'OK-0002', group: '' }).error));
+  assert.strictEqual(api(env, { act: 'data', token: sal }).data.groups.length, 1);
+});
+
+test('διαχειριστικό: κλειδί ομάδας από όνομα (λατινικά, παύλες)', function () {
+  const env = actEnv();
+  assert.deepStrictEqual(['Learning & Sensory', 'Φούρνος Κώστα', 'Ψητοπωλεία «Ο Θανάσης»', 'ΑΪ-Δρόμος 2'].map(env.ctx.admSlug_),
+    ['learning-sensory', 'fournos-kosta', 'psitopoleia-o-thanasis', 'ai-dromos-2']);
 });
 
 test('διαχειριστικό: η κάρτα πελάτη έχει ημέρες/έγκριση/δωρεάν και τα βλέπει και ο πωλητής του· το cache αλλάζει όνομα με τα πεδία', function () {

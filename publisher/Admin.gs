@@ -46,6 +46,8 @@ const ADM_ = {
   CLIENTS_KEY: 'adm:clients:2',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
   LEADS_KEY: 'adm:leads:3',
+  GROUPS_KEY: 'adm:groups:1',
+  GROUP_RE: /^[a-z0-9][a-z0-9-]{1,39}$/,
   REF_URL: 'https://okpublisher.gr/',
   REF_RE: /^[a-z0-9]{5}$/,
   REF_ABC: 'abcdefghjkmnpqrstuvwxyz23456789',   // χωρίς i, l, o, 0, 1 (μπερδεύονται)
@@ -325,9 +327,16 @@ function admData_(token) {
 
   out.leads = L.leads.filter(function (l) { const a = l.auto; delete l.auto; return take(l, 'lead:' + l.email, a); });
   const scan = siteScanState_();   // χρώματα / γραμματοσειρές από την ιστοσελίδα (Site.gs)
+  try { out.groups = admGroups_().map(function (g) { return { key: g.key, name: g.name, brand: g.brand }; }); }
+  catch (e) { out.groups = []; out.errors.push('Ομάδες: ' + e.message); }
+  const sg = admJson_('ADMIN_SETUP_GROUP'), byCode = {};
+  clients.forEach(function (c) { if (c.code) byCode[c.code] = c; });
   out.setups = L.setups.filter(function (s) { const a = s.auto; delete s.auto; return take(s, s.code ? 'setup:' + s.code : 'lead:' + s.email, a); })
     .map(function (s) {
       if (!admin) delete s.afm;
+      const cl = s.code && byCode[s.code];   // έγινε ήδη πελάτης: ισχύει η ομάδα του πελάτη
+      s.group = cl ? String(cl.group || '') : String((s.code && sg[s.code]) || '');
+      if (cl) s.client = cl.key;
       const x = s.code && scan[s.code];
       if (x && x.url === siteNorm_(s.website)) s.site = { ok: !!x.ok, at: x.at, colors: x.colors || [], fonts: x.fonts || [], err: x.err || '', tries: x.tries || 0 };
       return s;
@@ -665,6 +674,8 @@ function adminApi_(p) {
       case 'client_charge': return out({ ok: true, message: admClientCharge_(t, p.client, p.plan) });
       case 'client_stop': return out({ ok: true, message: admClientStop_(t, p.client) });
       case 'client_approval': return out({ ok: true, message: admClientApproval_(t, p.client, p.mode) });
+      case 'client_group': return out({ ok: true, message: admClientGroup_(t, p.client, p.group, p.name) });
+      case 'setup_group': return out({ ok: true, message: admSetupGroup_(t, p.code, p.group, p.name) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
     }
   } catch (e) {
@@ -707,6 +718,104 @@ function admSaveCfg_(K, cfg, what, me) {
   try { CacheService.getScriptCache().remove(ADM_.CLIENTS_KEY); } catch (e) { /* μένει 5′ */ }
 }
 function admWho_(K, cfg) { return (cfg.code ? cfg.code + ' · ' : '') + (cfg.name || clientName_(K)) + ' (' + K + ')'; }
+// ------------------------------------------------------------------ ομάδες (αλυσίδες με κοινό brand)
+// groups/<ομάδα>/group.json στο publisher-work: κοινά χρώματα, γραμματοσειρές, λογότυπα, κανόνες, μουσική. Κάθε κατάστημα
+// είναι χωριστός πελάτης (δικός του κωδικός, σελίδα, φάκελος, εγκρίσεις, χρέωση) με "group": "<ομάδα>" στο config.json.
+// Σετάρισμα που δεν έγινε ακόμα πελάτης: η επιλογή μένει στο ADMIN_SETUP_GROUP {OK-…: ομάδα} και στο
+// setups/<OK-…>/admin.json (το διαβάζει ο Claude όταν στήνει τον πελάτη, RUNBOOK §1.1).
+function admGroups_() {
+  const cache = CacheService.getScriptCache();
+  try { const c = JSON.parse(cache.get(ADM_.GROUPS_KEY) || 'null'); if (c) return c; } catch (e) { /* ξανά από το GitHub */ }
+  const out = ghList_('groups').filter(function (f) { return f.type === 'dir' && ADM_.GROUP_RE.test(f.name); }).map(function (f) {
+    let g = null;
+    try { g = ghJson_('groups/' + f.name + '/group.json'); } catch (e) { g = null; }
+    return g ? { key: f.name, name: String(g.name || f.name), brand: !!(g.brand && Object.keys(g.brand).length),
+      members: Array.isArray(g.members) ? g.members.map(String) : [] } : null;
+  }).filter(Boolean).sort(function (a, b) { return a.name.localeCompare(b.name, 'el'); });
+  try { cache.put(ADM_.GROUPS_KEY, JSON.stringify(out), ADM_.CLIENTS_CACHE_S); } catch (e) { /* χωρίς cache */ }
+  return out;
+}
+// Κλειδί φακέλου από όνομα: λατινικά, πεζά, παύλες («Learning & Sensory» → learning-sensory, «Φούρνος Κώστα» → fournos-kosta).
+function admSlug_(s) {
+  const G = { 'α': 'a', 'β': 'v', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'i', 'θ': 'th', 'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 'ν': 'n',
+    'ξ': 'x', 'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'f', 'χ': 'ch', 'ψ': 'ps', 'ω': 'o' };
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ου/g, 'ou')
+    .replace(/[α-ω]/g, function (c) { return G[c] || ''; }).replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 40).replace(/-+$/, '');
+}
+// Η επιλογή του διαχειριστικού: '' = καμία, κλειδί υπάρχουσας, '+' με όνομα = νέα (ίδιο όνομα με υπάρχουσα → εκείνη).
+function admPickGroup_(group, name) {
+  group = String(group || '').trim();
+  if (!group) return null;
+  const G = admGroups_();
+  if (group !== '+') {
+    const g = G.filter(function (x) { return x.key === group; })[0];
+    if (!g) throw new Error('Άγνωστη ομάδα.');
+    return { key: g.key, name: g.name, brand: g.brand, isNew: false };
+  }
+  name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const key = admSlug_(name);
+  if (!name || !ADM_.GROUP_RE.test(key)) throw new Error('Γράψε όνομα για τη νέα ομάδα (π.χ. το όνομα της αλυσίδας).');
+  const ex = G.filter(function (x) { return x.key === key || x.name.toLowerCase() === name.toLowerCase(); })[0];
+  if (ex) return { key: ex.key, name: ex.name, brand: ex.brand, isNew: false };
+  return { key: key, name: name, brand: false, isNew: true };
+}
+// Μέλη στο group.json (για να φαίνεται ποια καταστήματα έχει). Νέα ομάδα: το αρχείο χωρίς brand (το στήνει ο Claude).
+function admGroupWrite_(g, K, add, me) {
+  let j = g.isNew ? null : ghJson_('groups/' + g.key + '/group.json');
+  if (!j && !g.isNew) return;
+  if (!j) j = { key: g.key, name: g.name, members: [], brand: null, created_at: new Date().toISOString(),
+    note: 'Νέα ομάδα από το διαχειριστικό: το κοινό brand (χρώματα, γραμματοσειρές, λογότυπα) και το rules.md τα στήνει ο Claude από το πρώτο κατάστημα (RUNBOOK §1.1).' };
+  if (K) {
+    const m = (Array.isArray(j.members) ? j.members : []).filter(function (x) { return x !== K; });
+    if (add) m.push(K);
+    j.members = m;
+    if (add && Array.isArray(j.planned_members)) j.planned_members = j.planned_members.filter(function (x) { return x !== K; });
+  } else if (!g.isNew) return;
+  ghPutJson_('groups/' + g.key + '/group.json', j, 'Διαχειριστικό (' + me.email + '): ομάδα ' + g.key + (K ? (add ? ' + ' : ' − ') + K : ' (νέα)'));
+  try { CacheService.getScriptCache().remove(ADM_.GROUPS_KEY); } catch (e) { /* μένει 5′ */ }
+}
+function admGroupMsg_(g, tail) {
+  return g ? 'Στην ομάδα ' + g.name + ': παίρνει το κοινό brand ' + tail +
+    (g.brand ? '.' : ' (η ομάδα δεν έχει ακόμα brand: στήνεται από αυτό το κατάστημα).') : 'Χωρίς ομάδα: δικό του brand ' + tail + '.';
+}
+
+function admClientGroup_(token, client, group, name) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  const c = admClientCfg_(client), K = c.K, cfg = c.cfg, old = cfg.group ? String(cfg.group) : '';
+  const g = admPickGroup_(group, name);
+  if ((g ? g.key : '') === old) return g ? 'Είναι ήδη στην ομάδα ' + g.name + '.' : 'Δεν ανήκει σε ομάδα.';
+  if (g) admGroupWrite_(g, K, true, me);
+  if (g) cfg.group = g.key; else delete cfg.group;
+  admSaveCfg_(K, cfg, g ? 'ομάδα ' + g.key : 'χωρίς ομάδα', me);
+  if (old) { try { admGroupWrite_({ key: old, isNew: false }, K, false, me); } catch (e) { console.log('group.json ' + old + ': ' + e.message); } }
+  const msg = admGroupMsg_(g, 'από την επόμενη παραγωγή');
+  systemNotify_('Ομάδα: ' + admWho_(K, cfg), msg + (old ? ' Πριν: ' + old + '.' : '') + ' (διαχειριστικό: ' + me.email + ')');
+  return msg;
+}
+
+function admSetupGroup_(token, code, group, name) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  code = String(code || '').trim().toUpperCase();
+  if (!/^OK-\d{4,}$/.test(code)) throw new Error('Άγνωστο σετάρισμα.');
+  const cl = admClients_().filter(function (c) { return c.code === code; })[0];
+  if (cl && cl.has_config) return admClientGroup_(token, cl.key, group, name);   // έγινε ήδη πελάτης
+  const s = admLeads_().setups.filter(function (x) { return x.code === code; })[0];
+  if (!s) throw new Error('Άγνωστο σετάρισμα.');
+  const map = admJson_('ADMIN_SETUP_GROUP'), old = String(map[code] || '');
+  const g = admPickGroup_(group, name);
+  if ((g ? g.key : '') === old) return g ? 'Είναι ήδη στην ομάδα ' + g.name + '.' : 'Δεν ανήκει σε ομάδα.';
+  if (g && g.isNew) admGroupWrite_(g, '', true, me);
+  ghPutJson_('setups/' + code + '/admin.json', { code: code, group: g ? g.key : null, group_name: g ? g.name : null, by: me.email, at: new Date().toISOString() },
+    'Διαχειριστικό (' + me.email + '): ' + code + (g ? ' ομάδα ' + g.key : ' χωρίς ομάδα'));
+  if (g) map[code] = g.key; else delete map[code];
+  P_().setProperty('ADMIN_SETUP_GROUP', JSON.stringify(map));
+  const msg = admGroupMsg_(g, 'όταν στηθεί ο πελάτης');
+  systemNotify_('Ομάδα: ' + code + ' · ' + (s.business || ''), msg + (old ? ' Πριν: ' + old + '.' : '') + ' (διαχειριστικό: ' + me.email + ')');
+  return msg;
+}
+
 // Ενεργή συνδρομή: πληρωμένη κάρτα και όχι λήξη στο παρελθόν.
 function admPaying_(st) { return !!(st && st.tx && st.start && !st.offer && !(st.stop_after && st.stop_after < periodOf_(st, new Date()))); }
 
