@@ -22,6 +22,8 @@
  * Στήλη «Σύσταση» (από 26/11/2026, και στις δύο καρτέλες, στο τέλος): ο κωδικός πωλητή του συνδέσμου (okpublisher.gr/?p=…),
  *   που η σελίδα στέλνει κρυφά (πεδίο ref). Εδώ μόνο γράφεται· ποιος πωλητής είναι το βρίσκει το διαχειριστικό (Admin.gs).
  *   Μπαίνει και στον σύνδεσμο σεταρίσματος της αυτόματης απάντησης.
+ * Στήλη «Ιστοσελίδα» (από 26/11/2026, Σεταρίσματα, στο τέλος): πεδίο site_url της φόρμας (ΟΧΙ «website»: αυτό είναι το
+ *   κρυφό πεδίο για bots), με https:// μπροστά αν λείπει. Από εκεί το κύριο script βγάζει χρώματα/γραμματοσειρές (Site.gs).
  *
  * Ο κώδικας ζει στο repo okpublisher/publisher (form/) και ανεβαίνει μόνος του με το workflow «Deploy φόρμας»:
  *   δοκιμές (form/test) → clasp push → νέα έκδοση στην ΙΔΙΑ ανάπτυξη (ίδιος σύνδεσμος /exec) → έλεγχος ότι απαντά.
@@ -189,6 +191,13 @@ function dup_(kind, obj) {
   } finally { lock.releaseLock(); }
 }
 
+// Ιστοσελίδα: κείμενο έως 200, χωρίς κενά, με https:// αν λείπει· αλλιώς κενό.
+function siteUrl_(v) {
+  let s = clean_(v, 200).replace(/\s+/g, '');
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s.replace(/^\/+/, '');
+  return /^https?:\/\/[^\/\s?#]+\.[^\/\s?#]{2,}/i.test(s) ? s : '';
+}
 function ref_(v) { const s = String(v == null ? '' : v).trim().toLowerCase(); return FORM_.REF_RE.test(s) ? s : ''; }
 function clean_(v, n) { return String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n); }
 function safe_(v) { return /^[=+\-@]/.test(v) ? "'" + v : v; }
@@ -211,13 +220,13 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση']);
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση', 'Ιστοσελίδα']);
   const x = {};
   FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
   let trial = 'ναι', code = '';
-  const ref = ref_(d.ref);
+  const ref = ref_(d.ref), web = siteUrl_(d.site_url);
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
@@ -225,7 +234,7 @@ function setup_(d) {
     trial = trialCheck_(sh, head.indexOf('ΑΦΜ') + 1, b.bill_afm);
     code = clientCode_(sh, head.indexOf('ΑΦΜ') + 1, head.indexOf('Κωδικός πελάτη') + 1, b.bill_afm);
     sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
-      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref]));
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref, safe_(web)]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   if (me) {
@@ -239,6 +248,7 @@ function setup_(d) {
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +
         '\n\nΔωρεάν εβδομάδα: ' + (trial === 'ναι' ? 'ναι' : '⚠ ' + trial) +
         (ref ? '\nΣύσταση πωλητή: κωδικός ' + ref + ' (ο πωλητής φαίνεται στο διαχειριστικό)' : '') +
+        '\nΙστοσελίδα: ' + (web || '—') + (web ? ' (χρώματα/γραμματοσειρές: σε ~1 ώρα στο διαχειριστικό)' : '') +
         '\n\nΕπόμενο: config του πελάτη στο publisher-work (ο Claude), πρόσβαση σελίδας/Instagram, φάκελος Drive, token.',
     });
   }

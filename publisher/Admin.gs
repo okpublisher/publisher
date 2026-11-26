@@ -45,7 +45,7 @@ const ADM_ = {
   CLIENTS_CACHE_S: 300,
   CLIENTS_KEY: 'adm:clients:2',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
-  LEADS_KEY: 'adm:leads:2',
+  LEADS_KEY: 'adm:leads:3',
   REF_URL: 'https://okpublisher.gr/',
   REF_RE: /^[a-z0-9]{5}$/,
   REF_ABC: 'abcdefghjkmnpqrstuvwxyz23456789',   // χωρίς i, l, o, 0, 1 (μπερδεύονται)
@@ -322,8 +322,14 @@ function admData_(token) {
   const seen = function (K) { return admin || keys.indexOf(String(K)) >= 0; };
 
   out.leads = L.leads.filter(function (l) { const a = l.auto; delete l.auto; return take(l, 'lead:' + l.email, a); });
+  const scan = siteScanState_();   // χρώματα / γραμματοσειρές από την ιστοσελίδα (Site.gs)
   out.setups = L.setups.filter(function (s) { const a = s.auto; delete s.auto; return take(s, s.code ? 'setup:' + s.code : 'lead:' + s.email, a); })
-    .map(function (s) { if (!admin) delete s.afm; return s; });
+    .map(function (s) {
+      if (!admin) delete s.afm;
+      const x = s.code && scan[s.code];
+      if (x && x.url === siteNorm_(s.website)) s.site = { ok: !!x.ok, at: x.at, colors: x.colors || [], fonts: x.fonts || [], err: x.err || '', tries: x.tries || 0 };
+      return s;
+    });
 
   try {
     const q = admSheet_('Ουρά');
@@ -531,7 +537,7 @@ function admLeads_() {
         instagram: v(r, 'Instagram'), address: v(r, 'Διεύθυνση/περιοχή'), about: v(r, 'Τι κάνει').slice(0, 1500), times: v(r, 'Ώρες'),
         reels: v(r, 'Έτοιμα reels'), music: v(r, 'Μουσική στα reels'), status: v(r, 'Κατάσταση'), terms: v(r, 'Όροι (έκδοση)'),
         bill_name: v(r, 'Επωνυμία τιμολόγησης'), afm: v(r, 'ΑΦΜ'), bill_check: v(r, 'Έλεγχος τιμολόγησης'), trial: v(r, 'Δωρεάν εβδομάδα'),
-        ref: v(r, 'Σύσταση').toLowerCase() };
+        ref: v(r, 'Σύσταση').toLowerCase(), website: v(r, 'Ιστοσελίδα') };
     }).reverse(),
   };
   try { cache.put(ADM_.LEADS_KEY, JSON.stringify(res), ADM_.LEADS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }

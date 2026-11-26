@@ -1616,6 +1616,7 @@ function admEnv(extraProps, opts) {
         if (opts.csvFail) return resp(403, '<html>no</html>', { 'Content-Type': 'text/html' });
         return resp(200, /gid=11$/.test(url) ? (opts.leadsCsv || LEADS_CSV) : (opts.setupsCsv || SETUPS_CSV), { 'Content-Type': 'text/csv' });
       }
+      if (opts.web && url in opts.web) { const w = opts.web[url]; env.webHits = (env.webHits || []).concat([url]); return resp(w[0], w[1], { 'Content-Type': w[2] || 'text/html' }); }
       if (opts.viva) return opts.viva.fetch(url, o, resp);
       return null;
     },
@@ -2096,6 +2097,82 @@ test('πωλητές: ώρα του Sheet με π.μ./μ.μ. (σειρά «πρ�
   assert.ok(t('26/11/2026 12:00:00 μ.μ.') < t('26/11/2026 1:00:00 μ.μ.'));
   assert.ok(t('9/1/2027 8:00:00 π.μ.') > t('26/12/2026 11:00:00 μ.μ.'));
   assert.strictEqual(t('κάτι'), 0);
+});
+
+const SITE_HTML = '<!doctype html><html><head><title>Φούρνος &amp; Καφές</title><meta name="description" content="Ψωμί κάθε μέρα">' +
+  '<meta name="theme-color" content="#C0392B"><meta name="generator" content="WordPress 6.4">' +
+  '<link rel="stylesheet" href="/css/site.css"><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato&display=swap" rel="stylesheet">' +
+  '<link rel="icon" href="/fav.png"><style>:root{--brand-red:#c0392b;--cream:#FFF8E7}body{font-family:"Lato",system-ui,sans-serif;color:#333}</style></head>' +
+  '<body><header><img class="site-logo" src="/img/logo.svg" alt="Φούρνος"></header><h1 style="color:#C0392B">Ζεστό ψωμί</h1><p>Από το 1965, με αγάπη.</p>' +
+  '<script>var x="#123456";</script></body></html>';
+const SITE_CSS = 'h1,h2{font-family:\'Playfair Display\',serif;color:#c0392b}.btn{background:rgb(192, 57, 43);color:#fff}.muted{color:rgba(0,0,0,.3)}' +
+  '.box{background:#FFF8E7;border:1px solid #eee}a{color:#2E86C1}';
+function siteEnv(extra) {
+  const opts = {
+    setupsCsv: 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Κατάσταση,ΑΦΜ,Έλεγχος τιμολόγησης,Δωρεάν εβδομάδα,Κωδικός πελάτη,Σύσταση,Ιστοσελίδα\r\n' +
+      '26/11/2026 4:00:00 μ.μ.,Φούρνος Δοκιμή,Γιώργος,owner@shop.gr,Βασικό,Ψωμί,νέο,123456783,ΟΚ,ναι,OK-0002,,https://www.fournos-test.gr/\r\n' +
+      '26/11/2026 5:00:00 μ.μ.,Χωρίς site,Ν,n@shop.gr,Βασικό,x,νέο,111111111,ΟΚ,ναι,OK-0003,,\r\n' +
+      '26/11/2026 6:00:00 μ.μ.,Τοπικό,Ν,l@shop.gr,Βασικό,x,νέο,222222222,ΟΚ,ναι,OK-0004,,http://192.168.1.1/\r\n',
+    web: Object.assign({
+      'https://www.fournos-test.gr/': [200, SITE_HTML],
+      'https://www.fournos-test.gr/css/site.css': [200, SITE_CSS, 'text/css'],
+    }, extra || {}),
+  };
+  return admEnv({}, opts);
+}
+
+test('ιστοσελίδα: χρώματα, γραμματοσειρές, λογότυπο, κείμενο → setups/<OK>/site.json + σύνοψη στο διαχειριστικό', function () {
+  const env = siteEnv();
+  assert.strictEqual(env.ctx.siteScanCycle_(), 1, 'μόνο αυτό με έγκυρη ιστοσελίδα');
+  const put = env.calls.filter(function (c) { return c.method === 'put' && decodeURIComponent(c.url).indexOf('/contents/setups/OK-0002/site.json') > 0; });
+  assert.strictEqual(put.length, 1);
+  const j = JSON.parse(Buffer.from(JSON.parse(put[0].payload).content, 'base64').toString('utf8'));
+  assert.strictEqual(j.title, 'Φούρνος & Καφές');
+  assert.strictEqual(j.theme_color, '#C0392B');
+  assert.strictEqual(j.colors[0].hex, '#C0392B', 'το πιο συχνό χρώμα πρώτο (hex + rgb)');
+  assert.ok(j.colors.some(function (c) { return c.hex === '#FFF8E7'; }) && j.colors.some(function (c) { return c.hex === '#2E86C1'; }));
+  assert.ok(!j.colors.some(function (c) { return c.hex === '#123456'; }), 'όχι από scripts');
+  assert.ok(!j.colors.some(function (c) { return c.hex === '#000000'; }), 'διαφανές rgba(…,.3) έξω');
+  assert.ok(j.colors.filter(function (c) { return c.hex === '#333333'; })[0].neutral);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(j.css_vars)), [{ name: 'brand-red', hex: '#C0392B' }, { name: 'cream', hex: '#FFF8E7' }]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(j.google_fonts)), ['Playfair Display', 'Lato']);
+  assert.deepStrictEqual(j.fonts.map(function (f) { return f.family; }).slice(0, 2).sort(), ['Lato', 'Playfair Display']);
+  assert.ok(!j.fonts.some(function (f) { return /system-ui|serif/.test(f.family); }));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(j.logo_candidates)), ['https://www.fournos-test.gr/img/logo.svg']);
+  assert.strictEqual(j.generator, 'WordPress 6.4');
+  assert.ok(/Ζεστό ψωμί/.test(j.text) && /Από το 1965/.test(j.text) && !/var x/.test(j.text));
+  const d = api(env, { act: 'data', token: env.loginAs('system@example.com') }).data;
+  const s = d.setups.filter(function (x) { return x.code === 'OK-0002'; })[0];
+  assert.strictEqual(s.website, 'https://www.fournos-test.gr/');
+  assert.deepStrictEqual([s.site.ok, s.site.colors[0], s.site.fonts.length > 0], [true, '#C0392B', true]);
+  assert.ok(!d.setups.filter(function (x) { return x.code === 'OK-0004'; })[0].site, 'IP τοπικού δικτύου: ποτέ');
+  env.cache = {};
+  assert.strictEqual(env.ctx.siteScanCycle_(), 0, 'μία φορά');
+  assert.ok(!env.webHits.some(function (u) { return /192\.168/.test(u); }));
+});
+
+test('ιστοσελίδα: σφάλμα → ξανά δοκιμή έως 3 φορές· μετά σταματά (φαίνεται στο διαχειριστικό)', function () {
+  const env = siteEnv({ 'https://www.fournos-test.gr/': [503, 'down'] });
+  for (let i = 0; i < 5; i++) { env.cache = {}; env.ctx.siteScanCycle_(); }
+  const sc = JSON.parse(env.props.SITE_SCAN)['OK-0002'];
+  assert.deepStrictEqual([sc.ok, sc.tries, /503/.test(sc.err)], [false, 3, true]);
+  assert.strictEqual(env.webHits.filter(function (u) { return u === 'https://www.fournos-test.gr/'; }).length, 3);
+  const n = env.ctx.siteNorm_;
+  assert.deepStrictEqual([n('fournos.gr'), n('http://localhost/x'), n('https://10.0.0.1'), n('https://printer.local'), n('ftp://x.gr'), n('όχι site')],
+    ['https://fournos.gr', '', '', '', '', '']);
+  assert.strictEqual(env.ctx.siteColor_('#abc'), '#AABBCC');
+  assert.strictEqual(env.ctx.siteColor_('rgba(10, 20, 30, 0.9)'), '#0A141E');
+  assert.strictEqual(env.ctx.siteColor_('#00000010'), '');
+});
+
+test('υποφάκελοι πελάτη: «REELS ΕΤΟΙΜΑ» και «ΛΟΓΟΤΥΠΟ» (και κάθε βράδυ)· το λογότυπο εκτός ελέγχου διπλοτύπων', function () {
+  const made = {};
+  const root = { getFoldersByName: function (n) { return { hasNext: function () { return !!made[n]; } }; }, createFolder: function (n) { made[n] = 1; } };
+  const env = makeEnv({ props: { CLIENTS: 'ORE', FOLDER_ORE: 'ROOT' }, DriveApp: { getFolderById: function () { return root; } } });
+  assert.deepStrictEqual(Array.from(env.ctx.ensureClientSubdirs_('ORE')), ['REELS ΕΤΟΙΜΑ', 'ΛΟΓΟΤΥΠΟ']);
+  assert.deepStrictEqual(Array.from(env.ctx.ensureClientSubdirs_('ORE')), [], 'δεύτερη φορά τίποτα');
+  assert.ok(vm.runInContext('DEDUPE_SKIP_', env.ctx).indexOf('ΛΟΓΟΤΥΠΟ') >= 0);
+  assert.ok(vm.runInContext('APPR_.TOP_DIRS', env.ctx).indexOf('ΛΟΓΟΤΥΠΟ') >= 0 && vm.runInContext('APPR_.MOVE_DIRS', env.ctx).indexOf('ΛΟΓΟΤΥΠΟ') >= 0);
 });
 
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {

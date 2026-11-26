@@ -462,5 +462,104 @@ class MusicTest(unittest.TestCase):
         self.assertEqual(sorted(streams), ['audio', 'video'])
 
 
+class LogoPrepTest(unittest.TestCase):
+    """Λογότυπο σε οποιαδήποτε μορφή → διάφανο PNG + παραλλαγές (logo_prep.py)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _jpg_logo(self, bg=(255, 255, 255)):
+        from PIL import ImageDraw
+        im = Image.new('RGB', (800, 500), bg)
+        d = ImageDraw.Draw(im)
+        d.ellipse((150, 100, 450, 400), fill=(200, 30, 40))
+        d.ellipse((250, 200, 350, 300), fill=bg)          # «τρύπα» στο χρώμα του φόντου
+        d.rectangle((500, 200, 700, 300), fill=(20, 60, 160))
+        p = self.tmp / 'Λογότυπο φούρνου.jpg'
+        im.save(p, quality=92)
+        return p
+
+    def test_jpg_white_background_removed_holes_too_trimmed(self):
+        import logo_prep
+        r = logo_prep.prepare([self._jpg_logo()], self.tmp / 'out', primary=(200, 30, 40))
+        self.assertTrue(r['ok'])
+        self.assertIn('αφαιρέθηκε', r['background'])
+        im = Image.open(r['files']['default'])
+        self.assertEqual(im.mode, 'RGBA')
+        self.assertLess(im.width, 650, 'κομμένα περιθώρια')
+        a = im.getchannel('A')
+        self.assertEqual(a.getpixel((0, 0)), 0, 'διάφανη γωνία')
+        self.assertFalse([p for p in im.getdata() if p[3] == 255 and min(p[:3]) > 240], 'και η λευκή «τρύπα» διάφανη (γράμματα Ο, ρ…)')
+        self.assertEqual(r['logos']['default'], 'logos/logo.png')
+        self.assertEqual(r['logos']['on_primary'], 'logos/logo_white.png', 'κόκκινο λογότυπο σε κόκκινο φόντο → λευκό')
+        self.assertTrue(any(c['hex'].startswith('#C') for c in r['colors']), r['colors'])
+        self.assertTrue(Path(r['files']['preview']).exists())
+        r2 = logo_prep.prepare([self._jpg_logo()], self.tmp / 'out2', keep_holes=True)
+        im2 = Image.open(r2['files']['default'])
+        self.assertTrue([p for p in im2.getdata() if p[3] == 255 and min(p[:3]) > 240], '--keep-holes: η λευκή τρύπα μένει')
+
+    def test_white_logo_gets_dark_default(self):
+        import logo_prep
+        im = Image.new('RGBA', (600, 300), (0, 0, 0, 0))
+        from PIL import ImageDraw
+        ImageDraw.Draw(im).rectangle((100, 100, 500, 200), fill=(255, 255, 255, 255))
+        p = self.tmp / 'logo_white.png'
+        im.save(p)
+        r = logo_prep.prepare([p], self.tmp / 'out', primary=(91, 33, 214))
+        self.assertEqual(r['background'], 'είχε ήδη διαφάνεια')
+        self.assertEqual(r['logos']['default'], 'logos/logo_dark.png')
+        self.assertEqual(r['logos']['on_primary'], 'logos/logo.png')
+        self.assertTrue(any('ανοιχτόχρωμο' in w for w in r['warnings']))
+
+    def test_photo_background_warns(self):
+        import logo_prep
+        rng = __import__('numpy').random.default_rng(1)
+        p = self.tmp / 'tampela.jpg'
+        Image.fromarray(rng.integers(0, 255, (270, 360, 3), dtype='uint8')).save(p)
+        r = logo_prep.prepare([p], self.tmp / 'out')
+        self.assertTrue(any('Οι άκρες δεν έχουν ένα χρώμα' in w for w in r['warnings']))
+        self.assertTrue(any('Μικρό λογότυπο' in w for w in r['warnings']))
+
+    @unittest.skipUnless(shutil.which('rsvg-convert'), 'χωρίς rsvg-convert')
+    def test_svg_preferred_over_jpg(self):
+        import logo_prep
+        svg = self.tmp / 'logo.svg'
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect x="20" y="20" width="160" height="60" fill="#0A7"/></svg>')
+        r = logo_prep.prepare([self._jpg_logo(), svg], self.tmp / 'out')
+        self.assertEqual(r['source'], 'logo.svg')
+        self.assertEqual(r['kind'], 'svg')
+        self.assertGreater(max(r['size']), 1000, 'διανυσματικό σε μεγάλη ανάλυση')
+        self.assertTrue(any('Πολλά αρχεία' in w for w in r['warnings']))
+
+    @unittest.skipUnless(shutil.which('pdftocairo'), 'χωρίς pdftocairo')
+    def test_pdf_and_ai(self):
+        import logo_prep
+        from reportlab.pdfgen import canvas
+        p = self.tmp / 'logo.pdf'
+        c = canvas.Canvas(str(p), pagesize=(300, 150))
+        c.setFillColorRGB(0.1, 0.3, 0.8)
+        c.rect(50, 40, 200, 70, fill=1, stroke=0)
+        c.save()
+        ai = self.tmp / 'logo.ai'
+        shutil.copy(p, ai)
+        for f in (p, ai):
+            r = logo_prep.prepare([f], self.tmp / ('out_' + f.suffix[1:]))
+            self.assertEqual(r['kind'], 'pdf')
+            self.assertEqual(r['background'], 'είχε ήδη διαφάνεια', 'pdftocairo -transp')
+            im = Image.open(r['files']['default'])
+            self.assertEqual(im.getchannel('A').getpixel((0, 0)), 0)
+
+    def test_broken_file_is_reported(self):
+        import logo_prep
+        bad = self.tmp / 'logo.png'
+        bad.write_bytes(b'not an image')
+        with self.assertRaises(SystemExit) as cm:
+            logo_prep.prepare([bad], self.tmp / 'out')
+        self.assertIn('δεν άνοιξε', str(cm.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

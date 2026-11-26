@@ -9,15 +9,20 @@
  *   Drive αυτού που τα ανέβασε). Τίποτα δεν σβήνεται οριστικά. Email στον πελάτη μόνο όταν βρει κάτι.
  * setupDailyDedupe(): τρέχει τον έλεγχο τώρα και μετά κάθε βράδυ (~04:00). Την ίδια νύχτα, στον χρόνο που μένει,
  *   κόβει και τα μεγάλα βίντεο για τον Claude (splitBigVideos, Transfer.gs).
- * setupClientFolders(): φτιάχνει στον φάκελο υλικού κάθε πελάτη τον υποφάκελο «REELS ΕΤΟΙΜΑ», αν δεν υπάρχει.
+ * setupClientFolders(): φτιάχνει στον φάκελο υλικού κάθε πελάτη τους υποφακέλους «REELS ΕΤΟΙΜΑ» και «ΛΟΓΟΤΥΠΟ», αν δεν
+ *   υπάρχουν. Από 26/11/2026 το ίδιο γίνεται και κάθε βράδυ (dedupeMaterial), για τους νέους πελάτες.
+ * «ΛΟΓΟΤΥΠΟ»: ο πελάτης βάζει εκεί το λογότυπο σε όποια μορφή το έχει (PNG, JPG, SVG, PDF, AI, EPS, HEIC…). Δεν είναι υλικό
+ *   για posts (δεν το κοιτάζει ούτε ο έλεγχος διπλοτύπων)· ο Claude το κάνει διάφανο PNG με το studio/logo_prep.py.
  */
 const TIDY_ = {
   BUDGET_MS: 4.5 * 60 * 1000,    // ασφαλώς κάτω από το όριο των 6 λεπτών του Apps Script
   API: 'https://www.googleapis.com/drive/v3/files',
   FOLDER: 'application/vnd.google-apps.folder',
 };
-const DEDUPE_SKIP_ = ['ΕΓΚΡΙΣΗ', '_ΜΕΤΑΦΟΡΑ'];   // αρχεία που φτιάχνει το ίδιο το σύστημα· δεν πειράζονται
+const LOGO_DIR = 'ΛΟΓΟΤΥΠΟ';                       // λογότυπο του πελάτη (οποιαδήποτε μορφή)· όχι υλικό
+const DEDUPE_SKIP_ = ['ΕΓΚΡΙΣΗ', '_ΜΕΤΑΦΟΡΑ', LOGO_DIR];   // δεν πειράζονται από τον έλεγχο διπλοτύπων
 const READY_REELS_DIR = 'REELS ΕΤΟΙΜΑ';           // τελικά reels του πελάτη: δημοσιεύονται όπως είναι
+const CLIENT_SUBDIRS_ = [READY_REELS_DIR, LOGO_DIR];
 
 function setupDailyDedupe() { manualOnly_('setupDailyDedupe');
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -40,6 +45,7 @@ function dedupeMaterial() {
   let n = 0;
   folderClients_().forEach(function (K) {
     if (Date.now() > dedupeUntil) return;
+    try { ensureClientSubdirs_(K); } catch (e) { console.log('[' + K + '] υποφάκελοι: ' + e.message); }
     try { n += dedupeOnly_(K, dedupeUntil); }
     catch (e) { systemNotify_('Σφάλμα στα διπλότυπα (' + K + ')', e.message); }
   });
@@ -85,12 +91,17 @@ function dedupeOnly_(K, deadline) {
 function setupClientFolders() { manualOnly_('setupClientFolders');
   folderClients_().forEach(function (K) {
     try {
-      const root = DriveApp.getFolderById(folderId_(K));
-      const it = root.getFoldersByName(READY_REELS_DIR);
-      if (it.hasNext()) console.log('[' + K + '] «' + READY_REELS_DIR + '» υπάρχει ήδη στο «' + root.getName() + '».');
-      else { root.createFolder(READY_REELS_DIR); console.log('[' + K + '] Φτιάχτηκε το «' + READY_REELS_DIR + '» στο «' + root.getName() + '».'); }
+      const made = ensureClientSubdirs_(K);
+      console.log('[' + K + '] ' + (made.length ? 'Φτιάχτηκαν: «' + made.join('», «') + '».' : 'Οι υποφάκελοι υπάρχουν ήδη.'));
     } catch (e) { console.log('[' + K + '] ΣΦΑΛΜΑ: ' + e.message); }
   });
+}
+
+// Οι υποφάκελοι του πελάτη (REELS ΕΤΟΙΜΑ, ΛΟΓΟΤΥΠΟ), αν λείπουν. Επιστρέφει όσους έφτιαξε.
+function ensureClientSubdirs_(K) {
+  const root = DriveApp.getFolderById(folderId_(K)), made = [];
+  CLIENT_SUBDIRS_.forEach(function (d) { if (!root.getFoldersByName(d).hasNext()) { root.createFolder(d); made.push(d); } });
+  return made;
 }
 
 // ------------------------------------------------------------------ helpers (Drive API v3)
