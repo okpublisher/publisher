@@ -735,7 +735,7 @@ function admGroups_() {
   try { cache.put(ADM_.GROUPS_KEY, JSON.stringify(out), ADM_.CLIENTS_CACHE_S); } catch (e) { /* χωρίς cache */ }
   return out;
 }
-// Κλειδί φακέλου από όνομα: λατινικά, πεζά, παύλες («Learning & Sensory» → learning-sensory, «Φούρνος Κώστα» → fournos-kosta).
+// Κλειδί φακέλου από όνομα: λατινικά, πεζά, παύλες («Learning & Sensory» → learning-sensory, «Φούρνος Γειτονιάς» → fournos-geitonias).
 function admSlug_(s) {
   const G = { 'α': 'a', 'β': 'v', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'i', 'θ': 'th', 'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 'ν': 'n',
     'ξ': 'x', 'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'f', 'χ': 'ch', 'ψ': 'ps', 'ω': 'o' };

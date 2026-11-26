@@ -2014,11 +2014,11 @@ test('διαχειριστικό: ομάδα (αλυσίδα) σε πελάτη 
   assert.strictEqual(env.act({ act: 'data' }).data.clients.find(function (c) { return c.key === 'OKP'; }).group, 'learning-sensory');
   assert.ok(env.mails.some(function (m) { return /Ομάδα: OK-0000/.test(m.subject); }));
   // νέα ομάδα με ελληνικό όνομα → λατινικό κλειδί, βγαίνει από την παλιά
-  r = env.act({ act: 'client_group', client: 'OKP', group: '+', name: '  Φούρνοι  Κώστα ' });
-  assert.ok(/Στην ομάδα Φούρνοι Κώστα: .*δεν έχει ακόμα brand/.test(r.message), r.message || r.error);
-  const ng = env.gh('groups/fournoi-kosta/group.json');
-  assert.deepStrictEqual([ng.key, ng.name, ng.members, ng.brand], ['fournoi-kosta', 'Φούρνοι Κώστα', ['OKP'], null]);
-  assert.strictEqual(env.gh('clients/OKP/config.json').group, 'fournoi-kosta');
+  r = env.act({ act: 'client_group', client: 'OKP', group: '+', name: '  Φούρνοι  Γειτονιάς ' });
+  assert.ok(/Στην ομάδα Φούρνοι Γειτονιάς: .*δεν έχει ακόμα brand/.test(r.message), r.message || r.error);
+  const ng = env.gh('groups/fournoi-geitonias/group.json');
+  assert.deepStrictEqual([ng.key, ng.name, ng.members, ng.brand], ['fournoi-geitonias', 'Φούρνοι Γειτονιάς', ['OKP'], null]);
+  assert.strictEqual(env.gh('clients/OKP/config.json').group, 'fournoi-geitonias');
   assert.deepStrictEqual(env.gh('groups/learning-sensory/group.json').members, ['ORE'], 'βγήκε από την παλιά');
   assert.ok(/όνομα/.test(env.act({ act: 'client_group', client: 'OKP', group: '+', name: ' ' }).error));
   // ίδιο όνομα με υπάρχουσα → εκείνη (όχι διπλή)
@@ -2050,8 +2050,8 @@ test('διαχειριστικό: ομάδα (αλυσίδα) σε πελάτη 
 
 test('διαχειριστικό: κλειδί ομάδας από όνομα (λατινικά, παύλες)', function () {
   const env = actEnv();
-  assert.deepStrictEqual(['Learning & Sensory', 'Φούρνος Κώστα', 'Ψητοπωλεία «Ο Θανάσης»', 'ΑΪ-Δρόμος 2'].map(env.ctx.admSlug_),
-    ['learning-sensory', 'fournos-kosta', 'psitopoleia-o-thanasis', 'ai-dromos-2']);
+  assert.deepStrictEqual(['Learning & Sensory', 'Φούρνος Γειτονιάς', 'Ψητοπωλεία «Η Γωνιά»', 'ΑΪ-Δρόμος 2'].map(env.ctx.admSlug_),
+    ['learning-sensory', 'fournos-geitonias', 'psitopoleia-i-gonia', 'ai-dromos-2']);
 });
 
 test('διαχειριστικό: η κάρτα πελάτη έχει ημέρες/έγκριση/δωρεάν και τα βλέπει και ο πωλητής του· το cache αλλάζει όνομα με τα πεδία', function () {
