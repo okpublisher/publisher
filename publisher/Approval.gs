@@ -202,8 +202,11 @@ function doRequest_(K, req, res) {
   });
   if (total > APPR_.MAX_ATTACH_BYTES) throw new Error('email: συνημμένα ' + Math.round(total / 1048576) + ' MB (όριο 20)');
   const url = res.drive_folder_url || '';
-  const fill = function (s) { return s ? String(s).split('{{DRIVE_FOLDER_URL}}').join(url) : s; };
-  const sent = sendMail_(K, { subject: req.subject, text: fill(req.text), html: fill(req.html), attachments: atts,
+  // {{DRIVE_FOLDER_URL}}: ο φάκελος της έγκρισης · {{PLAN_CHANGE_LINE}}: «Θέλετε άλλο πακέτο;» με τον σύνδεσμο (κενό χωρίς ενεργή συνδρομή)
+  const fill = function (s, html) {
+    return s ? String(s).split('{{DRIVE_FOLDER_URL}}').join(url).split('{{PLAN_CHANGE_LINE}}').join(planChangeLine_(K, html)) : s;
+  };
+  const sent = sendMail_(K, { subject: req.subject, text: fill(req.text, false), html: fill(req.html, true), attachments: atts,
     thread_id: req.thread_id, in_reply_to: req.in_reply_to });
   res.message_id = sent.message_id;
   res.thread_id = sent.thread_id;

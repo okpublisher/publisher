@@ -78,6 +78,7 @@ function doGet(e) {
   rememberWebappUrl_();
   if (q.a === 'stop') return billingCancelPage_(q);   // «Διακοπή συνδρομής» (Billing.gs)
   if (q.a === 'admin') return adminPage_(q);          // διαχειριστικό (Admin.gs)
+  if (q.a === 'plan') return billingPlanPage_(q);     // «Αλλαγή πακέτου» (Billing.gs)
   const K = uploadClient_(q.c, q.key);
   return uploadOut_(K ? { ok: true, client: K } : { error: 'Λάθος κλειδί', service: 'okpublisher' });
 }

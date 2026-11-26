@@ -25,6 +25,12 @@
  *   → billingStopWeb: λύση έως τις 15 → μετά τον τρέχοντα μήνα, μετά τις 15 → μετά τον επόμενο (όροι Α.8)· ό,τι
  *   έχει πληρωθεί παραδίδεται. Email επιβεβαίωσης στον πελάτη + ειδοποίηση στο okpublisher. Κλειδί: BILLING_KEY_<K>.
  *
+ * Κουμπί «Αλλαγή πακέτου» (από 26/11/2026, όροι v7 Α.3) σε κάθε email πληρωμής (και {{PLAN_CHANGE_LINE}} στο email έγκρισης)
+ *   → σελίδα ?a=plan&c=K&k=… → billingPlanWeb: ισχύει από τον επόμενο μήνα αν γίνει έως τις 19, αλλιώς από τον μεθεπόμενο
+ *   (ποτέ για μήνα που έχει ήδη πληρωθεί). Αποθηκεύεται στο BILLING_<K>.change και εφαρμόζεται μόνο του στην αρχή του μήνα
+ *   (πριν από τη χρέωση). Email στον πελάτη + «Αλλαγή πακέτου: K» στο okpublisher + clients/<K>/package_change.json
+ *   στο publisher-work (η παραγωγή της 20ής αλλάζει config: package και ημέρες). Ίδιο πακέτο ξανά = ακύρωση της αλλαγής.
+ *   Μόνο με ενεργή, πληρωμένη συνδρομή χωρίς απλήρωτο μήνα· αλλιώς «γράψτε μας».
  * Ρυθμίσεις (Script Properties, τα κλειδιά τα βάζει μόνο ο διαχειριστής):
  *   VIVA_ENV            demo (προεπιλογή) ή live
  *   VIVA_CLIENT_ID / VIVA_CLIENT_SECRET   Smart Checkout credentials (Settings → API Access)
@@ -44,6 +50,10 @@ const BILL_ = {
   LINK_SECONDS: 432000, // 5 ημέρες
   LINK_REFRESH_DAYS: 4, // νέο σύνδεσμο σε κάθε email αν ο προηγούμενος είναι παλιότερος από τόσες ημέρες
   SHEET: 'Πληρωμές',
+  // Πακέτα (όροι Α.3): τιμή χωρίς ΦΠΑ, posts/stories την εβδομάδα. Χρέωση = τιμή + ΦΠΑ 24%.
+  PLANS: [{ name: 'Βασικό', net: 150, week: 2 }, { name: 'Μεσαίο', net: 250, week: 4 }, { name: 'Καθημερινό', net: 400, week: 7 }],
+  VAT: 0.24,
+  CHANGE_LAST_DAY: 19,  // αλλαγή πακέτου έως τις 19 → από τον επόμενο μήνα (η παραγωγή του γίνεται στις 20)
   HEAD: ['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός'],
   MONTHS_NOM: ['Ιανουάριος', 'Φεβρουάριος', 'Μάρτιος', 'Απρίλιος', 'Μάιος', 'Ιούνιος', 'Ιούλιος', 'Αύγουστος', 'Σεπτέμβριος', 'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος'],
   MONTHS: ['Ιανουάριο', 'Φεβρουάριο', 'Μάρτιο', 'Απρίλιο', 'Μάιο', 'Ιούνιο', 'Ιούλιο', 'Αύγουστο', 'Σεπτέμβριο', 'Οκτώβριο', 'Νοέμβριο', 'Δεκέμβριο'],
@@ -178,12 +188,16 @@ function esc_(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 // Email πληρωμής με το κουμπί «Διακοπή συνδρομής» (και ως σύνδεσμο στο απλό κείμενο).
 function billNotify_(K, subject, text) {
-  const u = cancelUrl_(K);
-  const tail = u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email έως τις 15 του μήνα.';
+  const u = cancelUrl_(K), pu = planUrl_(K);
+  const tail = (pu ? '\n\nΑλλαγή πακέτου: ' + pu : '') +
+    (u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email έως τις 15 του μήνα.');
+  const btn = function (href, label) {
+    return '<a href="' + esc_(href) + '" style="display:inline-block;padding:9px 18px;margin:0 8px 8px 0;border:2px solid #5B21D6;' +
+      'border-radius:999px;color:#5B21D6;text-decoration:none;font-weight:bold">' + label + '</a>';
+  };
   const html = '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E">' +
     esc_(text).replace(/(https:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>') +
-    (u ? '<p style="margin-top:28px"><a href="' + esc_(u) + '" style="display:inline-block;padding:9px 18px;border:2px solid #5B21D6;' +
-      'border-radius:999px;color:#5B21D6;text-decoration:none;font-weight:bold">Διακοπή συνδρομής</a></p>'
+    (u ? '<p style="margin-top:28px">' + (pu ? btn(pu, 'Αλλαγή πακέτου') : '') + btn(u, 'Διακοπή συνδρομής') + '</p>'
       : '<p style="margin-top:24px;color:#4A4C66">Για διακοπή της συνδρομής, απαντήστε σε αυτό το email έως τις 15 του μήνα.</p>') + '</div>';
   notify_(K, subject, text + tail, html);
 }
@@ -248,6 +262,146 @@ function billingStopWeb(c, k) {
     return '<p><b>Έγινε.</b> Η συνδρομή σας σταματά μετά τον <b>' + esc_(monthLabel_(i.after)) + '</b>: οι δημοσιεύσεις συνεχίζονται ' +
       'ως και τον ' + esc_(monthLabel_(i.after)) + ' και δεν θα γίνει καμία άλλη χρέωση. Σας στείλαμε και email επιβεβαίωσης.</p><p>Ευχαριστούμε για τη συνεργασία!</p>';
   } finally { lock.releaseLock(); }
+}
+
+// ---------------------------------------------------------------- αλλαγή πακέτου (όροι v7 Α.3)
+function planOf_(name) {
+  const n = String(name || '').trim().split(/[ ·]/)[0];
+  return BILL_.PLANS.filter(function (p) { return p.name === n; })[0] || null;
+}
+function planCents_(p) { return Math.round(p.net * (1 + BILL_.VAT) * 100); }
+function planUrl_(K) { const u = webappUrl_(); return u ? u + '?a=plan&c=' + K + '&k=' + billKey_(K) : ''; }
+
+// Από ποιον μήνα ισχύει μια αλλαγή που ζητείται τώρα: έως τις 19 → ο επόμενος, μετά → ο μεθεπόμενος (η παραγωγή του
+// επόμενου μήνα γίνεται στις 20). Ποτέ μήνας που έχει ήδη πληρωθεί. '' αν η συνδρομή λήγει πριν.
+function planChangeFrom_(st, now) {
+  const cur = ym_(now), months = st.months || {};
+  let from = Number(athens_(now, 'd')) <= BILL_.CHANGE_LAST_DAY ? nextYm_(cur) : nextYm_(nextYm_(cur));
+  if (st.start && from < st.start) from = st.start;
+  for (let i = 0; i < 24 && months[from] && months[from].st === 'paid'; i++) from = nextYm_(from);
+  return st.stop_after && from > st.stop_after ? '' : from;
+}
+
+// Τι δείχνει η σελίδα: { state: 'bad' | 'none' | 'unpaid' | 'ends' | 'active', K, st, from }
+function planInfo_(c, k) {
+  const K = String(c || '').toUpperCase();
+  if (!/^[A-Z0-9]{2,12}$/.test(K) || !k || cprop_(K, 'BILLING_KEY', '') !== String(k)) return { state: 'bad' };
+  const st = billState_(K), months = (st && st.months) || {};
+  if (!st || !st.tx || !Object.keys(months).some(function (m) { return months[m].st === 'paid'; })) return { state: 'none', K: K };
+  if (Object.keys(months).some(function (m) { return months[m].st !== 'paid'; })) return { state: 'unpaid', K: K, st: st };
+  const from = planChangeFrom_(st, new Date());
+  if (!from) return { state: 'ends', K: K, st: st };
+  return { state: 'active', K: K, st: st, from: from };
+}
+
+// Για το email έγκρισης ({{PLAN_CHANGE_LINE}} στο αίτημα email): η γραμμή με τον σύνδεσμο, μόνο με ενεργή συνδρομή.
+function planChangeLine_(K, html) {
+  const st = billState_(K), u = planUrl_(K);
+  if (!u || !st || !st.tx || (st.stop_after && st.stop_after <= ym_(new Date()))) return '';
+  return html ? '<p style="color:#4A4C66">Θέλετε άλλο πακέτο; <a href="' + esc_(u) + '">Αλλαγή πακέτου</a> (ισχύει από τον επόμενο μήνα).</p>'
+    : 'Θέλετε άλλο πακέτο; Αλλαγή πακέτου: ' + u;
+}
+
+// Σελίδα για πελάτες (ίδια εμφάνιση με τη «Διακοπή συνδρομής»).
+function billPage_(title, body) {
+  const html = '<!doctype html><html lang="el"><head><meta charset="utf-8"><style>' +
+    'body{margin:0;font:17px/1.6 Arial,sans-serif;color:#14162E;background:#F2ECFF}' +
+    '.w{max-width:520px;margin:40px auto;background:#fff;border-radius:22px;padding:28px}' +
+    'h1{font-size:24px;margin:0 0 12px;color:#5B21D6}.fine{color:#4A4C66;font-size:15px}.note{background:#FFF6CC;border-radius:12px;padding:10px 14px}' +
+    '.pl{display:flex;gap:12px;align-items:flex-start;border:2px solid #E4DCF7;border-radius:16px;padding:12px 14px;margin:0 0 10px;cursor:pointer}' +
+    '.pl input{margin-top:6px;accent-color:#5B21D6}.pl i{color:#5B21D6}' +
+    'button{font:bold 17px Arial,sans-serif;background:#5B21D6;color:#fff;border:0;border-radius:999px;padding:14px 26px;cursor:pointer}' +
+    'button:disabled{opacity:.6}</style></head><body><div class="w"><h1>' + esc_(title) + '</h1><div id="c">' + body +
+    '</div><p class="fine">okpublisher · <a href="https://okpublisher.gr">okpublisher.gr</a></p></div></body></html>';
+  return HtmlService.createHtmlOutput(html).setTitle(title + ' · okpublisher').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function billingPlanPage_(q) {
+  const i = planInfo_(q.c, q.k), mail = '<a href="mailto:okpublisher.gr@gmail.com">okpublisher.gr@gmail.com</a>';
+  let body;
+  if (i.state === 'bad') body = '<p>Ο σύνδεσμος δεν ισχύει. Γράψτε μας στο ' + mail + '.</p>';
+  else if (i.state === 'none') body = '<p>Δεν βρέθηκε ενεργή συνδρομή. Για αλλαγή πακέτου, γράψτε μας στο ' + mail + '.</p>';
+  else if (i.state === 'unpaid') body = '<p>Υπάρχει πληρωμή σε εκκρεμότητα. Μόλις γίνει, θα μπορείτε να αλλάξετε πακέτο από εδώ. Ή γράψτε μας στο ' + mail + '.</p>';
+  else if (i.state === 'ends') body = '<p>Η συνδρομή σας σταματά μετά τον <b>' + esc_(monthLabel_(i.st.stop_after)) + '</b>, οπότε δεν αλλάζει πακέτο. ' +
+    'Αν θέλετε να συνεχίσουμε, γράψτε μας στο ' + mail + '.</p>';
+  else {
+    const cur = planOf_(i.st.plan), ch = i.st.change;
+    body = '<p>Τώρα: <b>' + esc_(i.st.plan) + '</b> · €' + euros_(i.st.amount) + ' τον μήνα (με ΦΠΑ).</p>' +
+      (ch ? '<p class="note">Έχετε ήδη ζητήσει <b>' + esc_(ch.plan) + '</b> από τον ' + esc_(monthLabel_(ch.from)) + '. Μπορείτε να διαλέξετε άλλο ή να μείνετε στο τρέχον.</p>' : '') +
+      BILL_.PLANS.map(function (p) {
+        const on = ch ? p.name === ch.plan : !!(cur && p.name === cur.name);
+        return '<label class="pl"><input type="radio" name="p" value="' + esc_(p.name) + '"' + (on ? ' checked' : '') + '><span><b>' + esc_(p.name) +
+          '</b> · €' + p.net + ' + ΦΠΑ τον μήνα' + (cur && p.name === cur.name ? ' <i>(τρέχον)</i>' : '') + '<br>' + p.week + ' posts και ' + p.week +
+          ' stories την εβδομάδα</span></label>';
+      }).join('') +
+      '<p>Η αλλαγή ισχύει από τον <b>' + esc_(monthLabel_(i.from)) + '</b>: το πρόγραμμα του μήνα και η χρέωση της 1ης βγαίνουν με το νέο πακέτο. ' +
+      'Ως τότε όλα μένουν ως έχουν. Χωρίς αναλογικές χρεώσεις ή επιστροφές.</p>' +
+      '<p><button id="b">Επιβεβαίωση</button></p><p id="m" class="fine">Αν αλλάξατε γνώμη, απλώς κλείστε αυτή τη σελίδα.</p>' +
+      '<script>document.getElementById("b").onclick=function(){var b=this,c=document.querySelector("input[name=p]:checked");if(!c)return;' +
+      'b.disabled=true;b.textContent="Μια στιγμή…";google.script.run.withSuccessHandler(function(r){document.getElementById("c").innerHTML=r;})' +
+      '.withFailureHandler(function(){b.disabled=false;b.textContent="Επιβεβαίωση";document.getElementById("m").textContent=' +
+      '"Κάτι πήγε στραβά. Δοκιμάστε ξανά ή γράψτε μας στο okpublisher.gr@gmail.com.";})' +
+      '.billingPlanWeb(' + JSON.stringify(i.K) + ',' + JSON.stringify(String(q.k)) + ',c.value);};</script>';
+  }
+  return billPage_('Αλλαγή πακέτου', body);
+}
+
+// Καλείται από το κουμπί της σελίδας (google.script.run). Επιστρέφει το κείμενο που δείχνει η σελίδα.
+function billingPlanWeb(c, k, plan) {
+  const lock = LockService.getUserLock();
+  if (!lock.tryLock(20000)) throw new Error('busy');
+  try {
+    const i = planInfo_(c, k), p = planOf_(plan);
+    if (i.state !== 'active') return '<p>Δεν γίνεται αλλαγή πακέτου από εδώ. Γράψτε μας στο okpublisher.gr@gmail.com.</p>';
+    if (!p) throw new Error('Άγνωστο πακέτο');
+    const K = i.K, st = i.st, cur = planOf_(st.plan);
+    if (cur && p.name === cur.name) {
+      if (!st.change) return '<p>Αυτό είναι ήδη το πακέτο σας: δεν αλλάζει τίποτα.</p>';
+      const old = st.change;
+      delete st.change;
+      billSave_(K, st);
+      billLog_(K, old.from, 0, 'αλλαγή πακέτου: ακύρωση', 'μένει ' + st.plan, '');
+      const repo = planChangeRepo_(K, { plan: st.plan, previous: st.plan, from: old.from, status: 'cancelled', cancelled: old.plan });
+      billNotify_(K, 'Μένετε στο πακέτο ' + st.plan, 'Ακυρώσαμε την αλλαγή σε ' + old.plan + '. Το πακέτο σας μένει ' + st.plan +
+        ' (€' + euros_(st.amount) + ' τον μήνα με ΦΠΑ).');
+      systemNotify_('Αλλαγή πακέτου: ' + K + ' (ακυρώθηκε)', 'Ο πελάτης ' + K + ' ακύρωσε την αλλαγή σε ' + old.plan + ' από τον ' +
+        monthLabel_(old.from) + '. Μένει ' + st.plan + '.' + repo);
+      return '<p><b>Έγινε.</b> Μένετε στο <b>' + esc_(st.plan) + '</b>. Σας στείλαμε email επιβεβαίωσης.</p>';
+    }
+    st.change = { plan: p.name, amount: planCents_(p), from: i.from, at: new Date().toISOString(), previous: st.plan };
+    billSave_(K, st);
+    billLog_(K, i.from, st.change.amount, 'αλλαγή πακέτου', st.plan + ' → ' + p.name + ' από ' + monthLabel_(i.from), '');
+    const repo = planChangeRepo_(K, { plan: p.name, previous: st.plan, from: i.from, week: p.week, status: 'scheduled' });
+    billNotify_(K, 'Αλλαγή πακέτου σε ' + p.name + ' από τον ' + monthLabel_(i.from),
+      'Λάβαμε το αίτημά σας. Από τον ' + monthLabel_(i.from) + ' το πακέτο σας γίνεται ' + p.name + ' (' + p.week + ' posts και ' + p.week +
+      ' stories την εβδομάδα), €' + euros_(st.change.amount) + ' τον μήνα με ΦΠΑ, με αυτόματη χρέωση την 1η του μήνα. ' +
+      'Ως τότε όλα μένουν ως έχουν (' + st.plan + ').');
+    systemNotify_('Αλλαγή πακέτου: ' + K, 'Ο πελάτης ' + K + ' άλλαξε πακέτο: ' + st.plan + ' → ' + p.name + ' από τον ' + monthLabel_(i.from) +
+      '. Η χρέωση αλλάζει μόνη της. Στην παραγωγή της 20ής: config.json (package, ημέρες posts/stories).' + repo);
+    return '<p><b>Έγινε.</b> Από τον <b>' + esc_(monthLabel_(i.from)) + '</b> το πακέτο σας γίνεται <b>' + esc_(p.name) + '</b> (€' +
+      euros_(st.change.amount) + ' τον μήνα με ΦΠΑ). Σας στείλαμε email επιβεβαίωσης.</p>';
+  } finally { lock.releaseLock(); }
+}
+
+// Στην αρχή του μήνα της αλλαγής (πριν από τη χρέωση): το νέο πακέτο και ποσό γίνονται τα τρέχοντα.
+function applyPlanChange_(K, st) {
+  const ch = st.change;
+  st.plan = ch.plan;
+  st.amount = ch.amount;
+  st.plan_changed = { from: ch.from, previous: ch.previous || '', at: new Date().toISOString() };
+  delete st.change;
+  billSave_(K, st);
+  billLog_(K, ch.from, ch.amount, 'αλλαγή πακέτου: ισχύει', (ch.previous || '') + ' → ' + ch.plan, '');
+}
+
+// Σημείωση για την παραγωγή στο publisher-work. Επιστρέφει κείμενο για το email του okpublisher ('' αν όλα καλά).
+function planChangeRepo_(K, o) {
+  try {
+    ghPutJson_('clients/' + K + '/package_change.json', Object.assign({ client: K, requested_at: new Date().toISOString(),
+      note: 'Γράφεται από το Apps Script (Billing.gs). Η παραγωγή του μήνα «from» ενημερώνει το config.json (package, ημέρες) και γράφει applied_at.' }, o),
+      'Αλλαγή πακέτου ' + K + ': ' + o.status);
+    return '';
+  } catch (e) { return '\n\n(Δεν γράφτηκε στο publisher-work: ' + e.message + ' — ενημέρωσε το config με το χέρι.)'; }
 }
 
 function nextYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] === 12 ? (p[0] + 1) + '-01' : p[0] + '-' + ('0' + (p[1] + 1)).slice(-2); }
@@ -377,6 +531,7 @@ function reportBilling_(problems) {
 function billingClient_(K, now) {
   const st = billState_(K);
   if (!st) return;
+  if (st.change && ym_(now) >= st.change.from) applyPlanChange_(K, st);   // αλλαγή πακέτου: πριν από κάθε χρέωση του μήνα
   // Χωρίς όλα τα κλειδιά δεν γίνεται τίποτα (και δεν μένει καμία χρέωση «στη μέση»).
   vivaNeed_(['VIVA_CLIENT_ID', 'VIVA_CLIENT_SECRET', 'VIVA_MERCHANT_ID', 'VIVA_API_KEY']);
   st.months = st.months || {};

@@ -1379,6 +1379,102 @@ if (OLD_DIR) {
   });
 }
 
+// ------------------------------------------------------------------ αλλαγή πακέτου (Billing.gs, όροι v7 Α.3)
+function planEnv(now, st) {
+  const env = billEnv(now, { BILLING_ORE: JSON.stringify(st || PAID_FEB), BILLING_KEY_ORE: 'pk123', WEBAPP_URL: EXEC, GITHUB_TOKEN: 'ghtok' });
+  env.ghPuts = [];
+  const prev = env.ctx.UrlFetchApp.fetch;
+  env.ctx.UrlFetchApp.fetch = function (url, o) {
+    if (url.indexOf('https://api.github.com/repos/okpublisher/publisher-work/contents/') === 0 && o && o.method === 'put') {
+      env.ghPuts.push({ path: decodeURIComponent(url.split('/contents/')[1]), body: JSON.parse(Buffer.from(JSON.parse(o.payload).content, 'base64').toString('utf8')) });
+      return { getResponseCode: () => 201, getContentText: () => '{}' };
+    }
+    return prev(url, o);
+  };
+  env.page = function (k) { return env.ctx.doGet({ parameter: { a: 'plan', c: 'ORE', k: k || 'pk123' } }).html; };
+  env.web = function (plan) { return env.ctx.billingPlanWeb('ORE', 'pk123', plan); };
+  env.mine = function () { return noAdmLink(env).filter(function (m) { return m.to === 'center@example.com'; }); };
+  env.sys = function () { return noAdmLink(env).filter(function (m) { return m.to === 'system@example.com'; }); };
+  return env;
+}
+
+test('αλλαγή πακέτου: η σελίδα — λάθος κλειδί, χωρίς συνδρομή, απλήρωτο, κανονικά με τα 3 πακέτα και τον μήνα έναρξης', function () {
+  let env = planEnv('2027-02-10T12:00:00+02:00');
+  assert.ok(/δεν ισχύει/.test(env.page('λάθος')));
+  const h = env.page();
+  assert.ok(/Βασικό<\/b> · €150 \+ ΦΠΑ τον μήνα <i>\(τρέχον\)<\/i>/.test(h), h);
+  assert.ok(/Μεσαίο/.test(h) && /Καθημερινό/.test(h) && /7 posts και 7 stories/.test(h));
+  assert.ok(/ισχύει από τον <b>Μάρτιο 2027<\/b>/.test(h), 'έως τις 19 → ο επόμενος μήνας');
+  assert.strictEqual(env.mails.filter(function (m) { return !/Σύνδεσμος διαχειριστικού/.test(m.subject); }).length, 0, 'το άνοιγμα δεν αλλάζει τίποτα');
+  assert.ok(/ισχύει από τον <b>Απρίλιο 2027<\/b>/.test(planEnv('2027-02-20T08:00:00+02:00').page()), 'μετά τις 19 → ο μεθεπόμενος');
+  env = planEnv('2027-02-10T12:00:00+02:00', Object.assign({}, PAID_FEB, { tx: null, months: { '2027-02': { st: 'pending' } } }));
+  assert.ok(/Δεν βρέθηκε ενεργή συνδρομή/.test(env.page()));
+  env = planEnv('2027-03-03T12:00:00+02:00', Object.assign({}, PAID_FEB, { months: { '2027-02': { st: 'paid' }, '2027-03': { st: 'pending' } } }));
+  assert.ok(/πληρωμή σε εκκρεμότητα/.test(env.page()));
+  assert.ok(/Δεν γίνεται αλλαγή/.test(env.web('Μεσαίο')));
+  env = planEnv('2027-02-10T12:00:00+02:00', Object.assign({}, PAID_FEB, { stop_after: '2027-02' }));
+  assert.ok(/σταματά μετά τον <b>Φεβρουάριο 2027/.test(env.page()));
+});
+
+test('αλλαγή πακέτου: αναβάθμιση → προγραμματίζεται, email σε πελάτη και okpublisher, σημείωση στο publisher-work, ισχύει την 1η', function () {
+  const env = planEnv('2027-02-10T12:00:00+02:00');
+  const r = env.web('Μεσαίο');
+  assert.ok(/Από τον <b>Μάρτιο 2027<\/b> το πακέτο σας γίνεται <b>Μεσαίο<\/b> \(€310,00/.test(r), r);
+  const st = env.state();
+  assert.deepStrictEqual([st.plan, st.amount, st.change.plan, st.change.amount, st.change.from], ['Βασικό', 18600, 'Μεσαίο', 31000, '2027-03']);
+  const m = env.mine();
+  assert.strictEqual(m.length, 1);
+  assert.ok(/Αλλαγή πακέτου σε Μεσαίο από τον Μάρτιο 2027/.test(m[0].subject));
+  assert.ok(/4 posts και 4 stories την εβδομάδα\), €310,00/.test(m[0].body));
+  assert.ok(m[0].body.indexOf('Αλλαγή πακέτου: ' + EXEC + '?a=plan&c=ORE&k=pk123') >= 0, 'κουμπί και στο email');
+  assert.ok(/Αλλαγή πακέτου<\/a>/.test(m[0].htmlBody) && /Διακοπή συνδρομής<\/a>/.test(m[0].htmlBody));
+  assert.ok(/Αλλαγή πακέτου: ORE/.test(env.sys()[0].subject));
+  assert.ok(/Βασικό → Μεσαίο από τον Μάρτιο 2027/.test(env.sys()[0].body));
+  assert.strictEqual(env.ghPuts.length, 1);
+  assert.strictEqual(env.ghPuts[0].path, 'clients/ORE/package_change.json');
+  assert.deepStrictEqual([env.ghPuts[0].body.plan, env.ghPuts[0].body.previous, env.ghPuts[0].body.from, env.ghPuts[0].body.status, env.ghPuts[0].body.week],
+    ['Μεσαίο', 'Βασικό', '2027-03', 'scheduled', 4]);
+  // τον Φεβρουάριο τίποτα· 1η Μαρτίου: χρέωση με το νέο ποσό, το νέο πακέτο γίνεται το τρέχον
+  env.at('2027-02-28T12:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.state().plan, 'Βασικό');
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 1);
+  assert.strictEqual(env.viva.charges[0].body.amount, 31000);
+  const after = env.state();
+  assert.deepStrictEqual([after.plan, after.amount, 'change' in after, after.plan_changed.previous], ['Μεσαίο', 31000, false, 'Βασικό']);
+  const c = env.mine().pop();
+  assert.ok(/Χρεώθηκε η συνδρομή για τον Μάρτιο 2027/.test(c.subject) && /Μεσαίο, €310,00/.test(c.body), c.body);
+  assert.ok(env.sheets['Πληρωμές'].rows.some(function (r) { return r[4] === 'αλλαγή πακέτου: ισχύει'; }));
+});
+
+test('αλλαγή πακέτου: υποβάθμιση μετά τις 19 → από τον μεθεπόμενο· ποτέ για προπληρωμένο μήνα· ίδιο πακέτο = ακύρωση', function () {
+  const top = { plan: 'Καθημερινό', amount: 49600, start: '2027-02', stop_after: null, tx: 'TX1',
+    months: { '2027-02': { st: 'paid' }, '2027-03': { st: 'paid' } } };
+  const env = planEnv('2027-02-25T12:00:00+02:00', top);
+  env.web('Βασικό');
+  assert.strictEqual(env.state().change.from, '2027-04', 'μετά τις 19 → μεθεπόμενος');
+  const env2 = planEnv('2027-02-05T12:00:00+02:00', top);
+  env2.web('Βασικό');
+  assert.strictEqual(env2.state().change.from, '2027-04', 'ο Μάρτιος έχει ήδη πληρωθεί με το παλιό πακέτο');
+  assert.ok(/Αυτό είναι ήδη το πακέτο σας/.test(planEnv('2027-02-05T12:00:00+02:00', top).web('Καθημερινό')));
+  const r = env.web('Καθημερινό');
+  assert.ok(/Μένετε στο <b>Καθημερινό<\/b>/.test(r));
+  assert.ok(!('change' in env.state()));
+  assert.ok(/Μένετε στο πακέτο Καθημερινό/.test(env.mine().pop().subject));
+  assert.strictEqual(env.ghPuts.pop().body.status, 'cancelled');
+  assert.throws(function () { env.web('Χρυσό'); }, /Άγνωστο πακέτο/);
+});
+
+test('αλλαγή πακέτου: {{PLAN_CHANGE_LINE}} στο email έγκρισης — σύνδεσμος μόνο με ενεργή συνδρομή', function () {
+  const env = planEnv('2027-02-10T12:00:00+02:00');
+  assert.ok(env.ctx.planChangeLine_('ORE', false).indexOf('Αλλαγή πακέτου: ' + EXEC + '?a=plan&c=ORE&k=pk123') >= 0);
+  assert.ok(/<a href="https:\/\/script\.google\.com[^"]+a=plan/.test(env.ctx.planChangeLine_('ORE', true)));
+  const none = planEnv('2027-02-10T12:00:00+02:00', Object.assign({}, PAID_FEB, { tx: null }));
+  assert.strictEqual(none.ctx.planChangeLine_('ORE', true), '');
+  const ended = planEnv('2027-03-10T12:00:00+02:00', Object.assign({}, PAID_FEB, { stop_after: '2027-02' }));
+  assert.strictEqual(ended.ctx.planChangeLine_('ORE', false), '');
+});
+
 // ------------------------------------------------------------------ διαχειριστικό (Admin.gs) + έλεγχος «μόνο από τον editor»
 const ADM_EXEC = 'https://script.google.com/macros/s/TESTDEPLOY/exec';
 const ADM_GH = 'https://api.github.com/repos/okpublisher/publisher-work/contents/';

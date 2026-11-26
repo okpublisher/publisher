@@ -285,7 +285,7 @@ function admBilling_(K) {
   for (let i = 0; i < 24 && months[next] && months[next].st === 'paid'; i++) next = nextYm_(next);
   if (st.stop_after && next > st.stop_after) next = '';
   return { plan: String(st.plan || ''), amount_eur: st.amount ? st.amount / 100 : 0, start: st.start || '', stop_after: st.stop_after || '',
-    card: !!st.tx, months: list, next: next,
+    card: !!st.tx, months: list, next: next, change: st.change ? { plan: String(st.change.plan), from: String(st.change.from) } : null,
     unpaid: Object.keys(months).filter(function (m) { return m <= cur && months[m].st !== 'paid'; }).sort() };
 }
 
@@ -506,6 +506,8 @@ const ADMIN_JS_ = String(function () {
       if (c.billing_paused) probs.push(esc(cname(c.key)) + ': παύση δημοσιεύσεων (απλήρωτη συνδρομή)');
       else if (c.billing && c.billing.unpaid.length && c.billing.card) probs.push(esc(cname(c.key)) + ': απλήρωτο ' + c.billing.unpaid.map(months).join(', '));
       if (c.paused) probs.push(esc(cname(c.key)) + ': σε παύση (PAUSED)');
+      if (c.billing && c.billing.change) probs.push(esc(cname(c.key)) + ': αλλαγή πακέτου σε ' + esc(c.billing.change.plan) + ' από ' + months(c.billing.change.from) +
+        ' — config (πακέτο, ημέρες) στην παραγωγή της 20ής');
     });
     if (D.heartbeat && Date.now() - new Date(D.heartbeat).getTime() > 40 * 60000) probs.unshift('Ο κύκλος δημοσίευσης δεν έχει τρέξει από ' + athens(D.heartbeat));
     var h = '<div class="stat"><div class="card"><b>' + nl.length + '</b>νέες επαφές</div><div class="card"><b>' + ns.length + '</b>νέα σεταρίσματα</div>' +
@@ -549,6 +551,7 @@ const ADMIN_JS_ = String(function () {
     if (c.billing_paused) st.push(tag('παύση: απλήρωτο', 'r'));
     var bill = b ? [['Συνδρομή', esc(b.plan) + (b.amount_eur ? ' · ' + eur(b.amount_eur) + '/μήνα' : '') + (b.card ? ' · κάρτα ✓' : ' · χωρίς κάρτα ακόμα')],
       ['Επόμενη χρέωση', b.next ? months(b.next) : (b.stop_after ? 'καμία (λήγει)' : '')], ['Λήξη μετά', months(b.stop_after)],
+      ['Αλλαγή πακέτου', b.change ? esc(b.change.plan) + ' από ' + months(b.change.from) : ''],
       ['Μήνες', b.months.map(function (m) { return months(m.month) + ' ' + (m.st === 'paid' ? '✓' : '(' + m.st + ')'); }).join(' · ')]] : [['Συνδρομή', 'καμία ακόμα']];
     var ap = c.approval ? [['Τελευταίο πακέτο', esc((c.approval.label || months(c.approval.month)) + ' — ' + (PK[c.approval.status] || c.approval.status) + (c.approval.round ? ' (γύρος ' + c.approval.round + ')' : ''))]] : [];
     var next = (D.queue || []).filter(function (p) { return p.client === c.key && new Date(p.at) > new Date(); })[0];
