@@ -50,6 +50,7 @@ function uploadClient_(c, key) {
 function doPost(e) {
   let p = {};
   try { p = JSON.parse((e.postData && e.postData.contents) || '{}'); } catch (x) { p = {}; }
+  if (p && p.a === 'admin') return adminApi_(p);          // διαχειριστικό: σελίδα okpublisher.gr/admin (Admin.gs)
   const q = (e && e.parameter) || {};
   const K = uploadClient_(q.c || p.c, q.key || p.key || '');
   if (!K) return uploadOut_({ error: 'Λάθος κλειδί' });
@@ -77,7 +78,7 @@ function doGet(e) {
   const q = (e && e.parameter) || {};
   rememberWebappUrl_();
   if (q.a === 'stop') return billingCancelPage_(q);   // «Διακοπή συνδρομής» (Billing.gs)
-  if (q.a === 'admin') return adminPage_(q);          // διαχειριστικό (Admin.gs)
+  if (q.a === 'admin') return admMoved_();            // το διαχειριστικό είναι πια στο okpublisher.gr/admin (Admin.gs)
   if (q.a === 'plan') return billingPlanPage_(q);     // «Αλλαγή πακέτου» (Billing.gs)
   const K = uploadClient_(q.c, q.key);
   return uploadOut_(K ? { ok: true, client: K } : { error: 'Λάθος κλειδί', service: 'okpublisher' });
@@ -90,20 +91,7 @@ function rememberWebappUrl_() {
     const u = String(ScriptApp.getService().getUrl() || '').replace(/\?.*$/, '');
     if (/^https:\/\/script\.google\.com\/.+\/exec$/.test(u) && prop_('WEBAPP_URL', '') !== u) P_().setProperty('WEBAPP_URL', u);
   } catch (e) { /* χωρίς διεύθυνση: τα email γράφουν «απαντήστε σε αυτό το email» */ }
-  adminLinkOnce_();
-}
-
-// Μία φορά για κάθε διεύθυνση: email στον λογαριασμό του okpublisher με τον σύνδεσμο του διαχειριστικού (Admin.gs).
-function adminLinkOnce_() {
-  try {
-    const u = webappUrl_(), me = admOwner_();
-    if (!u || !me || prop_('ADMIN_LINK_SENT', '') === u) return;
-    P_().setProperty('ADMIN_LINK_SENT', u);
-    MailApp.sendEmail({ to: me, name: CFG.SENDER_NAME, subject: '[okpublisher] Σύνδεσμος διαχειριστικού',
-      body: 'Το διαχειριστικό του okpublisher:\n\n' + u + '?a=admin\n\n' +
-        'Πρώτη φορά: γράψτε ' + me + ', ανοίξτε τον σύνδεσμο που θα σας έρθει, «Σύνδεση». Μετά, στην καρτέλα «Χρήστες», ' +
-        'προσθέστε όποιον άλλον θέλετε (π.χ. το προσωπικό σας email) ως Διαχειριστή.\n\nΚρατήστε τον σύνδεσμο (π.χ. στην αρχική οθόνη του κινητού).' });
-  } catch (e) { console.log('σύνδεσμος διαχειριστικού: ' + e.message); }
+  adminUrlToRepo_();
 }
 
 // Στέλνει σε κάθε πελάτη (NOTIFY_TO_<K>) τον δικό του σύνδεσμο για τη συντόμευση.

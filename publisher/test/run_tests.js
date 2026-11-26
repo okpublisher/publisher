@@ -1064,7 +1064,7 @@ test('πληρωμές: επιβεβαίωση χωρίς «επόμενη χρ�
 });
 
 const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
-// τα email εκτός από το μία-φορά «Σύνδεσμος διαχειριστικού» (Upload.gs → adminLinkOnce_)
+// τα email εκτός από το παλιό «Σύνδεσμος διαχειριστικού» (δεν στέλνεται πια· μένει για ασφάλεια)
 function noAdmLink(env) { return env.mails.filter(function (m) { return !/Σύνδεσμος διαχειριστικού/.test(m.subject); }); }
 
 test('web app: την πρώτη φορά που ανοίγει γράφει τη διεύθυνσή του (/exec) στο WEBAPP_URL· όχι /dev ή κενό', function () {
@@ -1501,6 +1501,7 @@ function admEnv(extraProps, opts) {
     extraFetch: function (url, o, resp) {
       if (url.indexOf(ADM_GH) === 0) {
         const path = decodeURIComponent(url.slice(ADM_GH.length).replace(/\?.*$/, ''));
+        if (o && o.method === 'put') { gh[path] = JSON.parse(Buffer.from(JSON.parse(o.payload).content, 'base64').toString('utf8')); return resp(201, {}); }
         return path in gh ? resp(200, gh[path]) : resp(404, { message: 'Not Found' });
       }
       if (url.indexOf('https://docs.google.com/spreadsheets/d/LEADSSHEETID0123456789abcdef/export?format=csv&gid=') === 0) {
@@ -1523,11 +1524,11 @@ function admEnv(extraProps, opts) {
   pay.rows.push(['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός']);
   pay.rows.push([new Date('2026-11-20T10:00:00+02:00'), 'ORE', '2026-12', 186, 'πληρωμή', 'πληρώθηκε', '9999']);
   env.loginAs = function (email) {
-    env.ctx.adminLogin(email);
-    const m = env.mails.filter(function (x) { return x.to === email && /διαχειριστικό/.test(x.subject); }).pop();
+    env.cache = {};   // χωρίς όριο αιτημάτων στις δοκιμές
+    api(env, { act: 'login', email: email });
+    const m = lastLoginMail(env, email);
     if (!m) return null;
-    const code = /[?&]t=([a-f0-9]+)/.exec(m.body)[1];
-    return JSON.parse(env.ctx.adminExchange(code)).token;
+    return api(env, { act: 'pin', email: email, pin: /Κωδικός (\d{6})/.exec(m.subject)[1] }).token;
   };
   return env;
 }
@@ -1545,51 +1546,80 @@ test('ασφάλεια: οι συναρτήσεις «με το χέρι» αρ�
   env.ctx.run();                                                     // οι κύκλοι των triggers δουλεύουν κανονικά
 });
 
-test('διαχειριστικό: σύνδεση με email-σύνδεσμο μόνο για χρήστες· ίδια απάντηση για όλους· όριο αιτημάτων', function () {
+function api(env, o) { return JSON.parse(env.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ a: 'admin' }, o)) }, parameter: {} }).text); }
+function lastLoginMail(env, email) { return env.mails.filter(function (x) { return x.to === email && /διαχειριστικό okpublisher/.test(x.subject) && /Κωδικός/.test(x.subject); }).pop(); }
+
+test('διαχειριστικό: σύνδεση με κωδικό 6 ψηφίων ή σύνδεσμο στο okpublisher.gr/admin· ίδια απάντηση για όλους· όριο', function () {
   const env = admEnv();
-  const msg = env.ctx.adminLogin('stranger@example.com');
-  assert.ok(/Αν το email έχει πρόσβαση/.test(msg));
+  const r0 = api(env, { act: 'login', email: 'stranger@example.com' });
+  assert.ok(r0.ok && /Αν το email έχει πρόσβαση/.test(r0.message));
   assert.strictEqual(env.mails.length, 0, 'σε άγνωστο email δεν φεύγει τίποτα');
-  assert.strictEqual(env.ctx.adminLogin('System@Example.com'), msg, 'ίδια απάντηση');
-  assert.strictEqual(env.mails.length, 1);
-  assert.strictEqual(env.mails[0].to, 'system@example.com', 'ο λογαριασμός του script είναι πάντα admin');
-  assert.ok(env.mails[0].body.indexOf(ADM_EXEC + '?a=admin&t=') >= 0);
-  env.ctx.adminLogin('system@example.com'); env.ctx.adminLogin('system@example.com');
-  env.ctx.adminLogin('system@example.com');
+  assert.strictEqual(api(env, { act: 'login', email: 'System@Example.com' }).message, r0.message, 'ίδια απάντηση');
+  const m = lastLoginMail(env, 'system@example.com');
+  assert.ok(m, 'ο λογαριασμός του script είναι πάντα admin');
+  const pin = /Κωδικός (\d{6})/.exec(m.subject)[1];
+  assert.ok(m.body.indexOf('Ο κωδικός σας: ' + pin) === 0);
+  assert.ok(/https:\/\/okpublisher\.gr\/admin\/#t=[a-f0-9]{64}/.test(m.body), m.body);
+  assert.ok(m.body.indexOf('script.google.com') < 0, 'η διεύθυνση του script δεν μπαίνει στο email');
+  api(env, { act: 'login', email: 'system@example.com' }); api(env, { act: 'login', email: 'system@example.com' });
+  api(env, { act: 'login', email: 'system@example.com' });
   assert.strictEqual(env.mails.length, 3, '3 ανά email / 15′');
-  env.nowMs += 16 * 60000;
-  env.ctx.adminLogin('system@example.com');
-  assert.strictEqual(env.mails.length, 4);
 });
 
-test('διαχειριστικό: ο σύνδεσμος ισχύει μία φορά και 15′· συνεδρία 30 ημερών· έξοδος', function () {
+test('διαχειριστικό: κωδικός — λάθος ως 5 φορές, μετά άκυρος· σωστός μία φορά· ο σύνδεσμος ακυρώνει τον κωδικό', function () {
   const env = admEnv();
-  env.ctx.adminLogin('system@example.com');
-  const code = /[?&]t=([a-f0-9]+)/.exec(env.mails[0].body)[1];
-  const tok = JSON.parse(env.ctx.adminExchange(code)).token;
-  assert.ok(/^[a-f0-9]{40,80}$/.test(tok));
-  assert.throws(function () { env.ctx.adminExchange(code); }, /δεν ισχύει/, 'δεύτερη φορά');
-  assert.ok(env.props.ADMIN_SESSIONS.indexOf(tok) < 0, 'αποθηκεύεται μόνο το hash');
-  assert.ok(JSON.parse(env.ctx.adminData(tok)).me.role === 'admin');
-  env.ctx.adminLogin('system@example.com');
-  const code2 = /[?&]t=([a-f0-9]+)/.exec(env.mails[1].body)[1];
+  api(env, { act: 'login', email: 'system@example.com' });
+  const pin = /Κωδικός (\d{6})/.exec(lastLoginMail(env, 'system@example.com').subject)[1];
+  const wrong = pin === '000000' ? '111111' : '000000';
+  for (let i = 0; i < 4; i++) assert.ok(/Λάθος/.test(api(env, { act: 'pin', email: 'system@example.com', pin: wrong }).error));
+  const ok = api(env, { act: 'pin', email: 'system@example.com', pin: ' ' + pin.slice(0, 3) + ' ' + pin.slice(3) });
+  assert.ok(ok.ok && /^[a-f0-9]{64}$/.test(ok.token), '5η προσπάθεια σωστή, με κενά');
+  assert.ok(!api(env, { act: 'pin', email: 'system@example.com', pin: pin }).ok, 'μία φορά');
+  assert.ok(api(env, { act: 'data', token: ok.token }).ok);
+  // 5 λάθη → ο σωστός δεν περνά πια
   env.nowMs += 16 * 60000;
-  assert.throws(function () { env.ctx.adminExchange(code2); }, /δεν ισχύει/, 'έληξε');
+  api(env, { act: 'login', email: 'system@example.com' });
+  const pin2 = /Κωδικός (\d{6})/.exec(lastLoginMail(env, 'system@example.com').subject)[1];
+  const w2 = pin2 === '000000' ? '111111' : '000000';
+  for (let i = 0; i < 5; i++) api(env, { act: 'pin', email: 'system@example.com', pin: w2 });
+  assert.ok(!api(env, { act: 'pin', email: 'system@example.com', pin: pin2 }).ok, 'κλείδωσε μετά από 5');
+  // σύνδεσμος: μία φορά, και ακυρώνει τον κωδικό του ίδιου email
+  env.nowMs += 16 * 60000;
+  api(env, { act: 'login', email: 'system@example.com' });
+  const mm = lastLoginMail(env, 'system@example.com');
+  const code = /#t=([a-f0-9]+)/.exec(mm.body)[1], pin3 = /Κωδικός (\d{6})/.exec(mm.subject)[1];
+  assert.ok(api(env, { act: 'link', code: code }).ok);
+  assert.ok(!api(env, { act: 'link', code: code }).ok);
+  assert.ok(!api(env, { act: 'pin', email: 'system@example.com', pin: pin3 }).ok);
+});
+
+test('διαχειριστικό: συνεδρία 30 ημερών, έξοδος, ληγμένος κωδικός', function () {
+  const env = admEnv();
+  const tok = env.loginAs('system@example.com');
+  assert.ok(env.props.ADMIN_SESSIONS.indexOf(tok) < 0, 'αποθηκεύεται μόνο το hash');
+  assert.strictEqual(api(env, { act: 'data', token: tok }).data.me.role, 'admin');
+  api(env, { act: 'login', email: 'system@example.com' });
+  const pin = /Κωδικός (\d{6})/.exec(lastLoginMail(env, 'system@example.com').subject)[1];
+  env.nowMs += 16 * 60000;
+  assert.ok(!api(env, { act: 'pin', email: 'system@example.com', pin: pin }).ok, 'έληξε');
   env.nowMs += 29 * 86400000;
-  assert.ok(JSON.parse(env.ctx.adminData(tok)).me);
-  env.ctx.adminLogout(tok);
-  assert.throws(function () { env.ctx.adminData(tok); }, /login/);
-  assert.throws(function () { env.ctx.adminData('nope'); }, /login/);
+  assert.ok(api(env, { act: 'data', token: tok }).ok);
+  api(env, { act: 'logout', token: tok });
+  const r = api(env, { act: 'data', token: tok });
+  assert.ok(!r.ok && r.login);
+  assert.ok(api(env, { act: 'data', token: 'nope' }).login);
   const tok2 = env.loginAs('system@example.com');
   env.nowMs += 31 * 86400000;
-  assert.throws(function () { env.ctx.adminData(tok2); }, /login/, 'μετά από 30 ημέρες');
+  assert.ok(api(env, { act: 'data', token: tok2 }).login, 'μετά από 30 ημέρες');
+  assert.ok(!api(env, { act: 'κάτι' }).ok);
 });
 
 test('διαχειριστικό: ο admin βλέπει πελάτες (με κωδικό), επαφές, σεταρίσματα, ουρά, πληρωμές — ποτέ tokens/κλειδιά', function () {
   const env = admEnv();
-  const raw = env.ctx.adminData(env.loginAs('system@example.com'));
-  ['tokORE', 'ghtok', 'vivasecret', 'billkey123', 'TX1', '9999', 'LEADSSHEETID'].forEach(function (s) { assert.ok(raw.indexOf(s) < 0, 'διαρροή: ' + s); });
-  const d = JSON.parse(raw);
+  const tok = env.loginAs('system@example.com');
+  const raw = env.ctx.doPost({ postData: { contents: JSON.stringify({ a: 'admin', act: 'data', token: tok }) }, parameter: {} }).text;
+  ['tokORE', 'ghtok', 'vivasecret', 'billkey123', 'TX1', '9999', 'LEADSSHEETID', 'TESTDEPLOY'].forEach(function (s) { assert.ok(raw.indexOf(s) < 0, 'διαρροή: ' + s); });
+  const d = JSON.parse(raw).data;
   assert.deepStrictEqual(d.errors, []);
   const ore = d.clients.find(function (c) { return c.key === 'ORE'; });
   assert.strictEqual(ore.code, 'OK-0001');
@@ -1612,83 +1642,88 @@ test('διαχειριστικό: ο admin βλέπει πελάτες (με κ�
   assert.ok(d.users.some(function (u) { return u.owner && u.role === 'admin'; }));
   const csv = env.calls.filter(function (c) { return /docs\.google\.com/.test(c.url); });
   assert.ok(csv.length === 2 && csv.every(function (c) { return c.headers.Authorization === 'Bearer oauth'; }));
-  env.ctx.adminData(env.loginAs('system@example.com'));
+  api(env, { act: 'data', token: tok });
   assert.strictEqual(env.calls.filter(function (c) { return /docs\.google\.com/.test(c.url); }).length, 2, 'cache 1′');
 });
 
 test('διαχειριστικό: αν το Sheet των επαφών δεν διαβάζεται, τα υπόλοιπα δείχνονται κανονικά με σημείωση', function () {
   const env = admEnv({}, { csvFail: true });
-  const d = JSON.parse(env.ctx.adminData(env.loginAs('system@example.com')));
+  const d = api(env, { act: 'data', token: env.loginAs('system@example.com') }).data;
   assert.ok(/Επαφές/.test(d.errors[0]));
   assert.strictEqual(d.leads.length, 0);
   assert.ok(d.clients.length >= 2);
 });
 
-test('διαχειριστικό: πωλητής — μόνο ό,τι του ανατέθηκε, χωρίς πληρωμές/χρήστες/ΑΦΜ· δεν αλλάζει τίποτα', function () {
+test('διαχειριστικό: πωλητής — email καλωσορίσματος, μόνο ό,τι του ανατέθηκε, χωρίς πληρωμές/χρήστες/ΑΦΜ, δεν αλλάζει τίποτα', function () {
   const env = admEnv();
   const adm = env.loginAs('system@example.com');
-  env.ctx.adminSaveUser(adm, 'Sales@Example.com', 'Νίκος', 'sales');
+  assert.ok(api(env, { act: 'save_user', token: adm, email: 'Sales@Example.com', name: 'Νίκος', role: 'sales' }).ok);
+  const w = env.mails.filter(function (m) { return m.to === 'sales@example.com'; });
+  assert.ok(w.length === 1 && /Πρόσβαση στο διαχειριστικό/.test(w[0].subject) && w[0].body.indexOf('https://okpublisher.gr/admin/') >= 0);
+  api(env, { act: 'save_user', token: adm, email: 'sales@example.com', name: 'Νίκος Π.', role: 'sales' });
+  assert.strictEqual(env.mails.filter(function (m) { return m.to === 'sales@example.com'; }).length, 1, 'μόνο στον νέο χρήστη');
   const sal = env.loginAs('sales@example.com');
-  let d = JSON.parse(env.ctx.adminData(sal));
+  let d = api(env, { act: 'data', token: sal }).data;
   assert.strictEqual(d.me.role, 'sales');
   assert.deepStrictEqual([d.leads.length, d.setups.length, d.clients.length, d.queue.length], [0, 0, 0, 0]);
   assert.ok(!('payments' in d) && !('users' in d));
-  env.ctx.adminAssign(adm, 'lead:b@example.com', 'sales@example.com');
-  env.ctx.adminAssign(adm, 'setup:OK-0002', 'sales@example.com');
-  env.ctx.adminAssign(adm, 'client:ORE', 'sales@example.com');
+  api(env, { act: 'assign', token: adm, key: 'lead:b@example.com', email: 'sales@example.com' });
+  api(env, { act: 'assign', token: adm, key: 'setup:OK-0002', email: 'sales@example.com' });
+  api(env, { act: 'assign', token: adm, key: 'client:ORE', email: 'sales@example.com' });
   env.cache = {};
-  d = JSON.parse(env.ctx.adminData(sal));
+  d = api(env, { act: 'data', token: sal }).data;
   assert.deepStrictEqual(d.leads.map(function (l) { return l.email; }), ['b@example.com']);
   assert.strictEqual(d.setups.length, 1);
   assert.ok(!('afm' in d.setups[0]));
   assert.deepStrictEqual(d.clients.map(function (c) { return c.key; }), ['ORE']);
   assert.ok(!('note' in d.clients[0]));
   assert.strictEqual(d.queue.length, 2);
-  assert.throws(function () { env.ctx.adminSaveUser(sal, 'x@example.com', '', 'admin'); }, /Μόνο για διαχειριστές/);
-  assert.throws(function () { env.ctx.adminAssign(sal, 'lead:a@example.com', 'sales@example.com'); }, /Μόνο για διαχειριστές/);
-  const adminView = JSON.parse(env.ctx.adminData(adm));
+  assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: 'save_user', token: sal, email: 'x@example.com', role: 'admin' }).error));
+  assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: 'assign', token: sal, key: 'lead:a@example.com', email: 'sales@example.com' }).error));
+  const adminView = api(env, { act: 'data', token: adm }).data;
   assert.strictEqual(adminView.leads.find(function (l) { return l.email === 'b@example.com'; }).seller, 'sales@example.com');
-  env.ctx.adminDeleteUser(adm, 'sales@example.com');
-  assert.throws(function () { env.ctx.adminData(sal); }, /login/, 'αφαιρέθηκε → έξω');
+  api(env, { act: 'delete_user', token: adm, email: 'sales@example.com' });
+  assert.ok(api(env, { act: 'data', token: sal }).login, 'αφαιρέθηκε → έξω');
   assert.strictEqual(env.props.ADMIN_ASSIGN, '{}', 'οι αναθέσεις του φεύγουν');
 });
 
 test('διαχειριστικό: ο λογαριασμός okpublisher και ο εαυτός σου δεν αφαιρούνται· άκυρα στοιχεία απορρίπτονται', function () {
   const env = admEnv();
   const adm = env.loginAs('system@example.com');
-  assert.throws(function () { env.ctx.adminDeleteUser(adm, 'system@example.com'); }, /δεν αφαιρείται/);
-  assert.throws(function () { env.ctx.adminSaveUser(adm, 'system@example.com', 'x', 'sales'); }, /πάντα διαχειριστής/);
-  assert.throws(function () { env.ctx.adminSaveUser(adm, 'όχι-email', '', 'sales'); }, /Μη έγκυρο email/);
-  assert.throws(function () { env.ctx.adminSaveUser(adm, 'a@b.gr', '', 'root'); }, /Άγνωστος ρόλος/);
-  env.ctx.adminSaveUser(adm, 'boss@example.com', 'Πέτρος', 'admin');
+  const E = function (o) { return api(env, Object.assign({ token: adm }, o)).error || ''; };
+  assert.ok(/δεν αφαιρείται/.test(E({ act: 'delete_user', email: 'system@example.com' })));
+  assert.ok(/πάντα διαχειριστής/.test(E({ act: 'save_user', email: 'system@example.com', name: 'x', role: 'sales' })));
+  assert.ok(/Μη έγκυρο email/.test(E({ act: 'save_user', email: 'όχι-email', role: 'sales' })));
+  assert.ok(/Άγνωστος ρόλος/.test(E({ act: 'save_user', email: 'a@b.gr', role: 'root' })));
+  api(env, { act: 'save_user', token: adm, email: 'boss@example.com', name: 'Πέτρος', role: 'admin' });
   const boss = env.loginAs('boss@example.com');
-  assert.throws(function () { env.ctx.adminDeleteUser(boss, 'boss@example.com'); }, /τον εαυτό σας/);
-  assert.throws(function () { env.ctx.adminSaveUser(boss, 'boss@example.com', 'Π', 'sales'); }, /από τον εαυτό σας/);
-  assert.throws(function () { env.ctx.adminAssign(boss, 'lead:x@y.gr', 'nobody@example.com'); }, /δεν υπάρχει/);
-  assert.throws(function () { env.ctx.adminAssign(boss, 'bad key', ''); }, /Άκυρη/);
-  assert.strictEqual(JSON.parse(env.ctx.adminData(boss)).me.name, 'Πέτρος');
+  const B = function (o) { return api(env, Object.assign({ token: boss }, o)).error || ''; };
+  assert.ok(/τον εαυτό σας/.test(B({ act: 'delete_user', email: 'boss@example.com' })));
+  assert.ok(/από τον εαυτό σας/.test(B({ act: 'save_user', email: 'boss@example.com', name: 'Π', role: 'sales' })));
+  assert.ok(/δεν υπάρχει/.test(B({ act: 'assign', key: 'lead:x@y.gr', email: 'nobody@example.com' })));
+  assert.ok(/Άκυρη/.test(B({ act: 'assign', key: 'bad key', email: '' })));
+  assert.strictEqual(api(env, { act: 'data', token: boss }).data.me.name, 'Πέτρος');
 });
 
-test('διαχειριστικό: η σελίδα (?a=admin) — μόνο έγκυρος κωδικός μπαίνει στη σελίδα', function () {
+test('διαχειριστικό: καμία δημόσια συνάρτηση (google.script.run)· η παλιά σελίδα (?a=admin) δείχνει τη νέα διεύθυνση· το upload δουλεύει όπως πριν', function () {
   const env = admEnv();
-  const ok = env.ctx.doGet({ parameter: { a: 'admin', t: 'ab'.repeat(32) } });
-  assert.ok(/Διαχείριση/.test(ok.title) && ok.html.indexOf('var LOGIN_CODE="' + 'ab'.repeat(32) + '"') >= 0);
-  const evil = env.ctx.doGet({ parameter: { a: 'admin', t: '"</script><script>alert(1)</script>' } });
-  assert.ok(evil.html.indexOf('var LOGIN_CODE="";') >= 0);
-  assert.ok(evil.html.indexOf('alert(1)') < 0);
-  assert.ok(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'x' } }).html.indexOf('Διακοπή συνδρομής') >= 0, 'η «Διακοπή» δουλεύει όπως πριν');
+  const pub = Object.keys(env.ctx).filter(function (k) { return /^adm|^admin/.test(k) && typeof env.ctx[k] === 'function' && !/_$/.test(k); });
+  assert.deepStrictEqual(pub, []);
+  const src = require('fs').readFileSync(require('path').join(DIR, 'Admin.gs'), 'utf8');
+  assert.ok(!/^function [a-zA-Z0-9]*[^_]\(/m.test(src), 'όλες οι συναρτήσεις του Admin.gs τελειώνουν σε _');
+  const moved = env.ctx.doGet({ parameter: { a: 'admin', t: 'ab'.repeat(32) } });
+  assert.ok(/μεταφέρθηκε/.test(moved.html) && moved.html.indexOf('https://okpublisher.gr/admin/') >= 0);
+  assert.ok(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'x' } }).html.indexOf('Διακοπή συνδρομής') >= 0, 'η «Διακοπή» όπως πριν');
+  assert.ok(/Λάθος κλειδί/.test(env.ctx.doPost({ postData: { contents: JSON.stringify({ name: 'x.jpg' }) }, parameter: { c: 'ORE', key: 'λάθος' } }).text));
 });
 
-test('σύνδεσμος διαχειριστικού: email στον λογαριασμό του okpublisher μία φορά για κάθε διεύθυνση', function () {
+test('διεύθυνση web app: γράφεται μία φορά στο admin/webapp.json του publisher-work', function () {
   const env = admEnv();
-  env.ctx.doGet({ parameter: {} }); env.ctx.doGet({ parameter: { a: 'admin' } });
-  const m = env.mails.filter(function (x) { return /Σύνδεσμος διαχειριστικού/.test(x.subject); });
-  assert.strictEqual(m.length, 1);
-  assert.strictEqual(m[0].to, 'system@example.com');
-  assert.ok(m[0].body.indexOf(ADM_EXEC + '?a=admin') >= 0);
-  env.props.WEBAPP_URL = 'https://script.google.com/macros/s/OTHER/exec';
-  env.ctx.doGet({ parameter: {} });
-  assert.strictEqual(env.mails.filter(function (x) { return /Σύνδεσμος διαχειριστικού/.test(x.subject); }).length, 2);
+  env.ctx.doGet({ parameter: {} }); env.ctx.doGet({ parameter: {} });
+  const puts = env.calls.filter(function (c) { return c.method === 'put' && /admin\/webapp\.json/.test(c.url); });
+  assert.strictEqual(puts.length, 1);
+  assert.strictEqual(JSON.parse(Buffer.from(JSON.parse(puts[0].payload).content, 'base64').toString('utf8')).url, ADM_EXEC);
+  assert.ok(!env.mails.some(function (m) { return /Σύνδεσμος διαχειριστικού/.test(m.subject); }));
 });
 
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {

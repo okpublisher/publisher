@@ -1,13 +1,16 @@
 /**
- * Διαχειριστικό του okpublisher (από 26/11/2026): σελίδα της εφαρμογής ιστού για κινητό → WEBAPP_URL?a=admin
+ * Διαχειριστικό του okpublisher: σελίδα του site https://okpublisher.gr/admin/ (κώδικας στο repo του site, admin/),
+ * που μιλά με αυτό το web app μέσω JSON (doPost { a: "admin", act: … }). Από 26/11/2026 βράδυ· πριν ήταν σελίδα
+ * HtmlService (?a=admin), που ως συντόμευση στην αρχική οθόνη του κινητού έβγαζε σφάλμα.
  *
- * Σύνδεση χωρίς κωδικούς: email → σύνδεσμος μίας χρήσης (15′, μόνο σε email με πρόσβαση) → κουμπί «Σύνδεση» →
- *   συνεδρία 30 ημερών σε αυτή τη συσκευή. Το απλό άνοιγμα του συνδέσμου δεν συνδέει (τα προγράμματα email τον «ανοίγουν»).
+ * Σύνδεση χωρίς κωδικούς πρόσβασης: email → email με 6ψήφιο κωδικό ΚΑΙ σύνδεσμο (15′, μία φορά, μόνο σε email με
+ *   πρόσβαση) → συνεδρία 30 ημερών στη συσκευή. Ο κωδικός γράφεται και μέσα από την «εφαρμογή» της αρχικής οθόνης
+ *   (στο iPhone έχει δικό της χώρο αποθήκευσης, άρα ο σύνδεσμος, που ανοίγει στον browser, δεν φτάνει).
  * Χρήστες (ADMIN_USERS, JSON { email: { role, name } }): role = admin (όλα) ή sales (πωλητής: μόνο ό,τι του έχει ανατεθεί,
- *   χωρίς πληρωμές, ιστορικό πληρωμών και χρήστες). Τους προσθέτει ένας admin από τη σελίδα. Ο λογαριασμός που τρέχει
- *   το script (okpublisher) είναι πάντα admin: με αυτόν γίνεται η πρώτη σύνδεση.
+ *   χωρίς πληρωμές, ιστορικό πληρωμών, ΑΦΜ και χρήστες). Τους προσθέτει ένας admin από τη σελίδα (ο νέος παίρνει email).
+ *   Ο λογαριασμός που τρέχει το script (okpublisher) είναι πάντα admin.
  * Αναθέσεις σε πωλητή: ADMIN_ASSIGN (JSON { "lead:<email>" | "setup:<κωδικός>" | "client:<K>": email }).
- * Συνεδρίες: ADMIN_SESSIONS (μόνο το hash του κλειδιού συνεδρίας).
+ * Συνεδρίες: ADMIN_SESSIONS (μόνο το hash του κλειδιού συνεδρίας). Καμία δημόσια συνάρτηση (όλες με «_»).
  *
  * Δεδομένα (ΜΟΝΟ ανάγνωση, καμία νέα άδεια Google):
  *   - Επαφές / Σεταρίσματα: Sheet «okpublisher — ενδιαφέροντα» ως CSV με το token του script (άδεια drive).
@@ -15,6 +18,7 @@
  *   - Πελάτες: clients/<K>/config.json + state.json του publisher-work (κωδικός OK-…, πακέτο, έγκριση) + Script Properties
  *     (όνομα, παύση, πληρωμές BILLING_<K>). Ποτέ tokens ή κλειδιά στη σελίδα.
  *   - Δημοσιεύσεις, Ιστορικό, Πληρωμές: οι καρτέλες «Ουρά», «Ιστορικό», «Πληρωμές» του Sheet «okpublisher».
+ * Η διεύθυνση του web app γράφεται μόνη της στο admin/webapp.json του publisher-work (για τη σελίδα του site).
  */
 const ADM_ = {
   SESSION_DAYS: 30,
@@ -24,8 +28,10 @@ const ADM_ = {
   LEADS_CACHE_S: 60,
   ROLES: ['admin', 'sales'],
   ROLE_NAMES: { admin: 'Διαχειριστής', sales: 'Πωλητής' },
-  LOGIN_MSG: 'Αν το email έχει πρόσβαση, σας στείλαμε σύνδεσμο. Ισχύει 15 λεπτά.',
+  LOGIN_MSG: 'Αν το email έχει πρόσβαση, σας στείλαμε κωδικό. Ισχύει 15 λεπτά.',
   ROWS: 150,
+  SITE: 'https://okpublisher.gr/admin/',
+  PIN_TRIES: 5,
 };
 
 // ------------------------------------------------------------------ χρήστες και συνεδρίες
@@ -80,8 +86,8 @@ function admSession_(token) {
 }
 function admNeedAdmin_(me) { if (me.role !== 'admin') throw new Error('Μόνο για διαχειριστές.'); }
 
-// ------------------------------------------------------------------ σύνδεση (καλούνται από τη σελίδα)
-function adminLogin(email) {
+// ------------------------------------------------------------------ σύνδεση
+function admLogin_(email) {
   const e = admEmail_(email);
   if (!e) return ADM_.LOGIN_MSG;
   const c = CacheService.getScriptCache();
@@ -90,31 +96,29 @@ function adminLogin(email) {
   c.put(ke, String(n + 1), 900);
   c.put('adm:rl', String(g + 1), 3600);
   if (!admUsers_()[e]) return ADM_.LOGIN_MSG;              // η ίδια απάντηση: δεν φαίνεται ποια email έχουν πρόσβαση
-  const url = webappUrl_();
-  if (!url) throw new Error('Λείπει η διεύθυνση της εφαρμογής ιστού (WEBAPP_URL).');
-  const code = admRandom_();
+  const code = admRandom_(), pin = admPin_();
   c.put('adm:code:' + admHash_(code), e, ADM_.LOGIN_TTL_S);
-  const link = url + '?a=admin&t=' + code;
+  c.put('adm:pin:' + admHash_(e), JSON.stringify({ h: admHash_(e + '|' + pin), n: 0 }), ADM_.LOGIN_TTL_S);
+  const link = ADM_.SITE + '#t=' + code;
   MailApp.sendEmail({
-    to: e, name: CFG.SENDER_NAME, subject: 'Σύνδεση στο διαχειριστικό okpublisher',
-    body: 'Για να συνδεθείτε στο διαχειριστικό του okpublisher, ανοίξτε τον σύνδεσμο και πατήστε «Σύνδεση»:\n\n' + link +
+    to: e, name: CFG.SENDER_NAME, subject: 'Κωδικός ' + pin + ' για το διαχειριστικό okpublisher',
+    body: 'Ο κωδικός σας: ' + pin + '\n\nΓράψτε τον στη σελίδα του διαχειριστικού, ή ανοίξτε τον σύνδεσμο και πατήστε «Σύνδεση»:\n' + link +
       '\n\nΙσχύει 15 λεπτά και μία φορά. Αν δεν το ζητήσατε εσείς, αγνοήστε αυτό το email.',
-    htmlBody: '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E">Για να συνδεθείτε στο διαχειριστικό του okpublisher:' +
-      '<p style="margin:22px 0"><a href="' + esc_(link) + '" style="display:inline-block;padding:11px 22px;background:#5B21D6;' +
-      'border-radius:999px;color:#fff;text-decoration:none;font-weight:bold">Άνοιγμα διαχειριστικού</a></p>' +
+    htmlBody: '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E">Ο κωδικός σας για το διαχειριστικό του okpublisher:' +
+      '<p style="font:bold 32px/1.2 Arial,sans-serif;letter-spacing:6px;color:#5B21D6;margin:18px 0">' + pin + '</p>' +
+      '<p>Γράψτε τον στη σελίδα, ή <a href="' + esc_(link) + '">ανοίξτε τον σύνδεσμο</a> και πατήστε «Σύνδεση».</p>' +
       '<p style="color:#4A4C66">Ισχύει 15 λεπτά και μία φορά. Αν δεν το ζητήσατε εσείς, αγνοήστε αυτό το email.</p></div>',
   });
   return ADM_.LOGIN_MSG;
 }
 
-function adminExchange(code) {
-  const t = admTok_(code), bad = 'Ο σύνδεσμος δεν ισχύει πια. Ζητήστε νέο με το email σας.';
-  if (!t) throw new Error(bad);
-  const c = CacheService.getScriptCache(), k = 'adm:code:' + admHash_(t), e = c.get(k);
-  if (!e) throw new Error(bad);
-  c.remove(k);
-  const u = admUsers_()[e];
-  if (!u) throw new Error(bad);
+function admPin_() {
+  const b = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, admRandom_(), Utilities.Charset.UTF_8);
+  return ('00000' + (((b[0] & 255) << 16 | (b[1] & 255) << 8 | (b[2] & 255)) % 1000000)).slice(-6);
+}
+
+// Νέα συνεδρία για το email: επιστρέφει το κλειδί της (μόνο το hash του αποθηκεύεται).
+function admNewSession_(e) {
   const token = admRandom_();
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
@@ -123,10 +127,36 @@ function adminExchange(code) {
     s[admHash_(token)] = { e: e, x: Date.now() + ADM_.SESSION_DAYS * 86400000 };
     admSaveSessions_(s);
   } finally { lock.releaseLock(); }
-  return JSON.stringify({ token: token });
+  return token;
 }
 
-function adminLogout(token) {
+// Σύνδεση με τον 6ψήφιο κωδικό του email: το πολύ PIN_TRIES προσπάθειες, μετά χρειάζεται νέος κωδικός.
+function admPinLogin_(email, pin) {
+  const e = admEmail_(email), bad = 'Λάθος ή ληγμένος κωδικός. Ζητήστε νέο.';
+  pin = String(pin || '').replace(/\s/g, '');
+  if (!e || !/^\d{6}$/.test(pin)) throw new Error(bad);
+  const c = CacheService.getScriptCache(), k = 'adm:pin:' + admHash_(e);
+  let rec = null;
+  try { rec = JSON.parse(c.get(k) || 'null'); } catch (x) { rec = null; }
+  if (!rec || rec.n >= ADM_.PIN_TRIES) throw new Error(bad);
+  if (rec.h !== admHash_(e + '|' + pin)) { rec.n++; c.put(k, JSON.stringify(rec), ADM_.LOGIN_TTL_S); throw new Error(bad); }
+  c.remove(k);
+  if (!admUsers_()[e]) throw new Error(bad);
+  return admNewSession_(e);
+}
+
+function admExchange_(code) {
+  const t = admTok_(code), bad = 'Ο σύνδεσμος δεν ισχύει πια. Ζητήστε νέο με το email σας.';
+  if (!t) throw new Error(bad);
+  const c = CacheService.getScriptCache(), k = 'adm:code:' + admHash_(t), e = c.get(k);
+  if (!e) throw new Error(bad);
+  c.remove(k);
+  c.remove('adm:pin:' + admHash_(e));
+  if (!admUsers_()[e]) throw new Error(bad);
+  return admNewSession_(e);
+}
+
+function admLogout_(token) {
   const t = admTok_(token);
   if (!t) return 'ok';
   const lock = LockService.getScriptLock();
@@ -136,7 +166,7 @@ function adminLogout(token) {
 }
 
 // ------------------------------------------------------------------ ενέργειες διαχειριστή
-function adminSaveUser(token, email, name, role) {
+function admSaveUser_(token, email, name, role) {
   const me = admSession_(token);
   admNeedAdmin_(me);
   const e = admEmail_(email);
@@ -145,12 +175,20 @@ function adminSaveUser(token, email, name, role) {
   const u = admUsers_();
   if (u[e] && u[e].owner) throw new Error('Ο λογαριασμός του okpublisher είναι πάντα διαχειριστής.');
   if (e === me.email && role !== 'admin') throw new Error('Δεν μπορείτε να αφαιρέσετε από τον εαυτό σας τον ρόλο του διαχειριστή.');
+  const isNew = !u[e];
   u[e] = { role: role, name: String(name || '').trim().slice(0, 80) };
   admSaveUsers_(u);
+  if (isNew) {
+    try {
+      MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Πρόσβαση στο διαχειριστικό okpublisher',
+        body: 'Σας δόθηκε πρόσβαση στο διαχειριστικό του okpublisher (' + ADM_.ROLE_NAMES[role] + ').\n\n' + ADM_.SITE +
+          '\n\nΓράψτε το email σας και θα σας έρθει κωδικός. Δεν χρειάζεται κωδικός πρόσβασης.' });
+    } catch (x) { console.log('email νέου χρήστη: ' + x.message); }
+  }
   return 'ok';
 }
 
-function adminDeleteUser(token, email) {
+function admDeleteUser_(token, email) {
   const me = admSession_(token);
   admNeedAdmin_(me);
   const e = admEmail_(email), u = admUsers_();
@@ -165,7 +203,7 @@ function adminDeleteUser(token, email) {
   return 'ok';
 }
 
-function adminAssign(token, key, email) {
+function admAssign_(token, key, email) {
   const me = admSession_(token);
   admNeedAdmin_(me);
   key = String(key || '');
@@ -179,7 +217,7 @@ function adminAssign(token, key, email) {
 }
 
 // ------------------------------------------------------------------ δεδομένα
-function adminData(token) {
+function admData_(token) {
   const me = admSession_(token), admin = me.role === 'admin';
   const assign = admJson_('ADMIN_ASSIGN');
   const mine = function (key) { return admin || assign[key] === me.email; };
@@ -228,7 +266,7 @@ function adminData(token) {
     out.users = Object.keys(u).sort().map(function (e) { return { email: e, name: u[e].name || '', role: u[e].role, owner: !!u[e].owner }; });
   }
   out.sellers = admin ? out.users.filter(function (x) { return !x.owner; }).map(function (x) { return { email: x.email, name: x.name }; }) : [];
-  return JSON.stringify(out);
+  return out;
 }
 
 function admIso_(v) {
@@ -361,252 +399,45 @@ function admParseCsv_(t) {
   return rows;
 }
 
-// ------------------------------------------------------------------ η σελίδα
-function adminPage_(q) {
-  const t = admTok_(q && q.t);
-  const html = '<!doctype html><html lang="el"><head><meta charset="utf-8"><style>' + ADMIN_CSS_ + '</style></head><body>' +
-    '<header><div class="brand">ok<b>publisher</b> <span>Διαχείριση</span></div><div id="who"></div></header>' +
-    '<nav id="tabs"></nav><main id="main"><p class="muted">Μια στιγμή…</p></main>' +
-    '<script>var LOGIN_CODE=' + JSON.stringify(t).replace(/</g, '\\u003c') + ';</script><script>' + ADMIN_JS_ + '</script></body></html>';
-  return HtmlService.createHtmlOutput(html).setTitle('Διαχείριση · okpublisher').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+// ------------------------------------------------------------------ API για τη σελίδα του site (doPost)
+// Είσοδος: { a: "admin", act, … }. Έξοδος JSON: { ok: true, … } ή { ok: false, error, login? } (login = ξανά σύνδεση).
+function adminApi_(p) {
+  const out = function (o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); };
+  try {
+    const t = p.token;
+    switch (String(p.act || '')) {
+      case 'login': return out({ ok: true, message: admLogin_(p.email) });
+      case 'pin': return out({ ok: true, token: admPinLogin_(p.email, p.pin) });
+      case 'link': return out({ ok: true, token: admExchange_(p.code) });
+      case 'logout': admLogout_(t); return out({ ok: true });
+      case 'data': return out({ ok: true, data: admData_(t) });
+      case 'save_user': admSaveUser_(t, p.email, p.name, p.role); return out({ ok: true });
+      case 'delete_user': admDeleteUser_(t, p.email); return out({ ok: true });
+      case 'assign': admAssign_(t, p.key, p.email); return out({ ok: true });
+      default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
+    }
+  } catch (e) {
+    const m = String((e && e.message) || e);
+    return out(m === 'login' ? { ok: false, login: true, error: 'Χρειάζεται ξανά σύνδεση.' } : { ok: false, error: m });
+  }
 }
 
-const ADMIN_CSS_ = [
-  ':root{--v:#5B21D6;--y:#FFD23F;--d:#14162E;--l:#F2ECFF;--g:#4A4C66;--r:#C62828;--ok:#1B7F3B}',
-  '*{box-sizing:border-box}body{margin:0;font:15px/1.5 -apple-system,system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--d);background:var(--l)}',
-  'header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--d);color:#fff;position:sticky;top:0;z-index:2}',
-  '.brand{font-size:18px}.brand b{color:var(--y)}.brand span{font-size:13px;opacity:.75;margin-left:6px}#who{font-size:12px;opacity:.85;text-align:right}',
-  '#who a{color:var(--y)}nav{display:flex;gap:6px;overflow-x:auto;padding:10px 12px;background:#fff;border-bottom:1px solid #e4dcf7;position:sticky;top:48px;z-index:1}',
-  'nav button{flex:0 0 auto;border:1.5px solid var(--v);background:#fff;color:var(--v);border-radius:999px;padding:6px 13px;font-weight:600;font-size:14px;font-family:inherit}',
-  'nav button.on{background:var(--v);color:#fff}nav button i{font-style:normal;background:var(--y);color:var(--d);border-radius:9px;padding:0 6px;margin-left:5px;font-size:12px}',
-  'main{max-width:760px;margin:0 auto;padding:12px}.card{background:#fff;border-radius:16px;padding:13px 15px;margin:0 0 10px;box-shadow:0 1px 2px rgba(20,22,46,.06)}',
-  '.card h3{margin:0 0 2px;font-size:16px}.row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.muted{color:var(--g);font-size:13px}',
-  '.tag{display:inline-block;font-size:12px;border-radius:8px;padding:1px 7px;margin:2px 4px 2px 0;background:var(--l);color:var(--v);font-weight:600}',
-  '.tag.y{background:#FFF6CC;color:#7a5b00}.tag.r{background:#fde7e7;color:var(--r)}.tag.ok{background:#e3f4e8;color:var(--ok)}',
-  'h2{font-size:15px;margin:18px 4px 8px;color:var(--g);text-transform:uppercase;letter-spacing:.04em}a{color:var(--v)}',
-  'details summary{cursor:pointer;color:var(--v);font-size:13px;margin-top:4px}.kv{font-size:13px;margin:6px 0 0}.kv div{margin:2px 0}.kv b{color:var(--g);font-weight:600}',
-  'input,select{font-size:15px;font-family:inherit;padding:10px 12px;border:1.5px solid #d6ccef;border-radius:12px;width:100%;background:#fff}',
-  '.btn{font-weight:bold;font-size:15px;font-family:inherit;background:var(--v);color:#fff;border:0;border-radius:999px;padding:11px 20px;cursor:pointer}',
-  '.btn.s{background:#fff;color:var(--v);border:1.5px solid var(--v);padding:6px 12px;font-size:13px}.btn:disabled{opacity:.55}',
-  '.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:6px}.stat .card{margin:0;text-align:center}',
-  '.stat b{display:block;font-size:26px;color:var(--v)}.err{background:#fde7e7;color:var(--r);border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:14px}',
-  '.search{margin:0 0 10px}.login{max-width:420px;margin:40px auto}.login p{margin:0 0 12px}.grid2{display:grid;gap:8px}',
-].join('');
+// Η παλιά διεύθυνση (?a=admin) δείχνει πού μεταφέρθηκε το διαχειριστικό.
+function admMoved_() {
+  return HtmlService.createHtmlOutput('<!doctype html><html lang="el"><head><meta charset="utf-8"></head>' +
+    '<body style="font:17px/1.6 Arial,sans-serif;color:#14162E;background:#F2ECFF;margin:0"><div style="max-width:520px;margin:40px auto;' +
+    'background:#fff;border-radius:22px;padding:28px"><h1 style="font-size:24px;color:#5B21D6;margin:0 0 12px">Το διαχειριστικό μεταφέρθηκε</h1>' +
+    '<p><a href="' + ADM_.SITE + '" target="_top" style="color:#5B21D6;font-weight:bold">' + ADM_.SITE.replace(/^https:\/\//, '') + '</a></p></div></body></html>')
+    .setTitle('Διαχείριση · okpublisher').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
 
-const ADMIN_JS_ = String(function () {
-  var S = null, D = null, TAB = 'today', Q = '';
-  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function store(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* χωρίς αποθήκευση */ } }
-  function $(id) { return document.getElementById(id); }
-  function esc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-  function call(fn, args, ok, fail) {
-    var r = google.script.run.withSuccessHandler(ok).withFailureHandler(function (e) {
-      var m = String((e && e.message) || e);
-      if (/login/.test(m)) { S = null; store('okp_admin', null); if (LOGIN_CODE) showExchange(); else showLogin(); return; }
-      if (fail) fail(m); else flash(m);
-    });
-    r[fn].apply(r, args);
-  }
-  function flash(m) { var f = $('flash'); if (!f) { f = document.createElement('div'); f.id = 'flash'; f.className = 'err'; $('main').insertBefore(f, $('main').firstChild); } f.textContent = m; window.scrollTo(0, 0); }
-  function athens(iso, withTime) {
-    if (!iso || !/^\d{4}-/.test(iso)) return esc(iso || '');
-    var d = new Date(iso), o = { timeZone: 'Europe/Athens', weekday: 'short', day: 'numeric', month: 'numeric' };
-    if (withTime !== false) { o.hour = '2-digit'; o.minute = '2-digit'; }
-    return esc(d.toLocaleString('el-GR', o));
-  }
-  function dayKey(iso) { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' }); }
-  function months(ym) { if (!ym) return ''; var p = ym.split('-'); return ['Ιαν', 'Φεβ', 'Μαρ', 'Απρ', 'Μάι', 'Ιουν', 'Ιουλ', 'Αυγ', 'Σεπ', 'Οκτ', 'Νοε', 'Δεκ'][+p[1] - 1] + ' ' + p[0]; }
-  function eur(n) { return '€' + Number(n || 0).toFixed(2).replace('.', ','); }
-  function tag(t, c) { return t ? '<span class="tag ' + (c || '') + '">' + esc(t) + '</span>' : ''; }
-  function kv(pairs) { return '<div class="kv">' + pairs.filter(function (p) { return p[1]; }).map(function (p) { return '<div><b>' + esc(p[0]) + ':</b> ' + p[1] + '</div>'; }).join('') + '</div>'; }
-  function mail(e) { return e ? '<a href="mailto:' + esc(e) + '">' + esc(e) + '</a>' : ''; }
-  function tel(p) { return p ? '<a href="tel:' + esc(String(p).replace(/[^\d+]/g, '')) + '">' + esc(p) + '</a>' : ''; }
-  function link(u, t) { return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(t || 'άνοιγμα') + '</a>' : ''; }
-  var PK = { queued: 'στην ουρά', sent: 'περιμένει ΟΚ', awaiting_approval: 'περιμένει ΟΚ', approved: 'εγκρίθηκε', draft: 'σε παραγωγή',
-    changes: 'ζητήθηκαν αλλαγές', changes_requested: 'ζητήθηκαν αλλαγές', published: 'δημοσιεύτηκε', done: 'ολοκληρώθηκε' };
-  function isNew(s) { return /^νέο$/i.test(String(s || '').trim()); }
-  function bad(s) { return /Σφάλμα|Δεν δημοσιεύτηκε/.test(s || ''); }
-  function hit(o) { if (!Q) return true; return JSON.stringify(o).toLowerCase().indexOf(Q) >= 0; }
-  function clientOf(K) { return (D.clients || []).filter(function (c) { return c.key === K; })[0]; }
-  function cname(K) { var c = clientOf(K); return c ? (c.code ? c.code + ' · ' : '') + c.name : K; }
-
-  function showLogin(msg) {
-    $('tabs').innerHTML = ''; $('who').innerHTML = '';
-    $('main').innerHTML = '<div class="card login"><h3>Σύνδεση</h3><p class="muted">Γράψτε το email σας. Αν έχει πρόσβαση, θα σας έρθει σύνδεσμος.</p>' +
-      '<div class="grid2"><input id="em" type="email" autocomplete="email" placeholder="email"><button class="btn" id="go">Στείλε μου σύνδεσμο</button></div>' +
-      '<p id="lm" class="muted" style="margin-top:12px">' + esc(msg || '') + '</p></div>';
-    $('go').onclick = function () {
-      var b = this; b.disabled = true;
-      call('adminLogin', [$('em').value], function (m) { $('lm').textContent = m; b.disabled = false; }, function (m) { $('lm').textContent = m; b.disabled = false; });
-    };
-  }
-  function showExchange() {
-    $('main').innerHTML = '<div class="card login"><h3>Σύνδεση στο διαχειριστικό</h3><p class="muted">Πατήστε για να συνδεθείτε σε αυτή τη συσκευή (30 ημέρες).</p>' +
-      '<button class="btn" id="go">Σύνδεση</button><p id="lm" class="muted" style="margin-top:12px"></p></div>';
-    $('go').onclick = function () {
-      var b = this; b.disabled = true;
-      call('adminExchange', [LOGIN_CODE], function (r) { S = JSON.parse(r).token; store('okp_admin', S); LOGIN_CODE = ''; refresh(); },
-        function (m) { showLogin(m); });
-    };
-  }
-  function refresh() {
-    $('main').innerHTML = '<p class="muted">Φόρτωση…</p>';
-    call('adminData', [S], function (r) { D = JSON.parse(r); render(); }, function (m) { $('main').innerHTML = '<div class="err">' + esc(m) + '</div>'; });
-  }
-  function logout() { call('adminLogout', [S], function () {}); S = null; store('okp_admin', null); showLogin(); }
-
-  function tabsList() {
-    var a = D.me.role === 'admin';
-    var t = [['today', 'Σήμερα'], ['leads', 'Επαφές', D.leads.filter(function (l) { return isNew(l.status); }).length],
-      ['setups', 'Σεταρίσματα', D.setups.filter(function (s) { return isNew(s.status); }).length], ['clients', 'Πελάτες'], ['posts', 'Δημοσιεύσεις']];
-    if (a) t.push(['pay', 'Πληρωμές'], ['users', 'Χρήστες']);
-    return t;
-  }
-  function render() {
-    $('who').innerHTML = esc(D.me.name || D.me.email) + ' · ' + (D.me.role === 'admin' ? 'Διαχειριστής' : 'Πωλητής') +
-      '<br><a href="#" id="rf">ανανέωση</a> · <a href="#" id="lo">έξοδος</a>';
-    $('rf').onclick = function (e) { e.preventDefault(); refresh(); };
-    $('lo').onclick = function (e) { e.preventDefault(); logout(); };
-    $('tabs').innerHTML = tabsList().map(function (t) { return '<button data-t="' + t[0] + '" class="' + (t[0] === TAB ? 'on' : '') + '">' + t[1] + (t[2] ? '<i>' + t[2] + '</i>' : '') + '</button>'; }).join('');
-    Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.onclick = function () { TAB = b.getAttribute('data-t'); Q = ''; render(); window.scrollTo(0, 0); }; });
-    var errs = (D.errors || []).map(function (e) { return '<div class="err">' + esc(e) + '</div>'; }).join('');
-    var V = { today: vToday, leads: vLeads, setups: vSetups, clients: vClients, posts: vPosts, pay: vPay, users: vUsers }[TAB] || vToday;
-    $('main').innerHTML = errs + V();
-    var s = $('q');
-    if (s) { s.value = Q; s.oninput = function () { Q = s.value.trim().toLowerCase(); var p = s.selectionStart; render(); var n = $('q'); n.focus(); n.setSelectionRange(p, p); }; }
-    bind();
-  }
-  function search(ph) { return '<input id="q" class="search" type="search" placeholder="' + esc(ph) + '">'; }
-  function sellerSel(key, cur) {
-    if (D.me.role !== 'admin' || !D.sellers.length) return cur ? tag('Πωλητής: ' + cur) : '';
-    return '<div class="kv"><b>Πωλητής:</b> <select data-assign="' + esc(key) + '" style="width:auto;padding:4px 8px;font-size:13px"><option value="">—</option>' +
-      D.sellers.map(function (s) { return '<option value="' + esc(s.email) + '"' + (s.email === cur ? ' selected' : '') + '>' + esc(s.name || s.email) + '</option>'; }).join('') + '</select></div>';
-  }
-  function bind() {
-    Array.prototype.forEach.call(document.querySelectorAll('[data-assign]'), function (el) {
-      el.onchange = function () { el.disabled = true; call('adminAssign', [S, el.getAttribute('data-assign'), el.value], function () { refresh(); }, function (m) { flash(m); el.disabled = false; }); };
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-deluser]'), function (el) {
-      el.onclick = function () {
-        if (!el.getAttribute('data-sure')) { el.setAttribute('data-sure', '1'); el.textContent = 'Σίγουρα; Πατήστε ξανά'; return; }
-        el.disabled = true; call('adminDeleteUser', [S, el.getAttribute('data-deluser')], refresh, function (m) { flash(m); el.disabled = false; });
-      };
-    });
-    var add = $('addu');
-    if (add) add.onclick = function () { add.disabled = true; call('adminSaveUser', [S, $('ue').value, $('un').value, $('ur').value], function () { refresh(); }, function (m) { flash(m); add.disabled = false; }); };
-  }
-
-  function vToday() {
-    var today = dayKey(new Date().toISOString());
-    var nl = D.leads.filter(function (l) { return isNew(l.status); }), ns = D.setups.filter(function (s) { return isNew(s.status); });
-    var posts = (D.queue || []).filter(function (p) { return p.at && dayKey(p.at) === today; });
-    var probs = [];
-    (D.queue || []).forEach(function (p) { if (bad(p.ig) || bad(p.fb)) probs.push(esc(cname(p.client)) + ': ' + esc(p.type) + ' ' + athens(p.at) + ' — ' + esc([p.ig, p.fb].filter(bad).join(' / '))); });
-    (D.clients || []).forEach(function (c) {
-      if (c.billing_paused) probs.push(esc(cname(c.key)) + ': παύση δημοσιεύσεων (απλήρωτη συνδρομή)');
-      else if (c.billing && c.billing.unpaid.length && c.billing.card) probs.push(esc(cname(c.key)) + ': απλήρωτο ' + c.billing.unpaid.map(months).join(', '));
-      if (c.paused) probs.push(esc(cname(c.key)) + ': σε παύση (PAUSED)');
-      if (c.billing && c.billing.change) probs.push(esc(cname(c.key)) + ': αλλαγή πακέτου σε ' + esc(c.billing.change.plan) + ' από ' + months(c.billing.change.from) +
-        ' — config (πακέτο, ημέρες) στην παραγωγή της 20ής');
-    });
-    if (D.heartbeat && Date.now() - new Date(D.heartbeat).getTime() > 40 * 60000) probs.unshift('Ο κύκλος δημοσίευσης δεν έχει τρέξει από ' + athens(D.heartbeat));
-    var h = '<div class="stat"><div class="card"><b>' + nl.length + '</b>νέες επαφές</div><div class="card"><b>' + ns.length + '</b>νέα σεταρίσματα</div>' +
-      '<div class="card"><b>' + posts.length + '</b>δημοσιεύσεις σήμερα</div><div class="card"><b>' + (D.clients || []).filter(function (c) { return c.live; }).length + '</b>ενεργοί πελάτες</div></div>';
-    h += '<h2>Θέλει προσοχή</h2>' + (probs.length ? probs.map(function (p) { return '<div class="card">' + p + '</div>'; }).join('') : '<div class="card muted">Τίποτα. Όλα κυλούν.</div>');
-    if (ns.length) h += '<h2>Νέα σεταρίσματα</h2>' + ns.slice(0, 5).map(setupCard).join('');
-    if (nl.length) h += '<h2>Νέες επαφές</h2>' + nl.slice(0, 5).map(leadCard).join('');
-    h += '<h2>Σήμερα δημοσιεύονται</h2>' + (posts.length ? posts.map(postCard).join('') : '<div class="card muted">Τίποτα για σήμερα.</div>');
-    if (D.heartbeat) h += '<p class="muted">Τελευταίος κύκλος δημοσίευσης: ' + athens(D.heartbeat) + '</p>';
-    return h;
-  }
-  function leadCard(l) {
-    return '<div class="card"><div class="row"><h3>' + esc(l.business) + '</h3>' + tag(l.status, isNew(l.status) ? 'y' : '') + '</div>' +
-      '<div class="muted">' + esc(l.name) + ' · ' + esc(l.at) + '</div>' +
-      kv([['Email', mail(l.email)], ['Τηλέφωνο', tel(l.phone)], ['Πακέτο', esc(l.plan || 'δεν ξέρει')], ['Σελίδα', esc(l.social)], ['Πηγή', esc(l.source)],
-        ['Νέα με email', esc(l.news)], ['Μήνυμα', esc(l.message)]]) + sellerSel('lead:' + l.email, l.seller) + '</div>';
-  }
-  function vLeads() {
-    var L = D.leads.filter(hit);
-    return search('Αναζήτηση σε επαφές…') + (L.length ? L.map(leadCard).join('') : '<div class="card muted">Καμία επαφή.</div>');
-  }
-  function setupCard(s) {
-    var t = s.trial && s.trial !== 'ναι' ? tag('Δωρεάν εβδομάδα: όχι', 'r') : tag('Δωρεάν εβδομάδα', 'ok');
-    var b = s.bill_check && s.bill_check !== 'ΟΚ' ? tag(s.bill_check, 'r') : '';
-    return '<div class="card"><div class="row"><h3>' + (s.code ? esc(s.code) + ' · ' : '') + esc(s.business) + '</h3>' + tag(s.status, isNew(s.status) ? 'y' : '') + '</div>' +
-      '<div class="muted">' + esc(s.name) + ' · ' + esc(s.at) + '</div>' + tag(String(s.plan).split(' ')[0]) + t + b +
-      kv([['Email', mail(s.email)], ['Τηλέφωνα', esc(s.phones)], ['Instagram', esc(s.instagram)], ['Facebook', esc(s.facebook)]]) +
-      '<details><summary>Περισσότερα</summary>' + kv([['Περιοχή', esc(s.address)], ['Τι κάνει', esc(s.about)], ['Ώρες', esc(s.times)], ['Έτοιμα reels', esc(s.reels)],
-        ['Μουσική', esc(s.music)], ['Όροι', esc(s.terms)], ['Τιμολόγηση', esc(s.bill_name)], ['ΑΦΜ', esc(s.afm)]]) + '</details>' +
-      sellerSel(s.code ? 'setup:' + s.code : 'lead:' + s.email, s.seller) + '</div>';
-  }
-  function vSetups() {
-    var L = D.setups.filter(hit);
-    return search('Αναζήτηση σε σεταρίσματα…') + (L.length ? L.map(setupCard).join('') : '<div class="card muted">Κανένα σετάρισμα.</div>');
-  }
-  function clientCard(c) {
-    var b = c.billing, st = [];
-    if (c.test) st.push(tag('δοκιμαστικός'));
-    else if (c.live) st.push(tag('ενεργός', 'ok')); else st.push(tag('εκτός δημοσίευσης', 'y'));
-    if (c.paused) st.push(tag('παύση', 'r'));
-    if (c.billing_paused) st.push(tag('παύση: απλήρωτο', 'r'));
-    var bill = b ? [['Συνδρομή', esc(b.plan) + (b.amount_eur ? ' · ' + eur(b.amount_eur) + '/μήνα' : '') + (b.card ? ' · κάρτα ✓' : ' · χωρίς κάρτα ακόμα')],
-      ['Επόμενη χρέωση', b.next ? months(b.next) : (b.stop_after ? 'καμία (λήγει)' : '')], ['Λήξη μετά', months(b.stop_after)],
-      ['Αλλαγή πακέτου', b.change ? esc(b.change.plan) + ' από ' + months(b.change.from) : ''],
-      ['Μήνες', b.months.map(function (m) { return months(m.month) + ' ' + (m.st === 'paid' ? '✓' : '(' + m.st + ')'); }).join(' · ')]] : [['Συνδρομή', 'καμία ακόμα']];
-    var ap = c.approval ? [['Τελευταίο πακέτο', esc((c.approval.label || months(c.approval.month)) + ' — ' + (PK[c.approval.status] || c.approval.status) + (c.approval.round ? ' (γύρος ' + c.approval.round + ')' : ''))]] : [];
-    var next = (D.queue || []).filter(function (p) { return p.client === c.key && new Date(p.at) > new Date(); })[0];
-    return '<div class="card"><div class="row"><h3>' + (c.code ? esc(c.code) + ' · ' : '') + esc(c.name) + '</h3><span class="muted">' + esc(c.key) + '</span></div>' +
-      st.join('') + tag(c.package) + kv([['Instagram', esc(c.accounts && c.accounts.instagram)], ['Facebook', esc(c.accounts && c.accounts.facebook)],
-        ['Επόμενη δημοσίευση', next ? athens(next.at) + ' · ' + esc(next.type) : '']].concat(ap, bill)) +
-      (c.note ? '<details><summary>Σημειώσεις</summary><div class="kv">' + esc(c.note) + '</div></details>' : '') + sellerSel('client:' + c.key, c.seller) + '</div>';
-  }
-  function vClients() {
-    var L = (D.clients || []).filter(hit);
-    return search('Αναζήτηση σε πελάτες…') + (L.length ? L.map(clientCard).join('') : '<div class="card muted">Κανένας πελάτης.</div>');
-  }
-  function postCard(p) {
-    var cls = function (s) { return bad(s) ? 'r' : (/Δημοσιεύτηκε/.test(s) ? 'ok' : ''); };
-    return '<div class="card"><div class="row"><b>' + athens(p.at) + '</b><span class="muted">' + esc(p.type) + '</span></div><div class="muted">' + esc(cname(p.client)) + '</div>' +
-      (p.caption ? '<div style="font-size:13px;margin:4px 0">' + esc(p.caption) + '…</div>' : '') +
-      tag('IG: ' + (p.ig || '—'), cls(p.ig)) + tag('FB: ' + (p.fb || '—'), cls(p.fb)) + ' ' + link(p.ig_link, 'Instagram') + ' ' + link(p.fb_link, 'Facebook') + '</div>';
-  }
-  function vPosts() {
-    var now = Date.now();
-    var up = (D.queue || []).filter(function (p) { return new Date(p.at).getTime() > now - 6 * 3600000; }).filter(hit).slice(0, 60);
-    var hi = (D.history || []).filter(hit).slice(0, 40);
-    return search('Αναζήτηση…') + '<h2>Επόμενες</h2>' + (up.length ? up.map(postCard).join('') : '<div class="card muted">Η ουρά είναι άδεια.</div>') +
-      '<h2>Ιστορικό</h2>' + (hi.length ? hi.map(function (r) {
-        return '<div class="card"><div class="row"><b>' + athens(r.at) + '</b>' + tag(r.status, bad(r.status) || /σφάλμα|απέτυχε/i.test(r.status) ? 'r' : '') + '</div>' +
-          '<div class="muted">' + esc(cname(r.client)) + ' · ' + esc(r.type) + '</div>' + (r.detail ? '<div style="font-size:13px">' + esc(r.detail) + '</div>' : '') + '</div>';
-      }).join('') : '<div class="card muted">Τίποτα ακόμα.</div>');
-  }
-  function vPay() {
-    var C = (D.clients || []).filter(function (c) { return c.billing; });
-    var h = '<h2>Συνδρομές</h2>' + (C.length ? C.map(function (c) {
-      var b = c.billing;
-      return '<div class="card"><div class="row"><h3>' + esc(cname(c.key)) + '</h3>' + (b.unpaid.length && b.card ? tag('απλήρωτο', 'r') : tag(b.card ? 'κάρτα ✓' : 'χωρίς κάρτα', b.card ? 'ok' : 'y')) + '</div>' +
-        kv([['Πακέτο', esc(b.plan) + ' · ' + eur(b.amount_eur) + '/μήνα'], ['Επόμενη χρέωση', b.next ? months(b.next) : 'καμία'], ['Λήξη μετά', months(b.stop_after)]]) + '</div>';
-    }).join('') : '<div class="card muted">Καμία συνδρομή ακόμα.</div>');
-    var P = (D.payments || []).filter(hit).slice(0, 80);
-    h += '<h2>Κινήσεις</h2>' + search('Αναζήτηση σε κινήσεις…') + (P.length ? P.map(function (p) {
-      return '<div class="card"><div class="row"><b>' + esc(cname(p.client)) + '</b><span class="muted">' + athens(p.at) + '</span></div>' +
-        '<div>' + esc(p.action) + (p.amount !== '' ? ' · ' + eur(p.amount) : '') + (p.month ? ' · ' + esc(/^\d{4}-\d{2}$/.test(p.month) ? months(p.month) : p.month) : '') + '</div>' +
-        '<div class="muted">' + esc(p.result) + '</div></div>';
-    }).join('') : '<div class="card muted">Καμία κίνηση.</div>');
-    return h;
-  }
-  function vUsers() {
-    var h = (D.users || []).map(function (u) {
-      return '<div class="card"><div class="row"><h3>' + esc(u.name || u.email) + '</h3>' + tag(u.role === 'admin' ? 'Διαχειριστής' : 'Πωλητής', u.role === 'admin' ? '' : 'y') + '</div>' +
-        '<div class="muted">' + esc(u.email) + (u.owner ? ' · λογαριασμός okpublisher (πάντα διαχειριστής)' : '') + '</div>' +
-        (!u.owner && u.email !== D.me.email ? '<p style="margin:8px 0 0"><button class="btn s" data-deluser="' + esc(u.email) + '">Αφαίρεση</button></p>' : '') + '</div>';
-    }).join('');
-    h += '<h2>Νέος χρήστης ή αλλαγή ρόλου</h2><div class="card grid2"><input id="ue" type="email" placeholder="email"><input id="un" placeholder="όνομα">' +
-      '<select id="ur"><option value="sales">Πωλητής: μόνο ό,τι του αναθέτεις</option><option value="admin">Διαχειριστής: τα πάντα</option></select>' +
-      '<button class="btn" id="addu">Αποθήκευση</button><p class="muted" style="margin:0">Μπαίνει με το email του: του έρχεται σύνδεσμος, χωρίς κωδικό.</p></div>';
-    return h;
-  }
-
-  S = load('okp_admin');
-  if (S) refresh(); else if (LOGIN_CODE) showExchange(); else showLogin();
-}).replace(/^function \(\) \{|\}$/g, '');
+// Μία φορά για κάθε διεύθυνση του web app: γράφεται στο admin/webapp.json του publisher-work (τη χρειάζεται η σελίδα του site).
+function adminUrlToRepo_() {
+  try {
+    const u = webappUrl_();
+    if (!u || prop_('WEBAPP_URL_REPO', '') === u) return;
+    ghPutJson_('admin/webapp.json', { url: u, note: 'Η διεύθυνση /exec του web app (Apps Script «okpublisher»). Τη γράφει μόνο του το Upload.gs.', at: new Date().toISOString() },
+      'Διεύθυνση web app');
+    P_().setProperty('WEBAPP_URL_REPO', u);
+  } catch (e) { console.log('admin/webapp.json: ' + e.message); }
+}
