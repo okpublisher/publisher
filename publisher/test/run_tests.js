@@ -1614,7 +1614,7 @@ function admEnv(extraProps, opts) {
       }
       if (url.indexOf('https://docs.google.com/spreadsheets/d/LEADSSHEETID0123456789abcdef/export?format=csv&gid=') === 0) {
         if (opts.csvFail) return resp(403, '<html>no</html>', { 'Content-Type': 'text/html' });
-        return resp(200, /gid=11$/.test(url) ? LEADS_CSV : SETUPS_CSV, { 'Content-Type': 'text/csv' });
+        return resp(200, /gid=11$/.test(url) ? (opts.leadsCsv || LEADS_CSV) : (opts.setupsCsv || SETUPS_CSV), { 'Content-Type': 'text/csv' });
       }
       if (opts.viva) return opts.viva.fetch(url, o, resp);
       return null;
@@ -1982,6 +1982,120 @@ test('διαχειριστικό: η κάρτα πελάτη έχει ημέρε
   assert.ok(c, 'ο πωλητής βλέπει τον πελάτη του');
   assert.deepStrictEqual(JSON.parse(JSON.stringify([c.no_approval, c.free, c.package, c.days.posts, c.days.stories])), [true, { until: '' }, 'Βασικό', ['Τρίτη', 'Πέμπτη'], []]);
   assert.ok('adm:clients:2' in env.cache && !('adm:clients' in env.cache), 'νέο κλειδί cache');
+});
+
+const SELL_USERS = JSON.stringify({ 'nikos@example.com': { role: 'sales', name: 'Νίκος', ref: 'nik22', pcts: [{ from: '0000-01', pct: 15 }] },
+  'maria@example.com': { role: 'sales', name: 'Μαρία', ref: 'mar33' } });
+function sellEnv() {
+  const opts = {
+    leadsCsv: 'Χρόνος,Όνομα,Επιχείρηση,Email,Τηλέφωνο,Πακέτο,Instagram/Facebook,Μήνυμα,Γλώσσα,Κατάσταση,Πηγή,Νέα,Σύσταση\r\n' +
+      '26/11/2026 9:00:00 π.μ.,Α,Μόνος,a@x.gr,,,,,el,νέο,απευθείας,όχι,\r\n' +
+      '26/11/2026 10:00:00 π.μ.,Β,Του Νίκου,b@x.gr,,,,,el,νέο,απευθείας,όχι,nik22\r\n' +
+      '26/11/2026 11:00:00 π.μ.,Β,Του Νίκου ξανά,b@x.gr,,,,,el,νέο,απευθείας,όχι,MAR33\r\n' +
+      '26/11/2026 12:00:00 μ.μ.,Γ,Της Μαρίας,c@x.gr,,,,,el,νέο,απευθείας,όχι,mar33\r\n' +
+      '26/11/2026 12:30:00 μ.μ.,Δ,Άγνωστος κωδικός,d@x.gr,,,,,el,νέο,απευθείας,όχι,zzz99\r\n',
+    setupsCsv: 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Κατάσταση,ΑΦΜ,Έλεγχος τιμολόγησης,Δωρεάν εβδομάδα,Κωδικός πελάτη,Σύσταση\r\n' +
+      '26/11/2026 1:00:00 μ.μ.,Του Νίκου ΙΚΕ,Β,b@x.gr,Μεσαίο,x,νέο,111111111,ΟΚ,ναι,OK-0002,\r\n' +
+      '26/11/2026 2:00:00 μ.μ.,Ίδιος ΑΦΜ,Ζ,z@x.gr,Μεσαίο,x,νέο,111111111,ΟΚ,όχι,OK-0002,mar33\r\n' +
+      '26/11/2026 3:00:00 μ.μ.,Μόνος μετά με σύνδεσμο,Α,a@x.gr,Βασικό,x,νέο,222222222,ΟΚ,ναι,OK-0003,nik22\r\n',
+    gh: { 'clients': [{ name: 'ORE', type: 'dir' }, { name: 'ABC', type: 'dir' }],
+      'clients/ABC/config.json': { key: 'ABC', code: 'OK-0002', name: 'Του Νίκου ΙΚΕ', package: 'Μεσαίο' } },
+  };
+  const env = admEnv({ ADMIN_USERS: SELL_USERS, CLIENTS: 'ORE,ABC',
+    BILLING_ABC: JSON.stringify({ plan: 'Μεσαίο', amount: 31000, start: '2026-10', tx: 'TX9', months: {
+      '2026-10': { st: 'paid', pay: 'PAY-0004', amount: 31000 }, '2026-12': { st: 'paid', pay: 'PAY-0005', amount: 31000 }, '2027-01': { st: 'pending' } } }) }, opts);
+  env.opts = opts;
+  return env;
+}
+
+test('πωλητές: ο πρώτος σύνδεσμος κερδίζει (email → ΑΦΜ → κωδικός πελάτη, για πάντα)· μόνος = κανείς· «Πηγή» σε κάθε γραμμή', function () {
+  const env = sellEnv();
+  const d = api(env, { act: 'data', token: env.loginAs('system@example.com') }).data;
+  const L = function (biz) { return d.leads.filter(function (l) { return l.business === biz; })[0]; };
+  const S = function (biz) { return d.setups.filter(function (x) { return x.business === biz; })[0]; };
+  assert.deepStrictEqual([L('Μόνος').seller, L('Μόνος').src.how], ['', 'none']);
+  assert.deepStrictEqual([L('Του Νίκου').seller, L('Του Νίκου').src.how, L('Του Νίκου').src.name], ['nikos@example.com', 'link', 'Νίκος']);
+  assert.strictEqual(L('Του Νίκου ξανά').seller, 'nikos@example.com', 'δεύτερος σύνδεσμος (Μαρίας) δεν τον παίρνει');
+  assert.strictEqual(L('Της Μαρίας').seller, 'maria@example.com');
+  assert.strictEqual(L('Άγνωστος κωδικός').seller, '');
+  assert.strictEqual(S('Του Νίκου ΙΚΕ').seller, 'nikos@example.com', 'σετάρισμα χωρίς σύνδεσμο, ίδιο email');
+  assert.strictEqual(S('Ίδιος ΑΦΜ').seller, 'nikos@example.com', 'ίδιος ΑΦΜ, άλλο email, σύνδεσμος Μαρίας μετά');
+  assert.strictEqual(S('Μόνος μετά με σύνδεσμο').seller, 'nikos@example.com', 'ήρθε μόνος, μετά από σύνδεσμο → του πωλητή');
+  assert.strictEqual(L('Μόνος').seller, '', 'η παλιά επαφή χωρίς σύνδεσμο δεν αλλάζει');
+  const abc = d.clients.filter(function (c) { return c.key === 'ABC'; })[0];
+  assert.deepStrictEqual([abc.seller, abc.src.how, abc.src.link], ['nikos@example.com', 'link', 'Νίκος']);
+  assert.strictEqual(d.clients.filter(function (c) { return c.key === 'ORE'; })[0].src.how, 'none');
+  assert.ok(d.leads.every(function (l) { return !('ref' in l) && !('auto' in l); }), 'ο κωδικός δεν βγαίνει στη σελίδα');
+  const nk = d.users.filter(function (u) { return u.email === 'nikos@example.com'; })[0];
+  assert.deepStrictEqual([nk.ref, nk.link, nk.pct], ['nik22', 'https://okpublisher.gr/?p=nik22', 15]);
+});
+
+test('πωλητές: ανάθεση διαχειριστή υπερισχύει («-» = κανείς)· ο πωλητής βλέπει μόνο τους δικούς του + σύνδεσμο + προμήθειες', function () {
+  const env = sellEnv();
+  const adm = env.loginAs('system@example.com');
+  api(env, { act: 'assign', token: adm, key: 'lead:c@x.gr', email: 'nikos@example.com' });
+  api(env, { act: 'assign', token: adm, key: 'lead:b@x.gr', email: '-' });
+  let d = api(env, { act: 'data', token: adm }).data;
+  const c = d.leads.filter(function (l) { return l.email === 'c@x.gr'; })[0];
+  assert.deepStrictEqual([c.seller, c.src.how, c.src.name, c.src.link], ['nikos@example.com', 'manual', 'Νίκος', 'Μαρία']);
+  const b = d.leads.filter(function (l) { return l.email === 'b@x.gr'; })[0];
+  assert.deepStrictEqual([b.seller, b.src.how, b.src.link], ['', 'manual', 'Νίκος']);
+  api(env, { act: 'assign', token: adm, key: 'lead:b@x.gr', email: '' });
+  const nik = env.loginAs('nikos@example.com');
+  d = api(env, { act: 'data', token: nik }).data;
+  assert.deepStrictEqual(d.leads.map(function (l) { return l.email; }).sort(), ['b@x.gr', 'b@x.gr', 'c@x.gr']);
+  assert.deepStrictEqual(d.clients.map(function (x) { return x.key; }), ['ABC']);
+  assert.deepStrictEqual([d.me.link, d.me.setup_link, d.me.pct], ['https://okpublisher.gr/?p=nik22', 'https://okpublisher.gr/setup.html?p=nik22', 15]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.commissions.map(function (x) { return [x.month, x.pay, x.net, x.pct, x.amount]; }))),
+    [['2026-12', 'PAY-0005', 250, 15, 37.5], ['2026-10', 'PAY-0004', 250, 15, 37.5]]);
+  assert.ok(!('payments' in d) && !('users' in d));
+  const mar = env.loginAs('maria@example.com');
+  d = api(env, { act: 'data', token: mar }).data;
+  assert.deepStrictEqual(d.clients.length + d.commissions.length, 0);
+});
+
+test('πωλητές: νέος πωλητής παίρνει κωδικό και σύνδεσμο στο email· προμήθεια με ιστορικό (η αλλαγή ισχύει από τον τρέχοντα μήνα)', function () {
+  const env = sellEnv();
+  const adm = env.loginAs('system@example.com');
+  assert.ok(api(env, { act: 'save_user', token: adm, email: 'new@example.com', name: 'Νέος', role: 'sales', pct: '10' }).ok);
+  const u = JSON.parse(env.props.ADMIN_USERS)['new@example.com'];
+  assert.ok(/^[a-z0-9]{5}$/.test(u.ref));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(u.pcts)), [{ from: '0000-01', pct: 10 }]);
+  assert.ok(env.mails.some(function (m) { return m.to === 'new@example.com' && m.body.indexOf('https://okpublisher.gr/?p=' + u.ref) >= 0; }));
+  assert.ok(/από 0 έως 50/.test(api(env, { act: 'save_user', token: adm, email: 'new@example.com', name: 'Νέος', role: 'sales', pct: '80' }).error));
+  api(env, { act: 'save_user', token: adm, email: 'nikos@example.com', name: 'Νίκος', role: 'sales', pct: '20' });   // 26/11 → από 2026-11
+  const nu = JSON.parse(env.props.ADMIN_USERS)['nikos@example.com'];
+  assert.strictEqual(nu.ref, 'nik22', 'ο κωδικός μένει');
+  const d = api(env, { act: 'data', token: adm }).data;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.commissions.map(function (x) { return [x.month, x.pct, x.amount]; }))), [['2026-12', 20, 50], ['2026-10', 15, 37.5]]);
+  env.props.ADMIN_USERS = JSON.stringify(Object.assign(JSON.parse(env.props.ADMIN_USERS), { 'old@example.com': { role: 'sales', name: 'Παλιός' } }));
+  api(env, { act: 'data', token: adm });
+  assert.ok(/^[a-z0-9]{5}$/.test(JSON.parse(env.props.ADMIN_USERS)['old@example.com'].ref), 'παλιός πωλητής χωρίς κωδικό παίρνει');
+});
+
+test('πωλητές: email στον πωλητή για νέα επαφή/σετάρισμα από τον σύνδεσμό του (μία φορά· όχι για τα παλιά)', function () {
+  const env = sellEnv();
+  assert.strictEqual(env.ctx.admRefNotify_(), 0, 'πρώτη φορά: μόνο σημειώνει');
+  assert.ok(Number(env.props.ADMIN_REF_TS) > 0);
+  env.opts.leadsCsv += '27/11/2026 9:15:00 π.μ.,Ε,Νέα Καφετέρια,e@x.gr,,Βασικό,,,el,νέο,απευθείας,όχι,nik22\r\n' +
+    '27/11/2026 9:20:00 π.μ.,Ζ,Χωρίς σύνδεσμο,f@x.gr,,,,,el,νέο,απευθείας,όχι,\r\n';
+  env.cache = {};
+  const before = env.mails.length;
+  assert.strictEqual(env.ctx.admRefNotify_(), 1);
+  const m = env.mails.slice(before);
+  assert.deepStrictEqual([m.length, m[0].to], [1, 'nikos@example.com']);
+  assert.ok(/Νέα επαφή από τον σύνδεσμό σου: Νέα Καφετέρια/.test(m[0].subject) && m[0].body.indexOf('e@x.gr') < 0, 'χωρίς στοιχεία επικοινωνίας');
+  env.cache = {};
+  assert.strictEqual(env.ctx.admRefNotify_(), 0, 'όχι ξανά');
+});
+
+test('πωλητές: ώρα του Sheet με π.μ./μ.μ. (σειρά «πρώτος σύνδεσμος»)', function () {
+  const t = admEnv().ctx.admTime_;
+  assert.ok(t('26/11/2026 12:30:00 π.μ.') < t('26/11/2026 1:00:00 π.μ.'));
+  assert.ok(t('26/11/2026 11:59:00 π.μ.') < t('26/11/2026 12:00:00 μ.μ.'));
+  assert.ok(t('26/11/2026 12:00:00 μ.μ.') < t('26/11/2026 1:00:00 μ.μ.'));
+  assert.ok(t('9/1/2027 8:00:00 π.μ.') > t('26/12/2026 11:00:00 μ.μ.'));
+  assert.strictEqual(t('κάτι'), 0);
 });
 
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {

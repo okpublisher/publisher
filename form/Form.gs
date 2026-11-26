@@ -19,6 +19,9 @@
  *   έλεγχο γράφεται στη στήλη «Έλεγχος τιμολόγησης» και στο email, για να το ζητήσουμε από τον πελάτη.
  * Στήλες Πηγή (utm_… του συνδέσμου ή ο ιστότοπος από τον οποίο ήρθε) και Νέα (ναι = συγκατάθεση για email με νέα/προσφορές,
  * από το τετραγωνάκι της φόρμας· χωρίς «ναι» δεν στέλνουμε διαφημιστικά email).
+ * Στήλη «Σύσταση» (από 26/11/2026, και στις δύο καρτέλες, στο τέλος): ο κωδικός πωλητή του συνδέσμου (okpublisher.gr/?p=…),
+ *   που η σελίδα στέλνει κρυφά (πεδίο ref). Εδώ μόνο γράφεται· ποιος πωλητής είναι το βρίσκει το διαχειριστικό (Admin.gs).
+ *   Μπαίνει και στον σύνδεσμο σεταρίσματος της αυτόματης απάντησης.
  *
  * Ο κώδικας ζει στο repo okpublisher/publisher (form/) και ανεβαίνει μόνος του με το workflow «Deploy φόρμας»:
  *   δοκιμές (form/test) → clasp push → νέα έκδοση στην ΙΔΙΑ ανάπτυξη (ίδιος σύνδεσμος /exec) → έλεγχος ότι απαντά.
@@ -32,7 +35,8 @@
  */
 const FORM_ = {
   SHEET: 'Ενδιαφέροντα',
-  HEAD: ['Χρόνος', 'Όνομα', 'Επιχείρηση', 'Email', 'Τηλέφωνο', 'Πακέτο', 'Instagram/Facebook', 'Μήνυμα', 'Γλώσσα', 'Κατάσταση', 'Πηγή', 'Νέα'],
+  HEAD: ['Χρόνος', 'Όνομα', 'Επιχείρηση', 'Email', 'Τηλέφωνο', 'Πακέτο', 'Instagram/Facebook', 'Μήνυμα', 'Γλώσσα', 'Κατάσταση', 'Πηγή', 'Νέα', 'Σύσταση'],
+  REF_RE: /^[a-z0-9]{4,10}$/,   // κωδικός πωλητή (?p=)
   MAX_PER_HOUR: 30,
   LEN: { name: 120, business: 160, email: 160, phone: 40, plan: 40, social: 160, message: 3000, lang: 4, source: 200, news: 4 },
   SETUP_SHEET: 'Σεταρίσματα',
@@ -69,6 +73,7 @@ function doPost(e) {
   const r = {};
   Object.keys(FORM_.LEN).forEach(function (k) { r[k] = String(d[k] == null ? '' : d[k]).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, FORM_.LEN[k]); });
   if (!r.name || !r.business || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)) return out_({ ok: false, error: 'missing fields' });
+  r.ref = ref_(d.ref);
   if (dup_('i', r)) return out_({ ok: true });                    // διπλό πάτημα: σιωπηλά τίποτα
   const cache = CacheService.getScriptCache();
   const n = Number(cache.get('n') || 0);
@@ -81,7 +86,7 @@ function doPost(e) {
     // Τα κελιά γράφονται ως κείμενο (όχι τύποι): ό,τι αρχίζει με = + - @ παίρνει μπροστά απόστροφο.
     const safe = function (v) { return /^[=+\-@]/.test(v) ? "'" + v : v; };
     const news = r.news === 'ναι' ? 'ναι' : 'όχι';
-    sh.appendRow([new Date()].concat([r.name, r.business, r.email, r.phone, r.plan, r.social, r.message, r.lang].map(safe), ['νέο', safe(r.source || '—'), news]));
+    sh.appendRow([new Date()].concat([r.name, r.business, r.email, r.phone, r.plan, r.social, r.message, r.lang].map(safe), ['νέο', safe(r.source || '—'), news, r.ref]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   const replied = autoReply_(r, me);
@@ -91,7 +96,7 @@ function doPost(e) {
       subject: '[okpublisher.gr] Νέο ενδιαφέρον: ' + r.business + (r.plan ? ' (' + r.plan + ')' : ''),
       body: ['Όνομα: ' + r.name, 'Επιχείρηση: ' + r.business, 'Email: ' + r.email, 'Τηλέφωνο: ' + (r.phone || '—'),
         'Πακέτο: ' + (r.plan || 'δεν ξέρει ακόμα'), 'Instagram/Facebook: ' + (r.social || '—'), 'Γλώσσα: ' + (r.lang || 'el'),
-        'Πηγή: ' + (r.source || '—'), 'Νέα/προσφορές με email: ' + (r.news === 'ναι' ? 'ναι (συγκατάθεση)' : 'όχι'), '', r.message || '(χωρίς μήνυμα)',
+        'Πηγή: ' + (r.source || '—') + (r.ref ? ' · σύσταση πωλητή (κωδικός ' + r.ref + ')' : ''), 'Νέα/προσφορές με email: ' + (r.news === 'ναι' ? 'ναι (συγκατάθεση)' : 'όχι'), '', r.message || '(χωρίς μήνυμα)',
         '', 'Αυτόματη απάντηση: ' + (replied ? 'στάλθηκε (' + (planOf_(r.plan) ? planOf_(r.plan).el : 'όλα τα πακέτα') + ')' : 'όχι (στάλθηκε ήδη τις τελευταίες 6 ώρες)'),
         'Απάντηση: απλώς «Απάντηση» σε αυτό το email (πάει στον ενδιαφερόμενο).'].join('\n'),
     });
@@ -112,7 +117,7 @@ function autoReply_(r, me) {
   const en = r.lang === 'en', p = planOf_(r.plan);
   const addon = /\[Πρόσθετο: γύρισμα\/μοντάζ reels\]/.test(r.message);
   const first = String(r.name).split(/\s+/)[0];   // μόνο στα αγγλικά (στα ελληνικά η κλητική δεν βγαίνει σωστά αυτόματα)
-  const L = [];
+  const L = [], setupUrl = FORM_.SITE + '/setup.html' + (r.ref ? '?p=' + r.ref : '');
   if (en) {
     L.push('Hello ' + first + ',', '', 'Thank you for your interest in okpublisher!');
     if (p) {
@@ -128,7 +133,7 @@ function autoReply_(r, me) {
       'Not included: ads, replies to messages and comments, or photo shoots.', '',
       'A free week on your page', '3 posts and 3 stories on your Instagram and Facebook, free: no card, no obligation. No setup fee.', '',
       'How we start',
-      '1. Fill in the setup form: ' + FORM_.SITE + '/setup.html (in Greek; reply to this email if you prefer English).',
+      '1. Fill in the setup form: ' + setupUrl + ' (in Greek; reply to this email if you prefer English).',
       '2. Give us access to your page and create a Google Drive folder with some photos and videos (instructions on the same page).',
       '3. We prepare your free week and send it for your OK. Free weeks run in the middle of the month (setup by the 10th).',
       '4. If you like it, you pay for the first month by card and we start on the 1st. After that the card is charged automatically each month; stop whenever you like, with one email.');
@@ -150,7 +155,7 @@ function autoReply_(r, me) {
       'Δεν περιλαμβάνονται διαφημίσεις, απαντήσεις σε μηνύματα και σχόλια, ή φωτογράφιση.', '',
       'Μια δωρεάν εβδομάδα στη σελίδα σας', '3 posts και 3 stories στο Instagram και στο Facebook σας, δωρεάν: χωρίς κάρτα και χωρίς υποχρέωση. Χωρίς κόστος σεταρίσματος.', '',
       'Πώς ξεκινάμε',
-      '1. Συμπληρώστε τη φόρμα σεταρίσματος: ' + FORM_.SITE + '/setup.html',
+      '1. Συμπληρώστε τη φόρμα σεταρίσματος: ' + setupUrl,
       '2. Δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε έναν φάκελο Google Drive με μερικές φωτογραφίες και βίντεο (οδηγίες στην ίδια σελίδα).',
       '3. Ετοιμάζουμε τη δωρεάν εβδομάδα σας και σας τη στέλνουμε για ένα ΟΚ. Οι δωρεάν εβδομάδες γίνονται στα μέσα του μήνα (σετάρισμα έως τις 10).',
       '4. Αν σας αρέσει, πληρώνετε με κάρτα τον 1ο μήνα και ξεκινάμε την 1η. Μετά η κάρτα χρεώνεται αυτόματα κάθε μήνα· σταματάτε όποτε θέλετε, με ένα email.');
@@ -184,6 +189,7 @@ function dup_(kind, obj) {
   } finally { lock.releaseLock(); }
 }
 
+function ref_(v) { const s = String(v == null ? '' : v).trim().toLowerCase(); return FORM_.REF_RE.test(s) ? s : ''; }
 function clean_(v, n) { return String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n); }
 function safe_(v) { return /^[=+\-@]/.test(v) ? "'" + v : v; }
 
@@ -205,12 +211,13 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη']);
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση']);
   const x = {};
   FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
   let trial = 'ναι', code = '';
+  const ref = ref_(d.ref);
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
@@ -218,7 +225,7 @@ function setup_(d) {
     trial = trialCheck_(sh, head.indexOf('ΑΦΜ') + 1, b.bill_afm);
     code = clientCode_(sh, head.indexOf('ΑΦΜ') + 1, head.indexOf('Κωδικός πελάτη') + 1, b.bill_afm);
     sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
-      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code]));
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   if (me) {
@@ -231,6 +238,7 @@ function setup_(d) {
         '\n\nΤιμολόγηση:\n' + FORM_.BILL.map(function (f) { return f[1] + ': ' + (b[f[0]] || '—'); }).join('\n') +
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +
         '\n\nΔωρεάν εβδομάδα: ' + (trial === 'ναι' ? 'ναι' : '⚠ ' + trial) +
+        (ref ? '\nΣύσταση πωλητή: κωδικός ' + ref + ' (ο πωλητής φαίνεται στο διαχειριστικό)' : '') +
         '\n\nΕπόμενο: config του πελάτη στο publisher-work (ο Claude), πρόσβαση σελίδας/Instagram, φάκελος Drive, token.',
     });
   }

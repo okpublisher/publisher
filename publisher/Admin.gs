@@ -9,7 +9,13 @@
  * Χρήστες (ADMIN_USERS, JSON { email: { role, name } }): role = admin (όλα) ή sales (πωλητής: μόνο ό,τι του έχει ανατεθεί,
  *   χωρίς πληρωμές, ιστορικό πληρωμών, ΑΦΜ και χρήστες). Τους προσθέτει ένας admin από τη σελίδα (ο νέος παίρνει email).
  *   Ο λογαριασμός που τρέχει το script (okpublisher) είναι πάντα admin.
- * Αναθέσεις σε πωλητή: ADMIN_ASSIGN (JSON { "lead:<email>" | "setup:<κωδικός>" | "client:<K>": email }).
+ * Αναθέσεις σε πωλητή: ADMIN_ASSIGN (JSON { "lead:<email>" | "setup:<κωδικός>" | "client:<K>": email | "-" (κανείς) }).
+ * Πωλητές (από 26/11/2026): κάθε πωλητής έχει κωδικό (ref, 5 χαρακτήρες) → σύνδεσμος okpublisher.gr/?p=<ref> (και
+ *   setup.html?p=<ref>). Η σελίδα του site στέλνει τον κωδικό κρυφά με τη φόρμα (στήλη «Σύσταση»· κανένα πεδίο, κανένα cookie).
+ *   Πωλητής κάθε επαφής / σεταρίσματος / πελάτη: η ανάθεση του διαχειριστή, αλλιώς ο ΠΡΩΤΟΣ σύνδεσμος πωλητή που ήρθε με το
+ *   ίδιο email, ΑΦΜ ή κωδικό πελάτη (για πάντα· δεύτερος πωλητής δεν τον παίρνει) — admOwners_. Ο πωλητής βλέπει μόνο τους
+ *   δικούς του, παίρνει email για κάθε νέο από τον σύνδεσμό του (κύκλος πληρωμών, admRefNotify_) και βλέπει τις προμήθειές
+ *   του: ποσοστό (pcts, ιστορικό ανά μήνα) στο καθαρό ποσό (χωρίς ΦΠΑ) κάθε πληρωμένου μήνα των πελατών του.
  * Συνεδρίες: ADMIN_SESSIONS (μόνο το hash του κλειδιού συνεδρίας). Καμία δημόσια συνάρτηση (όλες με «_»).
  *
  * Δεδομένα (ΜΟΝΟ ανάγνωση, καμία νέα άδεια Google):
@@ -39,6 +45,11 @@ const ADM_ = {
   CLIENTS_CACHE_S: 300,
   CLIENTS_KEY: 'adm:clients:2',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
+  LEADS_KEY: 'adm:leads:2',
+  REF_URL: 'https://okpublisher.gr/',
+  REF_RE: /^[a-z0-9]{5}$/,
+  REF_ABC: 'abcdefghjkmnpqrstuvwxyz23456789',   // χωρίς i, l, o, 0, 1 (μπερδεύονται)
+  PCT_MAX: 50,
   ROLES: ['admin', 'sales'],
   ROLE_NAMES: { admin: 'Διαχειριστής', sales: 'Πωλητής' },
   LOGIN_MSG: 'Αν το email έχει πρόσβαση, σας στείλαμε κωδικό. Ισχύει 15 λεπτά.',
@@ -56,16 +67,20 @@ function admUsers_() {
   const raw = admJson_('ADMIN_USERS'), u = {};
   Object.keys(raw).forEach(function (e) {
     const x = raw[e] || {}, em = admEmail_(e);
-    if (em && ADM_.ROLES.indexOf(x.role) >= 0) u[em] = { role: x.role, name: String(x.name || '').slice(0, 80) };
+    if (em && ADM_.ROLES.indexOf(x.role) >= 0) u[em] = { role: x.role, name: String(x.name || '').slice(0, 80),
+      ref: ADM_.REF_RE.test(String(x.ref || '')) ? String(x.ref) : '',
+      pcts: (Array.isArray(x.pcts) ? x.pcts : []).filter(function (p) { return p && /^\d{4}-\d{2}$/.test(p.from) && p.pct >= 0 && p.pct <= ADM_.PCT_MAX; }).slice(-24) };
   });
   const o = admOwner_();
-  if (o) u[o] = { role: 'admin', name: 'okpublisher', owner: true };
+  if (o) u[o] = { role: 'admin', name: 'okpublisher', owner: true, ref: '', pcts: [] };
   return u;
 }
 
 function admSaveUsers_(u) {
   const c = {};
-  Object.keys(u).forEach(function (e) { if (!u[e].owner) c[e] = { role: u[e].role, name: u[e].name || '' }; });
+  Object.keys(u).forEach(function (e) {
+    if (!u[e].owner) c[e] = { role: u[e].role, name: u[e].name || '', ref: u[e].ref || '', pcts: u[e].pcts || [] };
+  });
   P_().setProperty('ADMIN_USERS', JSON.stringify(c));
 }
 
@@ -179,7 +194,7 @@ function admLogout_(token) {
 }
 
 // ------------------------------------------------------------------ ενέργειες διαχειριστή
-function admSaveUser_(token, email, name, role) {
+function admSaveUser_(token, email, name, role, pct) {
   const me = admSession_(token);
   admNeedAdmin_(me);
   const e = admEmail_(email);
@@ -188,17 +203,54 @@ function admSaveUser_(token, email, name, role) {
   const u = admUsers_();
   if (u[e] && u[e].owner) throw new Error('Ο λογαριασμός του okpublisher είναι πάντα διαχειριστής.');
   if (e === me.email && role !== 'admin') throw new Error('Δεν μπορείτε να αφαιρέσετε από τον εαυτό σας τον ρόλο του διαχειριστή.');
-  const isNew = !u[e];
-  u[e] = { role: role, name: String(name || '').trim().slice(0, 80) };
+  const isNew = !u[e], old = u[e] || {};
+  u[e] = { role: role, name: String(name || '').trim().slice(0, 80), ref: old.ref || '', pcts: old.pcts || [] };
+  if (role === 'sales' && !u[e].ref) u[e].ref = admNewRef_(u);
+  if (pct !== undefined && pct !== null && String(pct).trim() !== '') {
+    const n = Number(String(pct).replace(',', '.'));
+    if (!(n >= 0 && n <= ADM_.PCT_MAX)) throw new Error('Η προμήθεια είναι ποσοστό από 0 έως ' + ADM_.PCT_MAX + '.');
+    if (admPct_(u[e].pcts, '9999-12') !== n || !u[e].pcts.length) {
+      // Το πρώτο ποσοστό ισχύει για όλους τους μήνες· κάθε αλλαγή από τον τρέχοντα μήνα (οι παλιοί μήνες μένουν ως ήταν).
+      const from = u[e].pcts.length ? ym_(new Date()) : '0000-01';
+      u[e].pcts = u[e].pcts.filter(function (p) { return p.from !== from; }).concat([{ from: from, pct: Math.round(n * 100) / 100 }]);
+    }
+  }
   admSaveUsers_(u);
   if (isNew) {
+    const ref = u[e].ref;
     try {
       MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Πρόσβαση στο διαχειριστικό okpublisher',
         body: 'Σας δόθηκε πρόσβαση στο διαχειριστικό του okpublisher (' + ADM_.ROLE_NAMES[role] + ').\n\n' + ADM_.SITE +
-          '\n\nΓράψτε το email σας και θα σας έρθει κωδικός. Δεν χρειάζεται κωδικός πρόσβασης.' });
+          '\n\nΓράψτε το email σας και θα σας έρθει κωδικός. Δεν χρειάζεται κωδικός πρόσβασης.' +
+          (ref ? '\n\nΟ προσωπικός σας σύνδεσμος για πελάτες: ' + admLink_(ref) + '\nΌποιος συμπληρώσει τη φόρμα από αυτόν ' +
+            'τον σύνδεσμο είναι δικός σας. Τον βρίσκετε πάντα στο διαχειριστικό, με QR.' : '') });
     } catch (x) { console.log('email νέου χρήστη: ' + x.message); }
   }
   return 'ok';
+}
+function admLink_(ref, page) { return ref ? ADM_.REF_URL + (page || '') + '?p=' + ref : ''; }
+function admNewRef_(u) {
+  const used = {};
+  Object.keys(u).forEach(function (e) { if (u[e].ref) used[u[e].ref] = 1; });
+  for (let i = 0; i < 50; i++) {
+    let r = '';
+    for (let j = 0; j < 5; j++) r += ADM_.REF_ABC.charAt(Math.floor(Math.random() * ADM_.REF_ABC.length));
+    if (!used[r]) return r;
+  }
+  throw new Error('Δεν βγήκε κωδικός πωλητή· ξαναδοκιμάστε.');
+}
+// Ποσοστό προμήθειας για τον μήνα ym: το τελευταίο που ίσχυε τότε.
+function admPct_(pcts, ym) {
+  let v = 0;
+  (pcts || []).slice().sort(function (a, b) { return a.from < b.from ? -1 : 1; }).forEach(function (p) { if (p.from <= ym) v = Number(p.pct) || 0; });
+  return v;
+}
+// Πωλητές χωρίς κωδικό (από πριν): παίρνουν τώρα.
+function admEnsureRefs_(u) {
+  let ch = false;
+  Object.keys(u).forEach(function (e) { if (u[e].role === 'sales' && !u[e].ref) { u[e].ref = admNewRef_(u); ch = true; } });
+  if (ch) admSaveUsers_(u);
+  return u;
 }
 
 function admDeleteUser_(token, email) {
@@ -222,7 +274,8 @@ function admAssign_(token, key, email) {
   key = String(key || '');
   if (!/^(lead|setup|client):[^\s]{1,200}$/.test(key)) throw new Error('Άκυρη ανάθεση.');
   const a = admJson_('ADMIN_ASSIGN'), e = admEmail_(email);
-  if (!e) delete a[key];
+  if (email === '-') a[key] = '-';                         // ρητά κανείς (ακόμα κι αν ήρθε από σύνδεσμο)
+  else if (!e) delete a[key];                              // αυτόματα (από τον σύνδεσμο, αν υπάρχει)
   else if (!admUsers_()[e]) throw new Error('Ο χρήστης δεν υπάρχει.');
   else a[key] = e;
   P_().setProperty('ADMIN_ASSIGN', JSON.stringify(a));
@@ -233,25 +286,44 @@ function admAssign_(token, key, email) {
 function admData_(token) {
   const me = admSession_(token), admin = me.role === 'admin';
   const assign = admJson_('ADMIN_ASSIGN');
-  const mine = function (key) { return admin || assign[key] === me.email; };
+  const users = admEnsureRefs_(admUsers_());
+  const mu = users[me.email] || {};
   const out = { me: { email: me.email, name: me.name, role: me.role, owner: me.owner }, now: new Date().toISOString(), errors: [] };
-
-  let clients = [];
-  try { clients = admClients_(); } catch (e) { out.errors.push('Πελάτες: ' + e.message); }
-  out.clients = clients.filter(function (c) { return mine('client:' + c.key); }).map(function (c) {
-    c.seller = assign['client:' + c.key] || '';
-    if (!admin) delete c.note;
-    return c;
-  });
-  const keys = out.clients.map(function (c) { return c.key; });
-  const seen = function (K) { return admin || keys.indexOf(String(K)) >= 0; };
+  if (mu.ref) {
+    out.me.ref = mu.ref; out.me.link = admLink_(mu.ref); out.me.setup_link = admLink_(mu.ref, 'setup.html');
+    out.me.pct = admPct_(mu.pcts, ym_(new Date()));
+  }
 
   let L = { leads: [], setups: [] };
   try { L = admLeads_(); } catch (e) { out.errors.push('Επαφές / σεταρίσματα: ' + e.message); }
-  out.leads = L.leads.filter(function (l) { return mine('lead:' + l.email); })
-    .map(function (l) { l.seller = assign['lead:' + l.email] || ''; return l; });
-  out.setups = L.setups.filter(function (s) { return mine(s.code ? 'setup:' + s.code : 'lead:' + s.email); })
-    .map(function (s) { s.seller = assign[s.code ? 'setup:' + s.code : 'lead:' + s.email] || ''; if (!admin) delete s.afm; return s; });
+  const own = admOwners_(L, users);
+  // Πωλητής: ανάθεση διαχειριστή («-» = κανείς), αλλιώς ο πρώτος σύνδεσμος πωλητή. src = από πού (για τη γραμμή «Πηγή»).
+  const nm = function (e) { return e ? ((users[e] && users[e].name) || e) : ''; };
+  const who = function (key, auto) {
+    const m = assign[key], src = { how: 'none', link: auto ? nm(auto.seller) : '', link_at: auto ? auto.at : '' };
+    let seller = '';
+    if (m === '-') src.how = 'manual';
+    else if (m) { seller = m; src.how = 'manual'; }
+    else if (auto) { seller = auto.seller; src.how = 'link'; }
+    src.name = nm(seller);
+    return { seller: seller, src: src };
+  };
+  const take = function (o, key, auto) {
+    const w = who(key, auto);
+    o.seller = w.seller; o.src = w.src; delete o.ref;
+    return admin || w.seller === me.email;
+  };
+
+  let clients = [];
+  try { clients = admClients_(); } catch (e) { out.errors.push('Πελάτες: ' + e.message); }
+  out.clients = clients.filter(function (c) { return take(c, 'client:' + c.key, c.code ? own['c:' + c.code] : null); })
+    .map(function (c) { if (!admin) delete c.note; return c; });
+  const keys = out.clients.map(function (c) { return c.key; });
+  const seen = function (K) { return admin || keys.indexOf(String(K)) >= 0; };
+
+  out.leads = L.leads.filter(function (l) { const a = l.auto; delete l.auto; return take(l, 'lead:' + l.email, a); });
+  out.setups = L.setups.filter(function (s) { const a = s.auto; delete s.auto; return take(s, s.code ? 'setup:' + s.code : 'lead:' + s.email, a); })
+    .map(function (s) { if (!admin) delete s.afm; return s; });
 
   try {
     const q = admSheet_('Ουρά');
@@ -268,6 +340,8 @@ function admData_(token) {
       .map(function (r) { return { at: admIso_(r[0]), client: String(r[1]), id: String(r[2] || ''), type: String(r[3] || ''), status: String(r[4] || ''), detail: String(r[5] || '').slice(0, 300) }; });
   } catch (e) { out.history = []; out.errors.push('Ιστορικό: ' + e.message); }
 
+  try { out.commissions = admCommissions_(out.clients, users); } catch (e) { out.commissions = []; out.errors.push('Προμήθειες: ' + e.message); }
+
   if (admin) {
     try {
       out.payments = admSheet_(BILL_.SHEET).slice(1).slice(-ADM_.ROWS).reverse().map(function (r) {
@@ -276,11 +350,98 @@ function admData_(token) {
           plan: String(r[10] || '') };
       });
     } catch (e) { out.payments = []; out.errors.push('Πληρωμές: ' + e.message); }
-    const u = admUsers_();
-    out.users = Object.keys(u).sort().map(function (e) { return { email: e, name: u[e].name || '', role: u[e].role, owner: !!u[e].owner }; });
+    const ym = ym_(new Date());
+    out.users = Object.keys(users).sort().map(function (e) {
+      const u = users[e];
+      return { email: e, name: u.name || '', role: u.role, owner: !!u.owner, ref: u.ref || '', link: admLink_(u.ref), pct: admPct_(u.pcts, ym), has_pct: !!(u.pcts && u.pcts.length) };
+    });
   }
   out.sellers = admin ? out.users.filter(function (x) { return !x.owner; }).map(function (x) { return { email: x.email, name: x.name }; }) : [];
   return out;
+}
+
+// Ποιος πωλητής έφερε τον καθένα: ο ΠΡΩΤΟΣ σύνδεσμος πωλητή (?p=) ανάμεσα σε επαφές και σεταρίσματα με το ίδιο email,
+// ΑΦΜ ή κωδικό πελάτη, με σειρά χρόνου (για πάντα). Γράφει o.auto = { seller, at } σε κάθε γραμμή· επιστρέφει { κλειδί: … }
+// (e:<email>, a:<ΑΦΜ>, c:<OK-…>) για τους πελάτες.
+function admOwners_(L, users) {
+  const byRef = {}, own = {}, rows = [];
+  Object.keys(users).forEach(function (e) { if (users[e].role === 'sales' && users[e].ref) byRef[users[e].ref] = e; });
+  (L.leads || []).forEach(function (l) { rows.push({ o: l, t: admTime_(l.at), k: 0, keys: l.email ? ['e:' + l.email] : [] }); });
+  (L.setups || []).forEach(function (s) {
+    const afm = String(s.afm || '').replace(/[^\d]/g, '');
+    rows.push({ o: s, t: admTime_(s.at), k: 1, keys: [s.email ? 'e:' + s.email : '', afm ? 'a:' + afm : '', s.code ? 'c:' + s.code : ''].filter(String) });
+  });
+  rows.sort(function (x, y) { return (x.t - y.t) || (x.k - y.k); });
+  rows.forEach(function (r) {
+    let hit = null;
+    r.keys.forEach(function (k) { if (!hit && own[k]) hit = own[k]; });
+    if (!hit && r.o.ref && byRef[r.o.ref]) hit = { seller: byRef[r.o.ref], at: r.o.at };
+    if (hit) r.keys.forEach(function (k) { if (!own[k]) own[k] = hit; });
+    r.o.auto = hit;
+  });
+  return own;
+}
+
+// Χρόνος γραμμής του Sheet («26/11/2026 2:48:33 μ.μ.» ή ISO) → αριθμός για σύγκριση (0 = άγνωστος).
+function admTime_(s) {
+  s = String(s || '').trim();
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(π\.?\s*μ\.?|μ\.?\s*μ\.?|am|pm)?)?/i.exec(s);
+  if (m) {
+    let h = +(m[4] || 0);
+    const ap = String(m[7] || '').replace(/[\s.]/g, '').toLowerCase();
+    if ((ap === 'μμ' || ap === 'pm') && h < 12) h += 12;
+    if ((ap === 'πμ' || ap === 'am') && h === 12) h = 0;
+    return Date.UTC(+m[3], +m[2] - 1, +m[1], h, +(m[5] || 0), +(m[6] || 0));
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+// Προμήθειες: για κάθε πληρωμένο μήνα πελάτη με πωλητή, ποσοστό του πωλητή (όπως ίσχυε τον μήνα εκείνο) στο καθαρό ποσό.
+function admCommissions_(clients, users) {
+  const out = [];
+  clients.forEach(function (c) {
+    const u = c.seller && users[c.seller];
+    if (!u) return;
+    const st = billState_(c.key);
+    if (!st || !st.months) return;
+    Object.keys(st.months).sort().forEach(function (m) {
+      const r = st.months[m] || {}, cents = r.amount || st.amount || 0;
+      if (r.st !== 'paid' || !cents) return;
+      const net = Math.round(cents / (1 + BILL_.VAT)) / 100, pct = admPct_(u.pcts, m);
+      out.push({ seller: c.seller, seller_name: u.name || c.seller, client: c.key, client_name: c.name, code: c.code || '', month: m,
+        pay: String(r.pay || ''), net: net, pct: pct, amount: Math.round(net * pct) / 100 });
+    });
+  });
+  return out.sort(function (a, b) { return a.month < b.month ? 1 : a.month > b.month ? -1 : (a.client < b.client ? -1 : 1); });
+}
+
+// Κάθε ώρα (κύκλος πληρωμών): email στον πωλητή για κάθε νέα επαφή / νέο σετάρισμα που είναι δικό του (σύνδεσμος ή ανάθεση).
+// Χωρίς στοιχεία επικοινωνίας στο email (τα βλέπει στο διαχειριστικό). Την πρώτη φορά απλώς σημειώνει πού έμεινε.
+function admRefNotify_() {
+  const users = admUsers_();
+  if (!Object.keys(users).some(function (e) { return users[e].role === 'sales' && users[e].ref; })) return 0;
+  const L = admLeads_(), assign = admJson_('ADMIN_ASSIGN');
+  admOwners_(L, users);
+  const last = Number(prop_('ADMIN_REF_TS', '0')) || 0;
+  const rows = L.leads.map(function (l) { return { o: l, key: 'lead:' + l.email, what: 'Νέα επαφή' }; })
+    .concat(L.setups.map(function (s) { return { o: s, key: s.code ? 'setup:' + s.code : 'lead:' + s.email, what: 'Νέο σετάρισμα' }; }));
+  let max = last, n = 0;
+  rows.forEach(function (r) {
+    const t = admTime_(r.o.at);
+    if (t > max) max = t;
+    if (!last || t <= last) return;
+    const m = assign[r.key], seller = m === '-' ? '' : (m || (r.o.auto && r.o.auto.seller) || '');
+    if (!seller || !users[seller] || users[seller].role !== 'sales') return;
+    try {
+      MailApp.sendEmail({ to: seller, name: CFG.SENDER_NAME, subject: r.what + ' από τον σύνδεσμό σου: ' + r.o.business + (r.o.code ? ' (' + r.o.code + ')' : ''),
+        body: r.what + ' για εσένα: «' + r.o.business + '»' + (r.o.plan ? ', πακέτο ' + r.o.plan : '') + '.\n\nΤα στοιχεία είναι στο διαχειριστικό: ' +
+          ADM_.SITE + '\n\n— okpublisher' });
+      n++;
+    } catch (e) { console.log('email πωλητή: ' + e.message); }
+  });
+  if (max !== last) P_().setProperty('ADMIN_REF_TS', String(max));
+  return n;
 }
 
 function admIso_(v) {
@@ -355,24 +516,25 @@ function admBilling_(K) {
 // Επαφές και σεταρίσματα από το Sheet της φόρμας (CSV με το token του script). Cache 1′.
 function admLeads_() {
   const cache = CacheService.getScriptCache();
-  try { const hit = cache.get('adm:leads'); if (hit) return JSON.parse(hit); } catch (e) { /* ξανά */ }
+  try { const hit = cache.get(ADM_.LEADS_KEY); if (hit) return JSON.parse(hit); } catch (e) { /* ξανά */ }
   const cfg = admConfig_();
   const v = function (r, k) { return String(r[k] == null ? '' : r[k]).trim(); };
   const res = {
     leads: admCsv_(cfg.leads_sheet, cfg.leads_gid).map(function (r) {
       return { at: v(r, 'Χρόνος'), name: v(r, 'Όνομα'), business: v(r, 'Επιχείρηση'), email: v(r, 'Email').toLowerCase(), phone: v(r, 'Τηλέφωνο'),
         plan: v(r, 'Πακέτο'), social: v(r, 'Instagram/Facebook'), message: v(r, 'Μήνυμα').slice(0, 1500), lang: v(r, 'Γλώσσα'),
-        status: v(r, 'Κατάσταση'), source: v(r, 'Πηγή'), news: v(r, 'Νέα') };
+        status: v(r, 'Κατάσταση'), source: v(r, 'Πηγή'), news: v(r, 'Νέα'), ref: v(r, 'Σύσταση').toLowerCase() };
     }).reverse(),
     setups: admCsv_(cfg.leads_sheet, cfg.setups_gid).map(function (r) {
       return { at: v(r, 'Χρόνος'), code: v(r, 'Κωδικός πελάτη'), business: v(r, 'Επιχείρηση'), name: v(r, 'Υπεύθυνος'),
         email: v(r, 'Email εγκρίσεων').toLowerCase(), plan: v(r, 'Πακέτο'), phones: v(r, 'Τηλέφωνα (posts)'), facebook: v(r, 'Facebook'),
         instagram: v(r, 'Instagram'), address: v(r, 'Διεύθυνση/περιοχή'), about: v(r, 'Τι κάνει').slice(0, 1500), times: v(r, 'Ώρες'),
         reels: v(r, 'Έτοιμα reels'), music: v(r, 'Μουσική στα reels'), status: v(r, 'Κατάσταση'), terms: v(r, 'Όροι (έκδοση)'),
-        bill_name: v(r, 'Επωνυμία τιμολόγησης'), afm: v(r, 'ΑΦΜ'), bill_check: v(r, 'Έλεγχος τιμολόγησης'), trial: v(r, 'Δωρεάν εβδομάδα') };
+        bill_name: v(r, 'Επωνυμία τιμολόγησης'), afm: v(r, 'ΑΦΜ'), bill_check: v(r, 'Έλεγχος τιμολόγησης'), trial: v(r, 'Δωρεάν εβδομάδα'),
+        ref: v(r, 'Σύσταση').toLowerCase() };
     }).reverse(),
   };
-  try { cache.put('adm:leads', JSON.stringify(res), ADM_.LEADS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
+  try { cache.put(ADM_.LEADS_KEY, JSON.stringify(res), ADM_.LEADS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
   return res;
 }
 
@@ -436,7 +598,7 @@ function adminApi_(p) {
       case 'link': return out({ ok: true, token: admExchange_(p.code) });
       case 'logout': admLogout_(t); return out({ ok: true });
       case 'data': return out({ ok: true, data: admData_(t) });
-      case 'save_user': admSaveUser_(t, p.email, p.name, p.role); return out({ ok: true });
+      case 'save_user': admSaveUser_(t, p.email, p.name, p.role, p.pct); return out({ ok: true });
       case 'delete_user': admDeleteUser_(t, p.email); return out({ ok: true });
       case 'assign': admAssign_(t, p.key, p.email); return out({ ok: true });
       case 'client_plan': return out({ ok: true, message: admClientPlan_(t, p.client, p.plan) });

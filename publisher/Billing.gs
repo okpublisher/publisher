@@ -670,6 +670,7 @@ function billingCycle() {
       try { billingClient_(K, new Date()); } catch (e) { problems.push(K + ': ' + e.message); }
     });
     try { freeCycle_(new Date()); } catch (e) { console.log('Δωρεάν πελάτες: ' + e.message); }
+    try { admRefNotify_(); } catch (e) { console.log('Email πωλητών: ' + e.message); }
     if (problems.length) reportBilling_(problems);
   } finally {
     lock.releaseLock();
