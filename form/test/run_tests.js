@@ -57,10 +57,13 @@ const SETUP = { type: 'setup', business: 'Φούρνος Δοκιμή', name: '�
 const BILL_HEAD = ['Επωνυμία τιμολόγησης', 'ΑΦΜ', 'ΔΟΥ', 'Διεύθυνση τιμολόγησης', 'Έλεγχος τιμολόγησης'];
 function col(sh, h) { const i = Array.from(sh.head).indexOf(h); assert.ok(i >= 0, 'λείπει η στήλη ' + h); return i; }
 
+function owner(e) { return e.mails.filter(function (m) { return m.to === ME; }); }
+function replies(e) { return e.mails.filter(function (m) { return m.to !== ME; }); }
+
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
 
-test('αίτηση: γραμμή «νέο» + email μόνο στον λογαριασμό της φόρμας', function () {
+test('αίτηση: γραμμή «νέο» + email στον λογαριασμό της φόρμας + αυτόματη απάντηση μόνο στον ενδιαφερόμενο', function () {
   const e = makeEnv();
   assert.deepStrictEqual(e.post(BASE), { ok: true });
   const sh = e.sheets['Ενδιαφέροντα'];
@@ -70,10 +73,13 @@ test('αίτηση: γραμμή «νέο» + email μόνο στον λογαρ
   const r = sh.rows[0];
   assert.ok(r[0] instanceof Date || Object.prototype.toString.call(r[0]) === '[object Date]');
   assert.deepStrictEqual(Array.from(r.slice(1)), ['Δοκιμή', 'Φούρνος Δοκιμή', 'lead@example.com', '6900000000', 'Μεσαίο', "'@test", 'Γεια', 'el', 'νέο', 'ig / bio', 'ναι']);
-  assert.strictEqual(e.mails.length, 1);
-  assert.strictEqual(e.mails[0].to, ME);
-  assert.strictEqual(e.mails[0].replyTo, 'lead@example.com');
-  assert.ok(/Νέο ενδιαφέρον: Φούρνος Δοκιμή \(Μεσαίο\)/.test(e.mails[0].subject));
+  assert.strictEqual(e.mails.length, 2);
+  const o = owner(e)[0], a = replies(e)[0];
+  assert.strictEqual(o.replyTo, 'lead@example.com');
+  assert.ok(/Νέο ενδιαφέρον: Φούρνος Δοκιμή \(Μεσαίο\)/.test(o.subject));
+  assert.ok(/Αυτόματη απάντηση: στάλθηκε \(Μεσαίο\)/.test(o.body));
+  assert.strictEqual(a.to, 'lead@example.com');
+  assert.strictEqual(a.replyTo, ME);
 });
 
 test('χωρίς τετραγωνάκι νέων → «όχι»· χωρίς πηγή → «—»', function () {
@@ -83,7 +89,51 @@ test('χωρίς τετραγωνάκι νέων → «όχι»· χωρίς π�
   const r = e.sheets['Ενδιαφέροντα'].rows[0];
   assert.strictEqual(r[11], 'όχι');
   assert.strictEqual(r[10], '—');
-  assert.ok(/Νέα\/προσφορές με email: όχι/.test(e.mails[0].body));
+  assert.ok(/Νέα\/προσφορές με email: όχι/.test(owner(e)[0].body));
+});
+
+test('αυτόματη απάντηση: ανάλογα με το πακέτο (τιμή, posts/stories, 1ος μήνας δώρο, σετάρισμα)', function () {
+  [['Βασικό', '€150 + ΦΠΑ', '2 posts και 2 stories την εβδομάδα (περίπου 9 + 9'],
+   ['Μεσαίο', '€250 + ΦΠΑ', '4 posts και 4 stories την εβδομάδα (περίπου 17 + 17'],
+   ['Καθημερινό', '€400 + ΦΠΑ', '7 posts και 7 stories την εβδομάδα (περίπου 30 + 30']].forEach(function (c) {
+    const e = makeEnv();
+    e.post(Object.assign({}, BASE, { plan: c[0] }));
+    const a = replies(e)[0];
+    assert.strictEqual(a.subject, 'okpublisher: το πακέτο «' + c[0] + '» και τα επόμενα βήματα');
+    assert.ok(a.body.indexOf('Γεια σας,\n') === 0, a.body);
+    assert.ok(a.body.indexOf(c[0] + ' · ' + c[1] + ' τον μήνα') >= 0, c[0]);
+    assert.ok(a.body.indexOf(c[2]) >= 0, c[0]);
+    assert.ok(/Ο 1ος μήνας είναι δώρο\nΠληρώνετε με κάρτα τον 2ο μήνα με το σετάρισμα/.test(a.body));
+    assert.ok(a.body.indexOf('https://okpublisher.gr/setup.html') >= 0);
+    assert.ok(!/Δεν είστε σίγουροι/.test(a.body));
+  });
+});
+
+test('αυτόματη απάντηση: χωρίς πακέτο → όλα τα πακέτα + πρόταση· αγγλικά με lang=en· πρόσθετο reels', function () {
+  let e = makeEnv();
+  e.post(Object.assign({}, BASE, { plan: '' }));
+  let a = replies(e)[0];
+  assert.strictEqual(a.subject, 'okpublisher: τα πακέτα και τα επόμενα βήματα');
+  ['• Βασικό · €150', '• Μεσαίο · €250', '• Καθημερινό · €400', 'Όλα περιλαμβάνουν:', 'Δεν είστε σίγουροι'].forEach(function (t) { assert.ok(a.body.indexOf(t) >= 0, t); });
+  assert.ok(/Αυτόματη απάντηση: στάλθηκε \(όλα τα πακέτα\)/.test(owner(e)[0].body));
+  e = makeEnv();
+  e.post(Object.assign({}, BASE, { lang: 'en', plan: 'Καθημερινό', name: 'Anna Smith', message: '[Πρόσθετο: γύρισμα/μοντάζ reels] Hi' }));
+  a = replies(e)[0];
+  assert.strictEqual(a.subject, 'okpublisher: the Daily plan and next steps');
+  assert.ok(a.body.indexOf('Hello Anna,') === 0);
+  assert.ok(a.body.indexOf('Daily · €400 + VAT a month') >= 0 && a.body.indexOf('Your first month is on us') >= 0);
+  assert.ok(/separate quote/.test(a.body));
+  assert.ok(!/[α-ω]{4,}/.test(a.body.replace('Πρόσθετο', '')), 'χωρίς ελληνικά στο αγγλικό');
+});
+
+test('αυτόματη απάντηση: μία ανά email κάθε 6 ώρες (όχι πολλά email στον ίδιο)', function () {
+  const e = makeEnv();
+  e.post(BASE); e.post(Object.assign({}, BASE, { email: 'LEAD@example.com' })); e.post(BASE);
+  assert.strictEqual(replies(e).length, 1);
+  assert.strictEqual(owner(e).length, 3, 'ο λογαριασμός ενημερώνεται για κάθε αίτηση');
+  assert.ok(/Αυτόματη απάντηση: όχι/.test(owner(e)[2].body));
+  e.post(Object.assign({}, BASE, { email: 'other@example.com' }));
+  assert.strictEqual(replies(e).length, 2);
 });
 
 test('bot (κρυφό πεδίο website) → τίποτα, σιωπηλά', function () {

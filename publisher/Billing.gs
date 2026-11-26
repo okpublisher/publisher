@@ -15,6 +15,8 @@
  * Αιτήματα (clients/<K>/outbox/*.json, βλ. Approval.gs):
  *   billing_start { plan: "Βασικό", amount_eur: 186, start: "2027-02" }  → order_code, link (email στον πελάτη)
  *   billing_stop  { after: "2027-05" }                                     → καμία χρέωση μετά τον Μάιο 2027
+ *   Νέος πελάτης (όροι Α.4, από 26/11/2026): ο 1ος μήνας δώρο, ο 2ος πληρώνεται με το σετάρισμα →
+ *   billing_start { plan, amount_eur, start: "2027-02", free_month: "2027-01" } (email «Καλώς ήρθατε» αντί για «συνεχίζουμε»).
  *
  * Ρυθμίσεις (Script Properties, τα κλειδιά τα βάζει μόνο ο διαχειριστής):
  *   VIVA_ENV            demo (προεπιλογή) ή live
@@ -36,6 +38,7 @@ const BILL_ = {
   LINK_REFRESH_DAYS: 4, // νέο σύνδεσμο σε κάθε email αν ο προηγούμενος είναι παλιότερος από τόσες ημέρες
   SHEET: 'Πληρωμές',
   HEAD: ['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός'],
+  MONTHS_NOM: ['Ιανουάριος', 'Φεβρουάριος', 'Μάρτιος', 'Απρίλιος', 'Μάιος', 'Ιούνιος', 'Ιούλιος', 'Αύγουστος', 'Σεπτέμβριος', 'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος'],
   MONTHS: ['Ιανουάριο', 'Φεβρουάριο', 'Μάρτιο', 'Απρίλιο', 'Μάιο', 'Ιούνιο', 'Ιούλιο', 'Αύγουστο', 'Σεπτέμβριο', 'Οκτώβριο', 'Νοέμβριο', 'Δεκέμβριο'],
 };
 
@@ -135,6 +138,13 @@ function billState_(K) {
 function billSave_(K, st) { P_().setProperty('BILLING_' + K, JSON.stringify(st)); }
 function billPaused_(K) { return cprop_(K, 'BILLING_PAUSED', 'false') === 'true'; }
 function ym_(d) { return athens_(d, 'yyyy-MM'); }
+function nextYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] === 12 ? (p[0] + 1) + '-01' : p[0] + '-' + ('0' + (p[1] + 1)).slice(-2); }
+// «Η επόμενη χρέωση…» μόνο αν θα υπάρξει (όχι μετά από λύση).
+function nextChargeText_(st, m) {
+  const n = nextYm_(m);
+  return st.stop_after && n > st.stop_after ? '' : 'Η επόμενη χρέωση, για τον ' + monthLabel_(n) + ', γίνεται αυτόματα την 1η του μήνα. ';
+}
+function monthNom_(ym) { const p = String(ym).split('-'); return BILL_.MONTHS_NOM[Number(p[1]) - 1] + ' ' + p[0]; }   // «Ο Ιανουάριος 2027 …»
 function monthLabel_(ym) { const p = String(ym).split('-'); return BILL_.MONTHS[Number(p[1]) - 1] + ' ' + p[0]; }
 function euros_(cents) { return (cents / 100).toFixed(2).replace('.', ','); }
 // CLIENTS + TEST_CLIENTS (ο TST δεν δημοσιεύει ποτέ: χρήσιμος για δοκιμή πληρωμών στη demo της Viva).
@@ -167,6 +177,8 @@ function billingRequest_(K, req, res) {
     if (!(amount >= 100 && amount <= 200000)) throw new Error('billing_start: άκυρο ποσό (amount_eur, με ΦΠΑ)');
     if (!/^\d{4}-\d{2}$/.test(String(req.start || ''))) throw new Error('billing_start: λείπει ο πρώτος μήνας (start: "2027-02")');
     if (!req.plan) throw new Error('billing_start: λείπει το πακέτο');
+    const free = req.free_month == null ? null : String(req.free_month);
+    if (free !== null && (!/^\d{4}-\d{2}$/.test(free) || free >= req.start)) throw new Error('billing_start: ο δωρεάν μήνας (free_month) πρέπει να είναι πριν από τον start');
     if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Λείπει το NOTIFY_TO_' + K);
     const old = billState_(K);
     if (old && old.tx && !old.stop_after) throw new Error('billing_start: ο πελάτης έχει ήδη ενεργή συνδρομή');
@@ -175,16 +187,25 @@ function billingRequest_(K, req, res) {
     Object.keys((old && old.months) || {}).forEach(function (m) { if (old.months[m].st === 'paid') months[m] = old.months[m]; });
     if (months[req.start]) throw new Error('billing_start: ο μήνας ' + req.start + ' έχει ήδη πληρωθεί');
     const st = { plan: String(req.plan), amount: amount, start: req.start, stop_after: null, tx: (old && old.tx) || null, months: months };
+    if (free) st.free_month = free;
     st.months[req.start] = { st: 'pending' };
     const link = freshLink_(K, st, req.start);   // αν η Viva αρνηθεί, δεν αποθηκεύεται τίποτα
     billSave_(K, st);
     P_().deleteProperty('BILLING_PAUSED_' + K);  // οι απλήρωτοι μήνες της παλιάς κατάστασης δεν μετράνε πια
-    notify_(K, 'Πληρωμή συνδρομής για τον ' + monthLabel_(req.start),
-      'Ευχαριστούμε που συνεχίζουμε μαζί!\n\n' +
-      'Πακέτο: ' + st.plan + ' · €' + euros_(amount) + ' τον μήνα (με ΦΠΑ).\n' +
-      'Πληρωμή με κάρτα, με ασφάλεια μέσω Viva: ' + link + '\n\n' +
-      'Από τον επόμενο μήνα η χρέωση γίνεται αυτόματα την 1η κάθε μήνα. Τα στοιχεία της κάρτας τα κρατά η Viva, όχι εμείς. ' +
-      'Η συνδρομή σταματά όποτε θέλετε, με ένα email έως τις 15 του μήνα.');
+    const plan = 'Πακέτο: ' + st.plan + ' · €' + euros_(amount) + ' τον μήνα (με ΦΠΑ).\n' +
+      'Πληρωμή με κάρτα, με ασφάλεια μέσω Viva: ' + link + '\n\n';
+    const card = 'Τα στοιχεία της κάρτας τα κρατά η Viva, όχι εμείς. ';
+    if (free) {
+      notify_(K, 'Καλώς ήρθατε: πληρωμή για τον ' + monthLabel_(req.start),
+        'Καλώς ήρθατε στο okpublisher!\n\n' +
+        'Ο ' + monthNom_(free) + ' είναι δώρο μας. Για να ξεκινήσει, πληρώνετε τώρα τον ' + monthLabel_(req.start) + ' (όροι, Α.4).\n\n' + plan +
+        'Μόλις γίνει η πληρωμή, ξεκινάμε να ετοιμάζουμε τον ' + monthLabel_(free) + '. ' + nextChargeText_(st, req.start) + card +
+        'Μετά τον ' + monthLabel_(req.start) + ' η συνδρομή σταματά όποτε θέλετε, με ένα email έως τις 15 του μήνα.');
+    } else {
+      notify_(K, 'Πληρωμή συνδρομής για τον ' + monthLabel_(req.start),
+        'Ευχαριστούμε που συνεχίζουμε μαζί!\n\n' + plan + nextChargeText_(st, req.start) + card +
+        'Η συνδρομή σταματά όποτε θέλετε, με ένα email έως τις 15 του μήνα.');
+    }
     res.order_code = st.months[req.start].order;
     res.link = link;
     return;
@@ -262,7 +283,8 @@ function billingClient_(K, now) {
         notify_(K, 'Η πληρωμή έγινε: οι δημοσιεύσεις συνεχίζονται', 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ). Οι δημοσιεύσεις σας συνεχίζονται κανονικά. Ευχαριστούμε!');
       } else {
         notify_(K, 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m), 'Λάβαμε την πληρωμή της συνδρομής σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ). ' +
-          'Από τον επόμενο μήνα η χρέωση γίνεται αυτόματα την 1η κάθε μήνα. Ευχαριστούμε!');
+          (st.free_month && m === st.start ? 'Ο ' + monthNom_(st.free_month) + ' είναι δώρο μας: ξεκινάμε να τον ετοιμάζουμε. ' : '') +
+          nextChargeText_(st, m) + 'Ευχαριστούμε!');
       }
       return;
     }

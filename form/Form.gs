@@ -5,6 +5,8 @@
  *   - γράφεται σε μια γραμμή του Sheet στο οποίο ανήκει το script (καρτέλα «Ενδιαφέροντα»),
  *   - στέλνεται ως email στον λογαριασμό που τρέχει το script (okpublisher.gr) — σε κανέναν άλλον.
  * Προστασία: κρυφό πεδίο (website) για bots, όρια μήκους, το πολύ 30 αιτήματα την ώρα.
+ * Αυτόματη απάντηση στον ενδιαφερόμενο (από 26/11/2026): ανάλογα με το πακέτο που διάλεξε (ή όλα, αν δεν ξέρει),
+ *   ελληνικά ή αγγλικά (πεδίο lang), με τον 1ο μήνα δώρο (όροι Α.4) και τα επόμενα βήματα. Μία ανά email κάθε 6 ώρες.
  * Η σελίδα setup.html στέλνει "type": "setup" → καρτέλα «Σεταρίσματα» + email «Σετάρισμα: …» (στοιχεία νέου πελάτη).
  *   Υποχρεωτική η αποδοχή των όρων (terms.html): πεδίο terms = έκδοση (π.χ. v1-2026-11-25) → στήλη «Όροι (έκδοση)».
  *   Στοιχεία τιμολόγησης (bill_name, bill_afm, bill_doy, bill_address) → στήλες μετά τους «Όρους». Τα ελέγχει η σελίδα·
@@ -29,6 +31,13 @@ const FORM_ = {
   MAX_PER_HOUR: 30,
   LEN: { name: 120, business: 160, email: 160, phone: 40, plan: 40, social: 160, message: 3000, lang: 4, source: 200, news: 4 },
   SETUP_SHEET: 'Σεταρίσματα',
+  // Πακέτα για την αυτόματη απάντηση (ίδια με το site και τους όρους· τιμές χωρίς ΦΠΑ).
+  PLANS: [
+    { el: 'Βασικό', en: 'Basic', price: 150, week: 2, month: 9 },
+    { el: 'Μεσαίο', en: 'Standard', price: 250, week: 4, month: 17 },
+    { el: 'Καθημερινό', en: 'Daily', price: 400, week: 7, month: 30 }],
+  REPLY_EVERY_S: 21600,   // το πολύ μία αυτόματη απάντηση ανά email κάθε 6 ώρες
+  SITE: 'https://okpublisher.gr',
   TERMS_RE: /^v\d+-\d{4}-\d{2}-\d{2}$/,   // έκδοση όρων που αποδέχτηκε ο πελάτης (setup.html)
   SETUP: [  // [πεδίο, επικεφαλίδα, μέγιστο μήκος]
     ['business', 'Επιχείρηση', 160], ['name', 'Υπεύθυνος', 120], ['email', 'Email εγκρίσεων', 160], ['approvers', 'Άλλοι εγκρίνοντες', 400],
@@ -64,6 +73,7 @@ function doPost(e) {
     sh.appendRow([new Date()].concat([r.name, r.business, r.email, r.phone, r.plan, r.social, r.message, r.lang].map(safe), ['νέο', safe(r.source || '—'), news]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
+  const replied = autoReply_(r, me);
   if (me) {
     MailApp.sendEmail({
       to: me, replyTo: r.email, name: 'okpublisher.gr',
@@ -71,10 +81,77 @@ function doPost(e) {
       body: ['Όνομα: ' + r.name, 'Επιχείρηση: ' + r.business, 'Email: ' + r.email, 'Τηλέφωνο: ' + (r.phone || '—'),
         'Πακέτο: ' + (r.plan || 'δεν ξέρει ακόμα'), 'Instagram/Facebook: ' + (r.social || '—'), 'Γλώσσα: ' + (r.lang || 'el'),
         'Πηγή: ' + (r.source || '—'), 'Νέα/προσφορές με email: ' + (r.news === 'ναι' ? 'ναι (συγκατάθεση)' : 'όχι'), '', r.message || '(χωρίς μήνυμα)',
-        '', 'Απάντηση: απλώς «Απάντηση» σε αυτό το email (πάει στον ενδιαφερόμενο).'].join('\n'),
+        '', 'Αυτόματη απάντηση: ' + (replied ? 'στάλθηκε (' + (planOf_(r.plan) ? planOf_(r.plan).el : 'όλα τα πακέτα') + ')' : 'όχι (στάλθηκε ήδη τις τελευταίες 6 ώρες)'),
+        'Απάντηση: απλώς «Απάντηση» σε αυτό το email (πάει στον ενδιαφερόμενο).'].join('\n'),
     });
   }
   return out_({ ok: true });
+}
+
+function planOf_(name) {
+  const n = String(name || '').split(/[ ·]/)[0];
+  return FORM_.PLANS.filter(function (p) { return p.el === n || p.en === n; })[0] || null;
+}
+
+// Αυτόματη απάντηση στον ενδιαφερόμενο, ανάλογα με το πακέτο. true αν στάλθηκε.
+function autoReply_(r, me) {
+  const cache = CacheService.getScriptCache();
+  const key = 'r:' + r.email.toLowerCase();
+  if (cache.get(key)) return false;
+  const en = r.lang === 'en', p = planOf_(r.plan);
+  const addon = /\[Πρόσθετο: γύρισμα\/μοντάζ reels\]/.test(r.message);
+  const first = String(r.name).split(/\s+/)[0];   // μόνο στα αγγλικά (στα ελληνικά η κλητική δεν βγαίνει σωστά αυτόματα)
+  const L = [];
+  if (en) {
+    L.push('Hello ' + first + ',', '', 'Thank you for your interest in okpublisher!');
+    if (p) {
+      L.push('Here is what your plan includes.', '', p.en + ' · €' + p.price + ' + VAT a month',
+        '• ' + p.week + ' posts and ' + p.week + ' stories a week (about ' + p.month + ' + ' + p.month + ' a month) on Instagram and Facebook');
+    } else {
+      L.push('Here are our plans.', '');
+      FORM_.PLANS.forEach(function (q) { L.push('• ' + q.en + ' · €' + q.price + ' + VAT a month: ' + q.week + ' posts + ' + q.week + ' stories a week'); });
+      L.push('', 'All plans include:');
+    }
+    L.push('• posts, reels and stories made from your own photos and videos', '• one approval a month by email, and a monthly results report',
+      '• publishing when most of your followers are online',
+      'Not included: ads, replies to messages and comments, or photo shoots.', '',
+      'Your first month is on us', 'You pay for month 2 by card at setup, and month 1 is free. After that it is monthly: stop whenever you like, with one email. No setup fee.', '',
+      'How we start',
+      '1. Fill in the setup form: ' + FORM_.SITE + '/setup.html (in Greek; reply to this email if you prefer English).',
+      '2. Give us access to your page and create a Google Drive folder for your material (instructions on the same page).',
+      '3. We send you the payment link for month 2, and we start on the 1st of the following month (if everything is ready by the 15th).');
+    if (!p) L.push('', 'Not sure which plan fits? Reply with a few words about your business and we will suggest one.');
+    if (addon) L.push('', 'For reel filming and editing (add-on) we will send you a separate quote. You provide the idea and the script.');
+    L.push('', 'For anything else, just reply to this email.', '', 'okpublisher · One monthly OK. We do the rest.', FORM_.SITE);
+  } else {
+    L.push('Γεια σας,', '', 'Ευχαριστούμε για το ενδιαφέρον σας για το okpublisher!');
+    if (p) {
+      L.push('Ορίστε τι περιλαμβάνει το πακέτο που διαλέξατε.', '', p.el + ' · €' + p.price + ' + ΦΠΑ τον μήνα',
+        '• ' + p.week + ' posts και ' + p.week + ' stories την εβδομάδα (περίπου ' + p.month + ' + ' + p.month + ' τον μήνα) στο Instagram και στο Facebook');
+    } else {
+      L.push('Ορίστε τα πακέτα μας.', '');
+      FORM_.PLANS.forEach(function (q) { L.push('• ' + q.el + ' · €' + q.price + ' + ΦΠΑ τον μήνα: ' + q.week + ' posts + ' + q.week + ' stories την εβδομάδα'); });
+      L.push('', 'Όλα περιλαμβάνουν:');
+    }
+    L.push('• posts, reels και stories από τις δικές σας φωτογραφίες και βίντεο', '• μία έγκριση τον μήνα με email και μηνιαία αναφορά αποτελεσμάτων',
+      '• δημοσίευση τις ώρες που είναι online οι περισσότεροι ακόλουθοί σας',
+      'Δεν περιλαμβάνονται διαφημίσεις, απαντήσεις σε μηνύματα και σχόλια, ή φωτογράφιση.', '',
+      'Ο 1ος μήνας είναι δώρο', 'Πληρώνετε με κάρτα τον 2ο μήνα με το σετάρισμα, και ο 1ος είναι δικός μας. Μετά, μηνιαία συνδρομή: σταματάτε όποτε θέλετε, με ένα email. Χωρίς κόστος σεταρίσματος.', '',
+      'Πώς ξεκινάμε',
+      '1. Συμπληρώστε τη φόρμα σεταρίσματος: ' + FORM_.SITE + '/setup.html',
+      '2. Δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε έναν φάκελο Google Drive για το υλικό (οδηγίες στην ίδια σελίδα).',
+      '3. Σας στέλνουμε τον σύνδεσμο πληρωμής του 2ου μήνα, και ξεκινάμε την 1η του επόμενου μήνα (αν όλα είναι έτοιμα έως τις 15).');
+    if (!p) L.push('', 'Δεν είστε σίγουροι ποιο πακέτο σας ταιριάζει; Απαντήστε με λίγα λόγια για την επιχείρησή σας και σας προτείνουμε.');
+    if (addon) L.push('', 'Για το γύρισμα και μοντάζ reels (πρόσθετο) σας στέλνουμε χωριστή προσφορά. Την ιδέα και το σενάριο τα δίνετε εσείς.');
+    L.push('', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.', '', 'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.', FORM_.SITE);
+  }
+  const subject = en ? 'okpublisher: ' + (p ? 'the ' + p.en + ' plan' : 'our plans') + ' and next steps'
+    : 'okpublisher: ' + (p ? 'το πακέτο «' + p.el + '»' : 'τα πακέτα') + ' και τα επόμενα βήματα';
+  try {
+    MailApp.sendEmail({ to: r.email, subject: subject, body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined });
+  } catch (e) { console.error('αυτόματη απάντηση: ' + e.message); return false; }
+  cache.put(key, '1', FORM_.REPLY_EVERY_S);
+  return true;
 }
 
 function clean_(v, n) { return String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n); }

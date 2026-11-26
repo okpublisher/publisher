@@ -981,6 +981,53 @@ test('πληρωμές: billing_start → παραγγελία με αποθήκ
   assert.ok(env.sheets['Πληρωμές'] && env.sheets['Πληρωμές'].rows.length >= 2);
 });
 
+test('πληρωμές: νέος πελάτης (free_month) → «Καλώς ήρθατε», 2ος μήνας με το σετάρισμα, 1ος δώρο, επόμενη χρέωση στον 3ο', function () {
+  const env = billEnv('2026-12-10T12:00:00+02:00');
+  const res = env.req({ type: 'billing_start', plan: 'Μεσαίο', amount_eur: 310, start: '2027-02', free_month: '2027-01' });
+  assert.strictEqual(env.viva.orders.length, 1);
+  assert.strictEqual(env.viva.orders[0].amount, 31000);
+  const m = env.mails[0];
+  assert.strictEqual(m.to, 'center@example.com');
+  assert.ok(/Καλώς ήρθατε: πληρωμή για τον Φεβρουάριο 2027/.test(m.subject), m.subject);
+  assert.ok(m.body.indexOf('Ο Ιανουάριος 2027 είναι δώρο μας. Για να ξεκινήσει, πληρώνετε τώρα τον Φεβρουάριο 2027') >= 0, m.body);
+  assert.ok(m.body.indexOf(res.link) >= 0 && /310,00/.test(m.body));
+  assert.ok(/Η επόμενη χρέωση, για τον Μάρτιο 2027, γίνεται αυτόματα την 1η του μήνα/.test(m.body));
+  assert.ok(/Μετά τον Φεβρουάριο 2027 η συνδρομή σταματά όποτε θέλετε/.test(m.body));
+  assert.ok(!/συνεχίζουμε μαζί/.test(m.body));
+  assert.strictEqual(env.state().free_month, '2027-01');
+  // πληρωμή → επιβεβαίωση με «δώρο»· τον Ιανουάριο καμία χρέωση, τον Φεβρουάριο καμία (πληρωμένος), τον Μάρτιο αυτόματα
+  env.viva.paid[lastOrderCode(env)] = 'TX9';
+  env.at('2026-12-10T13:00:00+02:00'); env.ctx.billingCycle();
+  const c = env.mails[env.mails.length - 1];
+  assert.ok(/Λάβαμε την πληρωμή για τον Φεβρουάριο 2027/.test(c.subject));
+  assert.ok(/Ο Ιανουάριος 2027 είναι δώρο μας: ξεκινάμε να τον ετοιμάζουμε\. Η επόμενη χρέωση, για τον Μάρτιο 2027/.test(c.body), c.body);
+  env.at('2027-01-01T10:00:00+02:00'); env.ctx.billingCycle();
+  env.at('2027-02-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0);
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.deepStrictEqual([env.viva.charges.length, env.viva.charges[0].tx, env.viva.charges[0].body.amount], [1, 'TX9', 31000]);
+});
+
+test('πληρωμές: άκυρος free_month (όχι πριν από τον start) → σφάλμα, τίποτα στη Viva', function () {
+  const env = billEnv('2026-12-10T12:00:00+02:00');
+  assert.throws(function () { env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02', free_month: '2027-02' }); }, /free_month/);
+  assert.throws(function () { env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02', free_month: 'Ιαν' }); }, /free_month/);
+  assert.strictEqual(env.viva.orders.length, 0);
+  assert.strictEqual(env.mails.length, 0);
+});
+
+test('πληρωμές: επιβεβαίωση χωρίς «επόμενη χρέωση» όταν η συνδρομή λήγει εκεί· σωστή αλλαγή χρονιάς', function () {
+  const env = billEnv('2027-11-20T12:00:00+02:00');
+  env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-12' });
+  assert.ok(/Η επόμενη χρέωση, για τον Ιανουάριο 2028/.test(env.mails[0].body), env.mails[0].body);
+  env.req({ type: 'billing_stop', after: '2027-12' });
+  env.viva.paid[lastOrderCode(env)] = 'TX5';
+  env.at('2027-11-20T13:00:00+02:00'); env.ctx.billingCycle();
+  const c = env.mails[env.mails.length - 1];
+  assert.ok(/Λάβαμε την πληρωμή για τον Δεκέμβριο 2027/.test(c.subject));
+  assert.ok(!/επόμενη χρέωση/.test(c.body), c.body);
+});
+
 test('πληρωμές: η πληρωμή με τον σύνδεσμο βρίσκεται μόνη της· αυτόματη χρέωση την 1η από τις 09:00, μία φορά', function () {
   const env = billEnv('2027-01-28T12:00:00+02:00');
   env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
