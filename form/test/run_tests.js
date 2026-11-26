@@ -17,11 +17,14 @@ function makeEnv() {
     sh.getRange = function (r, c, nr, nc) {
       return {
         setValues: function (v) { if (r === 1) { sh.head = v[0].slice(); sh.cols = Math.max(sh.cols, v[0].length); } return this; },
+        // όπως το Sheets: το κείμενο με απόστροφο επιστρέφεται χωρίς αυτήν
+        getValues: function () { return sh.rows.slice(r - 2, r - 2 + nr).map(function (row) { return row.slice(c - 1, c - 1 + nc).map(function (x) { return typeof x === 'string' ? x.replace(/^'/, '') : x; }); }); },
         setFontWeight: function () { return this; },
       };
     };
     sh.setFrozenRows = function (n) { sh.frozen = n; };
     sh.getLastColumn = function () { return sh.cols; };
+    sh.getLastRow = function () { return sh.rows.length + (sh.head ? 1 : 0); };
     sh.appendRow = function (row) { sh.rows.push(row); sh.cols = Math.max(sh.cols, row.length); };
     return sh;
   }
@@ -55,6 +58,7 @@ const SETUP = { type: 'setup', business: 'Φούρνος Δοκιμή', name: '�
   plan: 'Βασικό · 2 posts + 2 stories την εβδομάδα', times: 'αυτόματες', reels: 'στις θέσεις των reels', terms: 'v1-2026-11-25',
   bill_name: 'Φούρνος Δοκιμή ΙΚΕ', bill_afm: '123456783', bill_doy: 'Δοκιμαστική ΔΟΥ', bill_address: 'Οδός Δοκιμής 1, 00000 Πόλη' };
 const BILL_HEAD = ['Επωνυμία τιμολόγησης', 'ΑΦΜ', 'ΔΟΥ', 'Διεύθυνση τιμολόγησης', 'Έλεγχος τιμολόγησης'];
+function billEnd(a) { const h = Array.from(a); const i = h.indexOf('Επωνυμία τιμολόγησης'); return h.slice(i, i + 5); }
 function col(sh, h) { const i = Array.from(sh.head).indexOf(h); assert.ok(i >= 0, 'λείπει η στήλη ' + h); return i; }
 
 function owner(e) { return e.mails.filter(function (m) { return m.to === ME; }); }
@@ -103,7 +107,8 @@ test('αυτόματη απάντηση: ανάλογα με το πακέτο (
     assert.ok(a.body.indexOf('Γεια σας,\n') === 0, a.body);
     assert.ok(a.body.indexOf(c[0] + ' · ' + c[1] + ' τον μήνα') >= 0, c[0]);
     assert.ok(a.body.indexOf(c[2]) >= 0, c[0]);
-    assert.ok(/Ο 1ος μήνας είναι δώρο\nΠληρώνετε με κάρτα τον 2ο μήνα με το σετάρισμα/.test(a.body));
+    assert.ok(/Μια δωρεάν εβδομάδα στη σελίδα σας\n3 posts και 3 stories στο Instagram και στο Facebook σας, δωρεάν: χωρίς κάρτα/.test(a.body), a.body);
+    assert.ok(/4\. Αν σας αρέσει, πληρώνετε με κάρτα τον 1ο μήνα/.test(a.body));
     assert.ok(a.body.indexOf('https://okpublisher.gr/setup.html') >= 0);
     assert.ok(!/Δεν είστε σίγουροι/.test(a.body));
   });
@@ -121,7 +126,7 @@ test('αυτόματη απάντηση: χωρίς πακέτο → όλα τα
   a = replies(e)[0];
   assert.strictEqual(a.subject, 'okpublisher: the Daily plan and next steps');
   assert.ok(a.body.indexOf('Hello Anna,') === 0);
-  assert.ok(a.body.indexOf('Daily · €400 + VAT a month') >= 0 && a.body.indexOf('Your first month is on us') >= 0);
+  assert.ok(a.body.indexOf('Daily · €400 + VAT a month') >= 0 && a.body.indexOf('A free week on your page') >= 0);
   assert.ok(/separate quote/.test(a.body));
   assert.ok(!/[α-ω]{4,}/.test(a.body.replace('Πρόσθετο', '')), 'χωρίς ελληνικά στο αγγλικό');
 });
@@ -182,8 +187,8 @@ test('σετάρισμα: καρτέλα «Σεταρίσματα» + email «Σ
   assert.ok(sh);
   assert.strictEqual(sh.head[0], 'Χρόνος');
   assert.strictEqual(col(sh, 'Όροι (έκδοση)'), col(sh, 'Κατάσταση') + 1);
-  assert.deepStrictEqual(Array.from(sh.head).slice(col(sh, 'Όροι (έκδοση)') + 1, -1), BILL_HEAD, 'τα στοιχεία τιμολόγησης μετά τους όρους');
-  assert.strictEqual(sh.head[sh.head.length - 1], 'Μουσική στα reels', 'η μουσική τελευταία στήλη');
+  assert.deepStrictEqual(Array.from(sh.head).slice(col(sh, 'Όροι (έκδοση)') + 1, -2), BILL_HEAD, 'τα στοιχεία τιμολόγησης μετά τους όρους');
+  assert.deepStrictEqual(Array.from(sh.head).slice(-2), ['Μουσική στα reels', 'Δωρεάν εβδομάδα'], 'μουσική και δωρεάν εβδομάδα στο τέλος');
   assert.strictEqual(sh.rows[0].length, sh.head.length);
   assert.strictEqual(sh.rows[0][col(sh, 'Κατάσταση')], 'νέο');
   assert.strictEqual(sh.rows[0][col(sh, 'Όροι (έκδοση)')], 'v1-2026-11-25');
@@ -221,7 +226,7 @@ test('σετάρισμα: στοιχεία τιμολόγησης στο Sheet �
   const e = makeEnv();
   e.post(Object.assign({}, SETUP, { bill_afm: 'EL 012-345.670' }));
   const sh = e.sheets['Σεταρίσματα'], r = sh.rows[0];
-  assert.deepStrictEqual(Array.from(r.slice(-6, -1)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
+  assert.deepStrictEqual(Array.from(r.slice(-7, -2)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
   const body = e.mails[0].body;
   assert.ok(/Τιμολόγηση:\nΕπωνυμία τιμολόγησης: Φούρνος Δοκιμή ΙΚΕ\nΑΦΜ: 012345670\nΔΟΥ: Δοκιμαστική ΔΟΥ\nΔιεύθυνση τιμολόγησης: Οδός Δοκιμής 1/.test(body), body);
   assert.ok(!/⚠/.test(body));
@@ -268,7 +273,7 @@ test('καρτέλα με στήλη «Όροι» στο τέλος: τα στο
   old.appendRow(['t'].concat(oldHead.slice(1, -2).map(function () { return 'x'; }), ['νέο', 'v3-2026-11-25']));
   e.post(SETUP);
   assert.deepStrictEqual(Array.from(old.head).slice(0, oldHead.length), oldHead);
-  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD.concat(['Μουσική στα reels']));
+  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD.concat(['Μουσική στα reels', 'Δωρεάν εβδομάδα']));
   assert.strictEqual(old.rows[1][oldHead.length - 1], 'v1-2026-11-25');
   assert.strictEqual(old.rows[1][oldHead.length], 'Φούρνος Δοκιμή ΙΚΕ');
 });
@@ -288,6 +293,26 @@ test('μουσική στα reels: νέα στήλη στο τέλος, οι π�
   e.post(SETUP);                                                      // παλιά σελίδα χωρίς το πεδίο
   assert.strictEqual(old.rows[1][oldHead.length], '');
   assert.ok(/Μουσική στα reels: —/.test(e.mails[1].body));
+});
+
+test('δωρεάν εβδομάδα: μία ανά ΑΦΜ — ο ίδιος ΑΦΜ ξανά → «όχι» στη στήλη και ⚠ στο email (χωρίς απόρριψη)', function () {
+  const e = makeEnv();
+  e.post(SETUP);
+  e.post(Object.assign({}, SETUP, { email: 'other@example.com', bill_afm: 'EL 123 456 783' }));
+  e.post(Object.assign({}, SETUP, { bill_afm: '012345670' }));
+  const sh = e.sheets['Σεταρίσματα'], c = col(sh, 'Δωρεάν εβδομάδα');
+  assert.deepStrictEqual(sh.rows.map(function (r) { return r[c]; }), ['ναι', 'όχι: ο ίδιος ΑΦΜ έχει ήδη σετάρισμα (γραμμή 2)', 'ναι']);
+  assert.ok(/Δωρεάν εβδομάδα: ναι/.test(e.mails[0].body));
+  assert.ok(/Δωρεάν εβδομάδα: ⚠ όχι: ο ίδιος ΑΦΜ/.test(e.mails[1].body), e.mails[1].body);
+  assert.strictEqual(sh.rows.length, 3, 'γράφονται όλα');
+});
+
+test('δωρεάν εβδομάδα: χωρίς ΑΦΜ (παλιά σελίδα) → «ναι»', function () {
+  const e = makeEnv();
+  const d = Object.assign({}, SETUP); delete d.bill_afm;
+  e.post(d); e.post(d);
+  const sh = e.sheets['Σεταρίσματα'];
+  assert.deepStrictEqual(sh.rows.map(function (r) { return r[col(sh, 'Δωρεάν εβδομάδα')]; }), ['ναι', 'ναι']);
 });
 
 test('σετάρισμα χωρίς «Τι κάνει» → απόρριψη', function () {

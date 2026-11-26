@@ -6,7 +6,8 @@
  *   - στέλνεται ως email στον λογαριασμό που τρέχει το script (okpublisher.gr) — σε κανέναν άλλον.
  * Προστασία: κρυφό πεδίο (website) για bots, όρια μήκους, το πολύ 30 αιτήματα την ώρα.
  * Αυτόματη απάντηση στον ενδιαφερόμενο (από 26/11/2026): ανάλογα με το πακέτο που διάλεξε (ή όλα, αν δεν ξέρει),
- *   ελληνικά ή αγγλικά (πεδίο lang), με τον 1ο μήνα δώρο (όροι Α.4) και τα επόμενα βήματα. Μία ανά email κάθε 6 ώρες.
+ *   ελληνικά ή αγγλικά (πεδίο lang), με τη δωρεάν εβδομάδα (όροι v6 Α.4) και τα επόμενα βήματα. Μία ανά email κάθε 6 ώρες.
+ * Σετάρισμα: στήλη «Δωρεάν εβδομάδα» = ναι / όχι (μία ανά ΑΦΜ).
  * Η σελίδα setup.html στέλνει "type": "setup" → καρτέλα «Σεταρίσματα» + email «Σετάρισμα: …» (στοιχεία νέου πελάτη).
  *   Υποχρεωτική η αποδοχή των όρων (terms.html): πεδίο terms = έκδοση (π.χ. v1-2026-11-25) → στήλη «Όροι (έκδοση)».
  *   Στοιχεία τιμολόγησης (bill_name, bill_afm, bill_doy, bill_address) → στήλες μετά τους «Όρους». Τα ελέγχει η σελίδα·
@@ -115,11 +116,12 @@ function autoReply_(r, me) {
     L.push('• posts, reels and stories made from your own photos and videos', '• one approval a month by email, and a monthly results report',
       '• publishing when most of your followers are online',
       'Not included: ads, replies to messages and comments, or photo shoots.', '',
-      'Your first month is on us', 'You pay for month 2 by card at setup, and month 1 is free. After that it is monthly: stop whenever you like, with one email. No setup fee.', '',
+      'A free week on your page', '3 posts and 3 stories on your Instagram and Facebook, free: no card, no obligation. No setup fee.', '',
       'How we start',
       '1. Fill in the setup form: ' + FORM_.SITE + '/setup.html (in Greek; reply to this email if you prefer English).',
-      '2. Give us access to your page and create a Google Drive folder for your material (instructions on the same page).',
-      '3. We send you the payment link for month 2, and we start on the 1st of the following month (if everything is ready by the 15th).');
+      '2. Give us access to your page and create a Google Drive folder with some photos and videos (instructions on the same page).',
+      '3. We prepare your free week and send it for your OK. Free weeks run in the middle of the month (setup by the 10th).',
+      '4. If you like it, you pay for the first month by card and we start on the 1st. After that the card is charged automatically each month; stop whenever you like, with one email.');
     if (!p) L.push('', 'Not sure which plan fits? Reply with a few words about your business and we will suggest one.');
     if (addon) L.push('', 'For reel filming and editing (add-on) we will send you a separate quote. You provide the idea and the script.');
     L.push('', 'For anything else, just reply to this email.', '', 'okpublisher · One monthly OK. We do the rest.', FORM_.SITE);
@@ -136,11 +138,12 @@ function autoReply_(r, me) {
     L.push('• posts, reels και stories από τις δικές σας φωτογραφίες και βίντεο', '• μία έγκριση τον μήνα με email και μηνιαία αναφορά αποτελεσμάτων',
       '• δημοσίευση τις ώρες που είναι online οι περισσότεροι ακόλουθοί σας',
       'Δεν περιλαμβάνονται διαφημίσεις, απαντήσεις σε μηνύματα και σχόλια, ή φωτογράφιση.', '',
-      'Ο 1ος μήνας είναι δώρο', 'Πληρώνετε με κάρτα τον 2ο μήνα με το σετάρισμα, και ο 1ος είναι δικός μας. Μετά, μηνιαία συνδρομή: σταματάτε όποτε θέλετε, με ένα email. Χωρίς κόστος σεταρίσματος.', '',
+      'Μια δωρεάν εβδομάδα στη σελίδα σας', '3 posts και 3 stories στο Instagram και στο Facebook σας, δωρεάν: χωρίς κάρτα και χωρίς υποχρέωση. Χωρίς κόστος σεταρίσματος.', '',
       'Πώς ξεκινάμε',
       '1. Συμπληρώστε τη φόρμα σεταρίσματος: ' + FORM_.SITE + '/setup.html',
-      '2. Δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε έναν φάκελο Google Drive για το υλικό (οδηγίες στην ίδια σελίδα).',
-      '3. Σας στέλνουμε τον σύνδεσμο πληρωμής του 2ου μήνα, και ξεκινάμε την 1η του επόμενου μήνα (αν όλα είναι έτοιμα έως τις 15).');
+      '2. Δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε έναν φάκελο Google Drive με μερικές φωτογραφίες και βίντεο (οδηγίες στην ίδια σελίδα).',
+      '3. Ετοιμάζουμε τη δωρεάν εβδομάδα σας και σας τη στέλνουμε για ένα ΟΚ. Οι δωρεάν εβδομάδες γίνονται στα μέσα του μήνα (σετάρισμα έως τις 10).',
+      '4. Αν σας αρέσει, πληρώνετε με κάρτα τον 1ο μήνα και ξεκινάμε την 1η. Μετά η κάρτα χρεώνεται αυτόματα κάθε μήνα· σταματάτε όποτε θέλετε, με ένα email.');
     if (!p) L.push('', 'Δεν είστε σίγουροι ποιο πακέτο σας ταιριάζει; Απαντήστε με λίγα λόγια για την επιχείρησή σας και σας προτείνουμε.');
     if (addon) L.push('', 'Για το γύρισμα και μοντάζ reels (πρόσθετο) σας στέλνουμε χωριστή προσφορά. Την ιδέα και το σενάριο τα δίνετε εσείς.');
     L.push('', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.', '', 'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.', FORM_.SITE);
@@ -174,17 +177,19 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }));
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα']);
   const x = {};
   FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
+  let trial = 'ναι';
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
     const sh = sheet_(FORM_.SETUP_SHEET, head);
+    trial = trialCheck_(sh, head.indexOf('ΑΦΜ') + 1, b.bill_afm);
     sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
-      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); })));
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   if (me) {
@@ -195,10 +200,24 @@ function setup_(d) {
         '\nΌροι: αποδοχή στη φόρμα, έκδοση ' + terms +
         '\n\nΤιμολόγηση:\n' + FORM_.BILL.map(function (f) { return f[1] + ': ' + (b[f[0]] || '—'); }).join('\n') +
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +
+        '\n\nΔωρεάν εβδομάδα: ' + (trial === 'ναι' ? 'ναι' : '⚠ ' + trial) +
         '\n\nΕπόμενο: config του πελάτη στο publisher-work (ο Claude), πρόσβαση σελίδας/Instagram, φάκελος Drive, token.',
     });
   }
   return out_({ ok: true });
+}
+
+// Μία δωρεάν εβδομάδα ανά ΑΦΜ (όροι Α.4): 'ναι', ή «όχι: …» αν ο ίδιος ΑΦΜ υπάρχει ήδη στα «Σεταρίσματα».
+// Δεν απορρίπτει (η σελίδα στέλνει no-cors): το βλέπουμε στη στήλη και στο email και το εφαρμόζουμε στο σετάρισμα.
+function trialCheck_(sh, col, afm) {
+  if (!afm || col < 1) return 'ναι';
+  const last = sh.getLastRow();
+  if (last < 2) return 'ναι';
+  const vals = sh.getRange(2, col, last - 1, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]).replace(/^'/, '') === afm) return 'όχι: ο ίδιος ΑΦΜ έχει ήδη σετάρισμα (γραμμή ' + (i + 2) + ')';
+  }
+  return 'ναι';
 }
 
 // ΑΦΜ: χωρίς κενά/τελείες/παύλες και χωρίς πρόθεμα EL/GR.
