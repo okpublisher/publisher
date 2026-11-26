@@ -54,6 +54,8 @@ const ADM_ = {
   ROLE_NAMES: { admin: 'Διαχειριστής', sales: 'Πωλητής' },
   LOGIN_MSG: 'Αν το email έχει πρόσβαση, σας στείλαμε κωδικό. Ισχύει 15 λεπτά.',
   ROWS: 150,
+  PUB_DAYS: 30,
+  PUB_MAX: 300,
   SITE: 'https://okpublisher.gr/admin/',
   PIN_TRIES: 5,
 };
@@ -340,11 +342,15 @@ function admData_(token) {
     });
   } catch (e) { out.queue = []; out.errors.push('Ουρά: ' + e.message); }
 
+  let hist = [];
   try {
-    out.history = admSheet_('Ιστορικό').slice(1).slice(-ADM_.ROWS).reverse()
+    hist = admSheet_('Ιστορικό');
+    out.history = hist.slice(1).slice(-ADM_.ROWS).reverse()
       .filter(function (r) { return r[1] && seen(r[1]); })
       .map(function (r) { return { at: admIso_(r[0]), client: String(r[1]), id: String(r[2] || ''), type: String(r[3] || ''), status: String(r[4] || ''), detail: String(r[5] || '').slice(0, 300) }; });
   } catch (e) { out.history = []; out.errors.push('Ιστορικό: ' + e.message); }
+  try { const P = admPublished_(hist, out.queue || [], seen); out.published = P.published; out.problems = P.problems; }
+  catch (e) { out.published = []; out.problems = []; out.errors.push('Δημοσιευμένα: ' + e.message); }
 
   try { out.commissions = admCommissions_(out.clients, users); } catch (e) { out.commissions = []; out.errors.push('Προμήθειες: ' + e.message); }
 
@@ -448,6 +454,42 @@ function admRefNotify_() {
   });
   if (max !== last) P_().setProperty('ADMIN_REF_TS', String(max));
   return n;
+}
+
+// «Δημοσιεύτηκαν» (από 26/11/2026): μία εγγραφή ανά δημοσίευση των τελευταίων PUB_DAYS ημερών, από το «Ιστορικό» (κατάσταση και
+// σύνδεσμος ανά πλατφόρμα) + την «Ουρά» (ώρα, λεζάντα, τρέχοντες σύνδεσμοι). problems = οι γραμμές σφαλμάτων/παραλείψεων.
+// Οι στήλες των δύο φύλλων ΔΕΝ αλλάζουν (τις διαβάζει και το Insights.gs).
+function admPublished_(hist, queue, seen) {
+  const from = Date.now() - ADM_.PUB_DAYS * 86400000, by = {}, problems = [], q = {};
+  (queue || []).forEach(function (p) { if (p.id) q[p.client + '|' + p.id] = p; });
+  const https = function (u) { u = String(u || ''); return /^https:\/\//.test(u) ? u : ''; };
+  (hist || []).slice(1).forEach(function (r) {
+    const t = new Date(r[0]), K = String(r[1] || ''), id = String(r[2] || ''), st = String(r[4] || ''), det = String(r[5] || '');
+    if (!K || !id || isNaN(t.getTime()) || t.getTime() < from || !seen(K)) return;
+    const m = /^(Instagram|Facebook): (.*)$/.exec(st);
+    if (/ΣΦΑΛΜΑ|ΠΑΡΑΛΕΙΦΘΗΚΕ|δεν έγινε δεκτό/i.test(st)) problems.push({ at: t.toISOString(), client: K, id: id, type: String(r[3] || ''), status: st, detail: det.slice(0, 300) });
+    if (!m) return;
+    const o = by[K + '|' + id] || (by[K + '|' + id] = { client: K, id: id, type: String(r[3] || ''), at: '', ig: null, fb: null, ok: false });
+    const pl = m[1] === 'Instagram' ? 'ig' : 'fb', ok = m[2] === 'ΔΗΜΟΣΙΕΥΤΗΚΕ';
+    if (ok) { o.ok = true; if (!o.at || t.toISOString() < o.at) o.at = t.toISOString(); }
+    o[pl] = { status: ok ? 'Δημοσιεύτηκε' : (/ΣΦΑΛΜΑ/.test(m[2]) ? 'Σφάλμα' : (/ΠΑΡΑΛΕΙΦΘΗΚΕ/.test(m[2]) ? 'Δεν δημοσιεύτηκε' : m[2])),
+      link: ok ? https(det) : ((o[pl] && o[pl].link) || '') };
+  });
+  const published = Object.keys(by).map(function (k) { return by[k]; }).filter(function (o) { return o.ok; }).map(function (o) {
+    const p = q[o.client + '|' + o.id];
+    if (p) {
+      o.at = p.at || o.at; o.caption = p.caption || ''; o.type = p.type || o.type;
+      // Η «Ουρά» έχει την τρέχουσα κατάσταση και τον τρέχοντα σύνδεσμο κάθε πλατφόρμας (π.χ. μετά το fixFbLinks).
+      [['ig', p.ig, p.ig_link], ['fb', p.fb, p.fb_link]].forEach(function (x) {
+        if (!x[1] || x[1] === '—') return;
+        o[x[0]] = { status: String(x[1]), link: https(x[2]) || (o[x[0]] && o[x[0]].link) || '' };
+      });
+    }
+    delete o.ok;
+    return o;
+  }).sort(function (a, b) { return a.at < b.at ? 1 : -1; }).slice(0, ADM_.PUB_MAX);
+  problems.sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+  return { published: published, problems: problems.slice(0, 60) };
 }
 
 function admIso_(v) {

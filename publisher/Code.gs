@@ -302,7 +302,20 @@ function fbVideo_(pid, pt, edge, videoUrl, desc) {
   const fin = { upload_phase: 'finish', video_id: st.video_id };
   if (edge === 'video_reels') { fin.video_state = 'PUBLISHED'; fin.description = desc || ''; }
   const r = api_('post', pid + '/' + edge, fin, pt);
-  return { id: r.post_id || st.video_id, link: '' };
+  return { id: r.post_id || st.video_id, link: fbPermalink_(r.post_id, pt) || fbPermalink_(st.video_id, pt) };
+}
+
+// Σύνδεσμος δημοσίευσης στο Facebook (από 26/11/2026): το permalink_url του Graph, που ανοίγει και στην εφαρμογή του κινητού
+// (το «facebook.com/<σελίδα>_<post>» ανοίγει μόνο από υπολογιστή). Σχετικός (/…) → https://www.facebook.com/…. Ποτέ σφάλμα:
+// αν δεν βγει, '' (η δημοσίευση έχει ήδη γίνει και μένει «Δημοσιεύτηκε»).
+function fbPermalink_(id, pt) {
+  if (!id) return '';
+  try {
+    const u = String(api_('get', String(id), { fields: 'permalink_url' }, pt).permalink_url || '');
+    if (/^https?:\/\//.test(u)) return u.replace(/^http:/, 'https:');
+    if (/^\//.test(u)) return 'https://www.facebook.com' + u;
+  } catch (e) { console.log('FB permalink ' + id + ': ' + e.message); }
+  return '';
 }
 
 function publishFb_(item) {
@@ -311,7 +324,7 @@ function publishFb_(item) {
   switch (item.type) {
     case 'IMAGE': {
       const r = api_('post', pid + '/photos', { url: item.images[0], message: cap, published: 'true' }, pt);
-      return { id: r.post_id || r.id, link: 'https://www.facebook.com/' + (r.post_id || r.id) };
+      return { id: r.post_id || r.id, link: fbPermalink_(r.post_id || r.id, pt) || 'https://www.facebook.com/' + (r.post_id || r.id) };
     }
     case 'CAROUSEL': {
       const p = { message: cap };
@@ -320,13 +333,13 @@ function publishFb_(item) {
         p['attached_media[' + i + ']'] = JSON.stringify({ media_fbid: ph.id });
       });
       const r = api_('post', pid + '/feed', p, pt);
-      return { id: r.id, link: 'https://www.facebook.com/' + r.id };
+      return { id: r.id, link: fbPermalink_(r.id, pt) || 'https://www.facebook.com/' + r.id };
     }
     case 'STORY': {
       if (item.video) return fbVideo_(pid, pt, 'video_stories', item.video, '');
       const ph = api_('post', pid + '/photos', { url: item.images[0], published: 'false' }, pt);
       const r = api_('post', pid + '/photo_stories', { photo_id: ph.id }, pt);
-      return { id: r.post_id || ph.id, link: '' };
+      return { id: r.post_id || ph.id, link: fbPermalink_(r.post_id, pt) };
     }
     case 'REEL':
       return fbVideo_(pid, pt, 'video_reels', item.video, cap);
@@ -521,6 +534,39 @@ function allQueues_() {
 }
 
 // ------------------------------------------------------------------ manual helpers
+// Σύνδεσμοι Facebook που έχουν ήδη αποθηκευτεί (fbdone_*), από πριν το permalink_url (26/11/2026):
+//   checkFbLinks() → δείχνει μόνο τι θα άλλαζε (και τι επιστρέφει το Graph για stories/reels)· τίποτα δεν αλλάζει.
+//   fixFbLinks()   → αλλάζει ΜΟΝΟ το πεδίο link των fbdone_* (at, media μένουν) και τη «Λεπτομέρεια» των γραμμών
+//                    «Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ» του «Ιστορικού» για τα ίδια ID. Τίποτα δεν ξαναδημοσιεύεται.
+function checkFbLinks() { manualOnly_('checkFbLinks'); return fbLinksFix_(false); }
+function fixFbLinks() { manualOnly_('fixFbLinks'); return fbLinksFix_(true); }
+function fbLinksFix_(apply) {
+  const S = P_(), all = S.getProperties(), hist = SpreadsheetApp.getActive().getSheetByName('Ιστορικό');
+  const rows = hist ? hist.getDataRange().getValues() : [], owner = {};
+  rows.forEach(function (r) { if (r[2]) owner[String(r[2])] = String(r[1] || ''); });
+  let n = 0, same = 0, none = 0;
+  Object.keys(all).filter(function (k) { return /^fbdone_/.test(k); }).sort().forEach(function (k) {
+    const id = k.slice(7), K = owner[id];
+    let d;
+    try { d = JSON.parse(all[k]); } catch (e) { return; }
+    if (!K || !d.media || !cprop_(K, 'TOKEN', '')) { none++; console.log(id + ': χωρίς πελάτη/ID στο Ιστορικό — παραλείπεται'); return; }
+    const link = fbPermalink_(d.media, token_(K));
+    if (!link) { none++; console.log(id + ' (' + K + '): το Graph δεν έδωσε permalink_url για ' + d.media + ' — μένει «' + (d.link || '') + '»'); return; }
+    if (link === d.link) { same++; return; }
+    n++;
+    console.log(id + ' (' + K + '): ' + (d.link || '(κενό)') + ' → ' + link);
+    if (!apply) return;
+    d.link = link;
+    S.setProperty(k, JSON.stringify(d));
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][2]) === id && String(rows[i][4]) === 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ') hist.getRange(i + 1, 6).setValue(link);
+    }
+  });
+  if (apply && n) syncSheet_(allQueues_());
+  console.log((apply ? 'Άλλαξαν ' : 'Θα άλλαζαν ') + n + ' σύνδεσμοι· ίδιοι ' + same + '· χωρίς permalink ' + none + '.' + (apply ? '' : ' Για να γίνουν: fixFbLinks.'));
+  return { changed: n, same: same, none: none };
+}
+
 function findInstagramIds() { manualOnly_('findInstagramIds');
   const list = clients_();
   if (!list.length) { console.log('Βάλε πρώτα την Ιδιότητα CLIENTS (π.χ. ORE).'); return; }

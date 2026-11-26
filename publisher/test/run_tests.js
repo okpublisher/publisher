@@ -75,6 +75,7 @@ function makeEnv(opts) {
         return {
           setValues: function (v) { v.forEach(function (row, i) { const cur = c === 1 ? [] : (rows[r - 1 + i] || []).slice(); row.forEach(function (x, j) { cur[c - 1 + j] = x; }); if (c > 1) { for (let k = 0; k < c - 1; k++) if (!(k in cur)) cur[k] = ''; } rows[r - 1 + i] = cur; }); return this; },
           setFontWeight: function () { return this; }, setNumberFormat: function () { return this; },
+          setValue: function (v) { const cur = (rows[r - 1] || []).slice(); while (cur.length < c - 1) cur.push(''); cur[c - 1] = v; rows[r - 1] = cur; return this; },
           getValues: function () { const out = []; for (let i = 0; i < nr; i++) out.push((rows[r - 1 + i] || []).slice(c - 1, c - 1 + nc)); return out; },
           clearContent: function () { for (let i = 0; i < nr; i++) rows[r - 1 + i] = []; return this; },
         };
@@ -2320,6 +2321,92 @@ test('δωρεάν εβδομάδα: η πληρωμή γράφει billing.day/
   assert.deepStrictEqual(JSON.parse(JSON.stringify([cfg.billing, cfg.package])), [{ type: 'paid', day: 6, start: '2026-12-06' }, 'Μεσαίο']);
   d = env.act({ act: 'data' }).data; c = d.clients.find(function (x) { return x.key === 'OKP'; });
   assert.deepStrictEqual([c.billing.day, c.billing.next_date, c.billing.months[0].label], [6, '2027-01-06', '6/12/2026–5/1/2027']);
+});
+
+// ------------------------------------------------------------------ σύνδεσμοι Facebook (permalink_url, από 26/11/2026)
+function fbLinkEnv(fail) {
+  return makeEnv({ props: Object.assign({}, BASE_PROPS), now: '2026-12-06T22:03:00+02:00',
+    graphFail: function (url) { return !!fail && /fields=permalink_url/.test(url); },
+    graph: function (url, o, resp) {
+      const m = /\/([^\/?]+)\?fields=permalink_url/.exec(url);
+      if (!m) return null;
+      const id = m[1];
+      if (/^(PP|F)/.test(id)) return resp(200, { permalink_url: 'https://www.facebook.com/okpage/posts/pfbid0' + id, id: id });
+      if (/^V\d/.test(id)) return resp(200, { permalink_url: '/reel/' + id + '/', id: id });
+      return resp(200, { id: id });   // stories / post_id βίντεο: χωρίς permalink
+    } });
+}
+
+test('Facebook: σύνδεσμος = permalink_url (ανοίγει και στο κινητό) για post/carousel/reel· story χωρίς permalink → κενό', function () {
+  const env = fbLinkEnv(false), ctx = env.ctx;
+  const img = ctx.publishFb_({ client: 'ORE', id: 'A', type: 'IMAGE', images: ['https://x/1.jpg'], caption: 'c' });
+  assert.ok(/^https:\/\/www\.facebook\.com\/okpage\/posts\/pfbid0PP\d+$/.test(img.link), img.link);
+  const car = ctx.publishFb_({ client: 'ORE', id: 'B', type: 'CAROUSEL', images: ['https://x/1.jpg', 'https://x/2.jpg'], caption: 'c' });
+  assert.ok(/\/posts\/pfbid0F\d+$/.test(car.link), car.link);
+  const reel = ctx.publishFb_({ client: 'ORE', id: 'C', type: 'REEL', video: 'https://x/v.mp4', caption: 'c' });
+  assert.ok(/^https:\/\/www\.facebook\.com\/reel\/V\d+\/$/.test(reel.link), 'σχετικός σύνδεσμος βίντεο → πλήρης: ' + reel.link);
+  const st = ctx.publishFb_({ client: 'ORE', id: 'D', type: 'STORY', images: ['https://x/1.jpg'] });
+  assert.strictEqual(st.link, '');
+  assert.ok(env.calls.some(function (c) { return /PS\d+\?fields=permalink_url/.test(c.url); }), 'ζητήθηκε και για το story');
+});
+
+test('Facebook: αν το permalink αποτύχει → η δημοσίευση μένει «Δημοσιεύτηκε» (παλιός σύνδεσμος), καμία δεύτερη δημοσίευση', function () {
+  const p = Object.assign({}, BASE_PROPS, { START_AFTER: '2026-12-06T12:00:00+02:00' });
+  const env = makeEnv({ props: p, queues: { [OLD_Q]: lsQueue() }, now: '2026-12-06T22:03:00+02:00', graphFail: function (url) { return /fields=permalink_url/.test(url); } });
+  env.ctx.run();
+  const d = JSON.parse(env.props['fbdone_LS-2026-12-06-post']);
+  assert.ok(/^https:\/\/www\.facebook\.com\/(PP|F)\w+$/.test(d.link), d.link);
+  assert.ok(!env.props['fbfail_LS-2026-12-06-post']);
+  const n = graphPosts(env).length;
+  env.nowMs += 10 * 60000; env.ctx.run();
+  assert.strictEqual(graphPosts(env).length, n);
+});
+
+test('fixFbLinks: διορθώνει ΜΟΝΟ το link των fbdone_* και τη «Λεπτομέρεια» στο Ιστορικό· checkFbLinks δεν αλλάζει τίποτα', function () {
+  const env = fbLinkEnv(false);
+  env.props['fbdone_ORE-1'] = JSON.stringify({ at: '2026-11-26T18:00:00.000Z', link: 'https://www.facebook.com/PAGE1_9', media: 'PP9' });
+  env.props['fbdone_ORE-2'] = JSON.stringify({ at: '2026-11-26T08:00:00.000Z', link: 'PS7', media: 'PS7' });
+  env.props['done_ORE-1'] = JSON.stringify({ at: 'x', link: 'https://instagram.com/p/1', media: 'M1' });
+  const h = env.ctx.sheet_('Ιστορικό', ['Χρόνος', 'Πελάτης', 'ID', 'Τύπος', 'Κατάσταση', 'Λεπτομέρειες']);
+  h.appendRow([new Date(), 'ORE', 'ORE-1', 'CAROUSEL', 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://www.facebook.com/PAGE1_9']);
+  h.appendRow([new Date(), 'ORE', 'ORE-1', 'CAROUSEL', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/1']);
+  h.appendRow([new Date(), 'ORE', 'ORE-2', 'STORY', 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'PS7']);
+  const before = JSON.stringify(env.props);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(env.ctx.checkFbLinks())), { changed: 1, same: 0, none: 1 });
+  assert.strictEqual(JSON.stringify(env.props), before, 'check: καμία αλλαγή');
+  env.ctx.fixFbLinks();
+  const d = JSON.parse(env.props['fbdone_ORE-1']);
+  assert.deepStrictEqual([d.link, d.media, d.at], ['https://www.facebook.com/okpage/posts/pfbid0PP9', 'PP9', '2026-11-26T18:00:00.000Z']);
+  assert.strictEqual(env.props['done_ORE-1'], JSON.stringify({ at: 'x', link: 'https://instagram.com/p/1', media: 'M1' }), 'Instagram ανέγγιχτο');
+  assert.strictEqual(h.rows[1][5], 'https://www.facebook.com/okpage/posts/pfbid0PP9');
+  assert.strictEqual(h.rows[2][5], 'https://instagram.com/p/1');
+  assert.strictEqual(JSON.parse(env.props['fbdone_ORE-2']).link, 'PS7');
+  env.activeUser = '';
+  assert.throws(function () { env.ctx.fixFbLinks(); }, /editor|χέρι|manual/i);
+});
+
+test('διαχειριστικό: «Δημοσιεύτηκαν» — μία κάρτα ανά δημοσίευση με σύνδεσμους IG/FB (από Ουρά/Ιστορικό), σφάλματα χωριστά, ορατότητα πωλητή', function () {
+  const env = admEnv();
+  const ss = env.ctx.SpreadsheetApp.getActive(), h = ss.getSheetByName('Ιστορικό'), q = ss.getSheetByName('Ουρά');
+  h.rows.push([new Date('2026-11-25T20:01:00+02:00'), 'ORE', 'ORE-0', 'STORY', 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'VP3']);
+  h.rows.push([new Date('2026-11-20T20:01:00+02:00'), 'ORE', 'ORE-X', 'IMAGE', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/X']);
+  h.rows.push([new Date('2026-11-20T20:01:00+02:00'), 'ORE', 'ORE-X', 'IMAGE', 'Facebook: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://www.facebook.com/PAGE1_5']);
+  h.rows.push([new Date('2026-10-01T20:01:00+02:00'), 'ORE', 'ORE-OLD', 'IMAGE', 'Instagram: ΔΗΜΟΣΙΕΥΤΗΚΕ', 'https://instagram.com/p/OLD']);
+  h.rows.push([new Date('2026-11-24T20:01:00+02:00'), 'ORE', 'ORE-Y', 'IMAGE', 'Instagram: ΣΦΑΛΜΑ 1/3', 'mock error']);
+  q.rows.push(['ORE', new Date('2026-11-20T20:00:00+02:00'), 'IMAGE', 'Λεζάντα Χ', 1, 'Δημοσιεύτηκε', 'https://instagram.com/p/X', 'Δημοσιεύτηκε', 'https://www.facebook.com/okpage/posts/pfbid0X', 'ORE-X']);
+  const d = api(env, { act: 'data', token: env.loginAs('system@example.com') }).data;
+  const ids = d.published.map(function (p) { return p.id; });
+  assert.deepStrictEqual(ids, ['ORE-0', 'ORE-X'], 'πιο πρόσφατο πρώτο· όχι πάνω από 30 ημέρες, όχι μόνο-σφάλμα');
+  const x = d.published[1];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([x.caption, x.ig, x.fb])), ['Λεζάντα Χ', { status: 'Δημοσιεύτηκε', link: 'https://instagram.com/p/X' },
+    { status: 'Δημοσιεύτηκε', link: 'https://www.facebook.com/okpage/posts/pfbid0X' }], 'ο τρέχων σύνδεσμος από την «Ουρά»');
+  const o = d.published[0];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(o.fb)), { status: 'Δημοσιεύτηκε', link: 'https://fb/x' });
+  assert.ok(/Σφάλμα/.test(o.ig.status), 'η κατάσταση Instagram από την «Ουρά»');
+  assert.ok(d.problems.some(function (p) { return p.id === 'ORE-Y' && /ΣΦΑΛΜΑ/.test(p.status); }));
+  api(env, { act: 'save_user', token: env.loginAs('system@example.com'), email: 'sales@example.com', name: 'Ν', role: 'sales' });
+  const sd = api(env, { act: 'data', token: env.loginAs('sales@example.com') }).data;
+  assert.deepStrictEqual([sd.published.length, sd.problems.length], [0, 0], 'πωλητής χωρίς πελάτες: τίποτα');
 });
 
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {
