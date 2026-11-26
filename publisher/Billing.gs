@@ -341,7 +341,7 @@ function billingRequest_(K, req, res) {
 }
 
 // ------------------------------------------------------------------ κύκλος
-function setupBilling() {
+function setupBilling() { manualOnly_('setupBilling');
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'billingCycle') ScriptApp.deleteTrigger(t);
   });
@@ -472,7 +472,7 @@ function billingClient_(K, now) {
 }
 
 // ------------------------------------------------------------------ έλεγχος (χωρίς χρεώσεις)
-function checkBilling() {
+function checkBilling() { manualOnly_('checkBilling');
   const h = vivaHosts_();
   console.log('Viva: ' + (h.live ? 'LIVE (πραγματικές πληρωμές)' : 'demo (δοκιμαστικό περιβάλλον)'));
   try { vivaToken_(); console.log('Smart Checkout (OAuth): OK'); } catch (e) { console.log('Smart Checkout (OAuth): ' + e.message); }
@@ -495,7 +495,7 @@ function checkBilling() {
 
 // ΜΟΝΟ στη demo της Viva: δοκιμάζει τη μηνιαία χρέωση τώρα (χωρίς να περιμένει την 1η) στον πελάτη BILLING_TEST_CLIENT
 // (προεπιλογή TST). Δεν αλλάζει τους μήνες του πελάτη· γράφει μόνο στην καρτέλα «Πληρωμές». Στο live αρνείται.
-function demoChargeNow() {
+function demoChargeNow() { manualOnly_('demoChargeNow');
   if (vivaHosts_().live) throw new Error('demoChargeNow: μόνο με VIVA_ENV=demo.');
   const K = String(prop_('BILLING_TEST_CLIENT', 'TST')).trim().toUpperCase();
   const st = billState_(K);

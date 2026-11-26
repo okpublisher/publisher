@@ -42,7 +42,7 @@ const INS_ = {
 const STORY_H_ = ['Δημοσίευση', 'Πελάτης', 'ID', 'Media', 'Εμβέλεια', 'Προβολές', 'Αλληλεπιδράσεις', 'Απαντήσεις', 'Μέτρηση', 'Σημείωση'];
 
 // ------------------------------------------------------------------ κύκλος
-function setupInsights() {
+function setupInsights() { manualOnly_('setupInsights');
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'insightsCycle') ScriptApp.deleteTrigger(t);
   });
@@ -281,7 +281,7 @@ function saveBestTimes_(K, now) {
   return res;
 }
 
-function updateBestTimes() {
+function updateBestTimes() { manualOnly_('updateBestTimes');
   const now = new Date();
   clients_().forEach(function (K) {
     if (!cprop_(K, 'TOKEN', '')) { console.log('[' + K + '] χωρίς token'); return; }
@@ -443,8 +443,8 @@ function maybeReport_(K, now) {
 }
 
 // Προεπισκόπηση ΜΟΝΟ στο repo (clients/<K>/reports/<μήνας>.preview.json) και στο αρχείο καταγραφής. Κανένα email.
-function previewReport() { previewFor_(prevMonth_(new Date()), new Date()); }          // ο προηγούμενος μήνας
-function previewCurrentMonth() {                                                        // ο τρέχων μήνας μέχρι τώρα
+function previewReport() { manualOnly_('previewReport'); previewFor_(prevMonth_(new Date()), new Date()); }          // ο προηγούμενος μήνας
+function previewCurrentMonth() { manualOnly_('previewCurrentMonth');                                                        // ο τρέχων μήνας μέχρι τώρα
   const now = new Date(), y = Number(athens_(now, 'yyyy')), m = Number(athens_(now, 'MM'));
   const mr = monthRange_(y, m);
   mr.end = now;
@@ -466,7 +466,7 @@ function previewFor_(mr, now) {
 }
 
 // ------------------------------------------------------------------ έλεγχος (δεν αλλάζει τίποτα)
-function checkInsights() {
+function checkInsights() { manualOnly_('checkInsights');
   const out = [], now = new Date();
   clients_().forEach(function (K) {
     const line = ['[' + K + ']'];

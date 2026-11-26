@@ -52,7 +52,7 @@ const APPR_ = {
 };
 
 // ------------------------------------------------------------------ κύκλος
-function setupApproval() {
+function setupApproval() { manualOnly_('setupApproval');
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'approvalCycle') ScriptApp.deleteTrigger(t);
   });
@@ -537,7 +537,7 @@ function ghPutJson_(path, obj, message) {
 }
 
 // ------------------------------------------------------------------ έλεγχος (δεν αλλάζει τίποτα)
-function checkApproval() {
+function checkApproval() { manualOnly_('checkApproval');
   const out = [];
   try {
     const r = UrlFetchApp.fetch(APPR_.GH + '/repos/' + workRepo_(), { muteHttpExceptions: true,

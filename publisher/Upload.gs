@@ -77,6 +77,7 @@ function doGet(e) {
   const q = (e && e.parameter) || {};
   rememberWebappUrl_();
   if (q.a === 'stop') return billingCancelPage_(q);   // «Διακοπή συνδρομής» (Billing.gs)
+  if (q.a === 'admin') return adminPage_(q);          // διαχειριστικό (Admin.gs)
   const K = uploadClient_(q.c, q.key);
   return uploadOut_(K ? { ok: true, client: K } : { error: 'Λάθος κλειδί', service: 'okpublisher' });
 }
@@ -93,7 +94,7 @@ function rememberWebappUrl_() {
 // Στέλνει σε κάθε πελάτη (NOTIFY_TO_<K>) τον δικό του σύνδεσμο για τη συντόμευση.
 // Το Apps Script, όταν τρέχει από τον επεξεργαστή, δίνει μόνο τη διεύθυνση δοκιμής (/dev). Τη σωστή (/exec) την
 // παίρνει από την Ιδιότητα σεναρίου UPLOAD_URL: Ανάπτυξη → Διαχείριση αναπτύξεων → αντιγραφή «URL εφαρμογής ιστού».
-function sendUploadLink() {
+function sendUploadLink() { manualOnly_('sendUploadLink');
   let url = String(prop_('UPLOAD_URL', '') || ScriptApp.getService().getUrl() || '').trim().replace(/\?.*$/, '');
   if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) {
     console.log('Χρειάζομαι τη διεύθυνση της εφαρμογής ιστού που τελειώνει σε /exec:\n' +

@@ -28,6 +28,7 @@ function makeEnv(opts) {
   const env = {
     calls: calls, mails: mails, props: props, sheets: sheets, triggers: triggers,
     nowMs: opts.now ? new Date(opts.now).getTime() : Date.now(),
+    activeUser: opts.activeUser === undefined ? 'owner@example.com' : opts.activeUser, cache: {},
   };
   function resp(code, body, headers) {
     const text = typeof body === 'string' ? body : JSON.stringify(body);
@@ -110,7 +111,11 @@ function makeEnv(opts) {
       getUserLock: function () { return { tryLock: () => true, releaseLock: () => {} }; } },
     Utilities: {
       formatDate: fmt, sleep: function () { env.nowMs += 1000; }, getUuid: function () { return 'abcd-ef01-2345-6789-abcdefabcdef'; },
-      computeDigest: function () { return [1, 2, 3]; }, DigestAlgorithm: { MD5: 'md5' },
+      computeDigest: function (alg, v) {
+        if (alg !== 'sha256') return [1, 2, 3];
+        return Array.from(require('crypto').createHash('sha256').update(typeof v === 'string' ? Buffer.from(v, 'utf8') : Buffer.from(v)).digest()).map(function (x) { return x > 127 ? x - 256 : x; });
+      },
+      DigestAlgorithm: { MD5: 'md5', SHA_256: 'sha256' },
       newBlob: function (b, m, n) { return { bytes: b, mime: m, name: n, getDataAsString: function () { return Buffer.from(b).toString('utf8'); } }; },
       base64Encode: function (x, cs) { return (typeof x === 'string' ? Buffer.from(x, 'utf8') : Buffer.from(x)).toString('base64'); },
       base64Decode: function (s) { return Array.from(Buffer.from(s, 'base64')); },
@@ -120,7 +125,14 @@ function makeEnv(opts) {
       getSheetByName: function (n) { return sheets[n] || null; },
       insertSheet: function (n) { sheets[n] = sheet(n); return sheets[n]; },
     }; }, getUi: function () { return {}; } },
-    Session: { getEffectiveUser: function () { return { getEmail: function () { return 'system@example.com'; } }; } },
+    Session: { getEffectiveUser: function () { return { getEmail: function () { return 'system@example.com'; } }; },
+      // ποιος τρέχει τη συνάρτηση: από τον editor ο λογαριασμός· από σελίδα της εφαρμογής ιστού (ανώνυμα) κενό
+      getActiveUser: function () { return { getEmail: function () { return env.activeUser; } }; } },
+    CacheService: { getScriptCache: function () { return {
+      get: function (k) { const v = env.cache[k]; return v && v.exp > env.nowMs ? v.v : null; },
+      put: function (k, v, s) { env.cache[k] = { v: String(v), exp: env.nowMs + (s || 600) * 1000 }; },
+      remove: function (k) { delete env.cache[k]; },
+    }; } },
     ScriptApp: {
       getOAuthToken: function () { return 'oauth'; },
       getProjectTriggers: function () { return triggers.slice(); },
@@ -1364,6 +1376,216 @@ if (OLD_DIR) {
     assert.ok(seq(newEnv).length >= 10);
   });
 }
+
+// ------------------------------------------------------------------ διαχειριστικό (Admin.gs) + έλεγχος «μόνο από τον editor»
+const ADM_EXEC = 'https://script.google.com/macros/s/TESTDEPLOY/exec';
+const ADM_GH = 'https://api.github.com/repos/okpublisher/publisher-work/contents/';
+const LEADS_CSV = 'Χρόνος,Όνομα,Επιχείρηση,Email,Τηλέφωνο,Πακέτο,Instagram/Facebook,Μήνυμα,Γλώσσα,Κατάσταση,Πηγή,Νέα\r\n' +
+  '26/11/2026 2:11:38 μ.μ.,Δοκιμή,Φούρνος,A@Example.com,690,,,,el,απαντήθηκε,απευθείας,όχι\r\n' +
+  '26/11/2026 2:48:33 μ.μ.,Μαρία,"Καφέ ""Νερόμυλοι""",b@example.com,693,Μεσαίο,@nero,"γραμμή 1\nγραμμή 2, με κόμμα",el,νέο,απευθείας,ναι\r\n';
+const SETUPS_CSV = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Κατάσταση,ΑΦΜ,Έλεγχος τιμολόγησης,Δωρεάν εβδομάδα,Κωδικός πελάτη\r\n' +
+  '26/11/2026 4:00:00 μ.μ.,Φούρνος Δοκιμή,Γιώργος,owner@shop.gr,Βασικό · 2 posts,Ψωμί,νέο,123456783,ΟΚ,ναι,OK-0002\r\n';
+function admEnv(extraProps, opts) {
+  opts = opts || {};
+  const gh = Object.assign({
+    'admin/config.json': { leads_sheet: 'LEADSSHEETID0123456789abcdef', leads_gid: 11, setups_gid: 22 },
+    'clients': [{ name: 'ORE', type: 'dir' }, { name: 'TST', type: 'dir' }, { name: 'README.md', type: 'file' }],
+    'clients/ORE/config.json': { key: 'ORE', code: 'OK-0001', name: 'Learning ORE', package: 'Βασικό', status: 'σημείωση', accounts: { instagram: '@ls', facebook_page: 'LS' } },
+    'clients/ORE/state.json': { packages: [{ month: '2026-12', status: 'queued', round: 2 }] },
+    'clients/TST/config.json': { key: 'TST', name: 'Δοκιμή' },
+  }, opts.gh || {});
+  let uuid = 0;
+  const env = makeEnv({
+    props: Object.assign({}, BASE_PROPS, { WEBAPP_URL: ADM_EXEC, GITHUB_TOKEN: 'ghtok', TEST_CLIENTS: 'TST', VIVA_API_KEY: 'vivasecret',
+      BILLING_ORE: JSON.stringify({ plan: 'Βασικό', amount: 18600, start: '2026-12', tx: 'TX1', stop_after: null,
+        months: { '2026-12': { st: 'paid', order: '9999' } } }), BILLING_KEY_ORE: 'billkey123' }, extraProps || {}),
+    now: '2026-11-26T18:00:00+02:00',
+    extraFetch: function (url, o, resp) {
+      if (url.indexOf(ADM_GH) === 0) {
+        const path = decodeURIComponent(url.slice(ADM_GH.length).replace(/\?.*$/, ''));
+        return path in gh ? resp(200, gh[path]) : resp(404, { message: 'Not Found' });
+      }
+      if (url.indexOf('https://docs.google.com/spreadsheets/d/LEADSSHEETID0123456789abcdef/export?format=csv&gid=') === 0) {
+        if (opts.csvFail) return resp(403, '<html>no</html>', { 'Content-Type': 'text/html' });
+        return resp(200, /gid=11$/.test(url) ? LEADS_CSV : SETUPS_CSV, { 'Content-Type': 'text/csv' });
+      }
+      return null;
+    },
+  });
+  env.ctx.Utilities.getUuid = function () { uuid++; return ('0000000' + uuid).slice(-8) + '-aaaa-4bbb-8ccc-' + ('00000000000' + uuid * 7).slice(-12); };
+  const ss = env.ctx.SpreadsheetApp.getActive();
+  const q = ss.insertSheet('Ουρά');
+  q.rows.push(['Πελάτης', 'Ώρα δημοσίευσης', 'Τύπος', 'Λεζάντα', 'Αρχεία', 'Instagram', 'Link Instagram', 'Facebook', 'Link Facebook', 'ID', '', 'Τελευταίος κύκλος', new Date('2026-11-26T17:55:00+02:00')]);
+  q.rows.push(['ORE', new Date('2026-11-26T20:00:00+02:00'), 'IMAGE', 'Λεζάντα', 1, 'Σε αναμονή', '', 'Σε αναμονή', '', 'ORE-1']);
+  q.rows.push(['ORE', new Date('2026-11-25T20:00:00+02:00'), 'STORY', '', 1, 'Σφάλμα (3)', '', 'Δημοσιεύτηκε', 'https://fb/x', 'ORE-0']);
+  const h = ss.insertSheet('Ιστορικό');
+  h.rows.push(['Χρόνος', 'Πελάτης', 'ID', 'Τύπος', 'Κατάσταση', 'Λεπτομέρειες']);
+  h.rows.push([new Date('2026-11-25T20:01:00+02:00'), 'ORE', 'ORE-0', 'STORY', 'Σφάλμα IG', 'mock']);
+  const pay = ss.insertSheet('Πληρωμές');
+  pay.rows.push(['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός']);
+  pay.rows.push([new Date('2026-11-20T10:00:00+02:00'), 'ORE', '2026-12', 186, 'πληρωμή', 'πληρώθηκε', '9999']);
+  env.loginAs = function (email) {
+    env.ctx.adminLogin(email);
+    const m = env.mails.filter(function (x) { return x.to === email && /διαχειριστικό/.test(x.subject); }).pop();
+    if (!m) return null;
+    const code = /[?&]t=([a-f0-9]+)/.exec(m.body)[1];
+    return JSON.parse(env.ctx.adminExchange(code)).token;
+  };
+  return env;
+}
+
+test('ασφάλεια: οι συναρτήσεις «με το χέρι» αρνούνται όταν καλούνται ανώνυμα από σελίδα του web app', function () {
+  const env = makeEnv({ props: BASE_PROPS, activeUser: '' });
+  ['pause', 'resume', 'setup', 'sendUploadLink', 'checkSetup', 'setupBilling', 'demoChargeNow', 'previewCurrentMonth', 'dryRun', 'findInstagramIds']
+    .forEach(function (fn) { assert.throws(function () { env.ctx[fn](); }, /μόνο από τον editor/, fn); });
+  assert.ok(!('PAUSED' in env.props), 'η pause() δεν άλλαξε τίποτα');
+  assert.strictEqual(env.mails.length, 0);
+  env.activeUser = 'okpublisher@example.com';                       // από τον editor
+  env.ctx.pause();
+  assert.strictEqual(env.props.PAUSED, 'true');
+  env.activeUser = '';
+  env.ctx.run();                                                     // οι κύκλοι των triggers δουλεύουν κανονικά
+});
+
+test('διαχειριστικό: σύνδεση με email-σύνδεσμο μόνο για χρήστες· ίδια απάντηση για όλους· όριο αιτημάτων', function () {
+  const env = admEnv();
+  const msg = env.ctx.adminLogin('stranger@example.com');
+  assert.ok(/Αν το email έχει πρόσβαση/.test(msg));
+  assert.strictEqual(env.mails.length, 0, 'σε άγνωστο email δεν φεύγει τίποτα');
+  assert.strictEqual(env.ctx.adminLogin('System@Example.com'), msg, 'ίδια απάντηση');
+  assert.strictEqual(env.mails.length, 1);
+  assert.strictEqual(env.mails[0].to, 'system@example.com', 'ο λογαριασμός του script είναι πάντα admin');
+  assert.ok(env.mails[0].body.indexOf(ADM_EXEC + '?a=admin&t=') >= 0);
+  env.ctx.adminLogin('system@example.com'); env.ctx.adminLogin('system@example.com');
+  env.ctx.adminLogin('system@example.com');
+  assert.strictEqual(env.mails.length, 3, '3 ανά email / 15′');
+  env.nowMs += 16 * 60000;
+  env.ctx.adminLogin('system@example.com');
+  assert.strictEqual(env.mails.length, 4);
+});
+
+test('διαχειριστικό: ο σύνδεσμος ισχύει μία φορά και 15′· συνεδρία 30 ημερών· έξοδος', function () {
+  const env = admEnv();
+  env.ctx.adminLogin('system@example.com');
+  const code = /[?&]t=([a-f0-9]+)/.exec(env.mails[0].body)[1];
+  const tok = JSON.parse(env.ctx.adminExchange(code)).token;
+  assert.ok(/^[a-f0-9]{40,80}$/.test(tok));
+  assert.throws(function () { env.ctx.adminExchange(code); }, /δεν ισχύει/, 'δεύτερη φορά');
+  assert.ok(env.props.ADMIN_SESSIONS.indexOf(tok) < 0, 'αποθηκεύεται μόνο το hash');
+  assert.ok(JSON.parse(env.ctx.adminData(tok)).me.role === 'admin');
+  env.ctx.adminLogin('system@example.com');
+  const code2 = /[?&]t=([a-f0-9]+)/.exec(env.mails[1].body)[1];
+  env.nowMs += 16 * 60000;
+  assert.throws(function () { env.ctx.adminExchange(code2); }, /δεν ισχύει/, 'έληξε');
+  env.nowMs += 29 * 86400000;
+  assert.ok(JSON.parse(env.ctx.adminData(tok)).me);
+  env.ctx.adminLogout(tok);
+  assert.throws(function () { env.ctx.adminData(tok); }, /login/);
+  assert.throws(function () { env.ctx.adminData('nope'); }, /login/);
+  const tok2 = env.loginAs('system@example.com');
+  env.nowMs += 31 * 86400000;
+  assert.throws(function () { env.ctx.adminData(tok2); }, /login/, 'μετά από 30 ημέρες');
+});
+
+test('διαχειριστικό: ο admin βλέπει πελάτες (με κωδικό), επαφές, σεταρίσματα, ουρά, πληρωμές — ποτέ tokens/κλειδιά', function () {
+  const env = admEnv();
+  const raw = env.ctx.adminData(env.loginAs('system@example.com'));
+  ['tokORE', 'ghtok', 'vivasecret', 'billkey123', 'TX1', '9999', 'LEADSSHEETID'].forEach(function (s) { assert.ok(raw.indexOf(s) < 0, 'διαρροή: ' + s); });
+  const d = JSON.parse(raw);
+  assert.deepStrictEqual(d.errors, []);
+  const ore = d.clients.find(function (c) { return c.key === 'ORE'; });
+  assert.strictEqual(ore.code, 'OK-0001');
+  assert.strictEqual(ore.name, 'Learning & Sensory Ωραιόκαστρο');
+  assert.ok(ore.live && !ore.test);
+  assert.strictEqual(ore.billing.amount_eur, 186);
+  assert.strictEqual(ore.billing.next, '2027-01');
+  assert.strictEqual(ore.approval.status, 'queued');
+  assert.ok(d.clients.find(function (c) { return c.key === 'TST'; }).test);
+  assert.strictEqual(d.leads.length, 2);
+  assert.strictEqual(d.leads[0].business, 'Καφέ "Νερόμυλοι"', 'πιο πρόσφατη πρώτη, εισαγωγικά CSV');
+  assert.strictEqual(d.leads[0].message, 'γραμμή 1\nγραμμή 2, με κόμμα');
+  assert.strictEqual(d.leads[1].email, 'a@example.com');
+  assert.strictEqual(d.setups[0].code, 'OK-0002');
+  assert.strictEqual(d.setups[0].afm, '123456783');
+  assert.strictEqual(d.queue.length, 2);
+  assert.strictEqual(d.heartbeat, new Date('2026-11-26T17:55:00+02:00').toISOString());
+  assert.strictEqual(d.history[0].status, 'Σφάλμα IG');
+  assert.strictEqual(d.payments[0].amount, 186);
+  assert.ok(d.users.some(function (u) { return u.owner && u.role === 'admin'; }));
+  const csv = env.calls.filter(function (c) { return /docs\.google\.com/.test(c.url); });
+  assert.ok(csv.length === 2 && csv.every(function (c) { return c.headers.Authorization === 'Bearer oauth'; }));
+  env.ctx.adminData(env.loginAs('system@example.com'));
+  assert.strictEqual(env.calls.filter(function (c) { return /docs\.google\.com/.test(c.url); }).length, 2, 'cache 1′');
+});
+
+test('διαχειριστικό: αν το Sheet των επαφών δεν διαβάζεται, τα υπόλοιπα δείχνονται κανονικά με σημείωση', function () {
+  const env = admEnv({}, { csvFail: true });
+  const d = JSON.parse(env.ctx.adminData(env.loginAs('system@example.com')));
+  assert.ok(/Επαφές/.test(d.errors[0]));
+  assert.strictEqual(d.leads.length, 0);
+  assert.ok(d.clients.length >= 2);
+});
+
+test('διαχειριστικό: πωλητής — μόνο ό,τι του ανατέθηκε, χωρίς πληρωμές/χρήστες/ΑΦΜ· δεν αλλάζει τίποτα', function () {
+  const env = admEnv();
+  const adm = env.loginAs('system@example.com');
+  env.ctx.adminSaveUser(adm, 'Sales@Example.com', 'Νίκος', 'sales');
+  const sal = env.loginAs('sales@example.com');
+  let d = JSON.parse(env.ctx.adminData(sal));
+  assert.strictEqual(d.me.role, 'sales');
+  assert.deepStrictEqual([d.leads.length, d.setups.length, d.clients.length, d.queue.length], [0, 0, 0, 0]);
+  assert.ok(!('payments' in d) && !('users' in d));
+  env.ctx.adminAssign(adm, 'lead:b@example.com', 'sales@example.com');
+  env.ctx.adminAssign(adm, 'setup:OK-0002', 'sales@example.com');
+  env.ctx.adminAssign(adm, 'client:ORE', 'sales@example.com');
+  env.cache = {};
+  d = JSON.parse(env.ctx.adminData(sal));
+  assert.deepStrictEqual(d.leads.map(function (l) { return l.email; }), ['b@example.com']);
+  assert.strictEqual(d.setups.length, 1);
+  assert.ok(!('afm' in d.setups[0]));
+  assert.deepStrictEqual(d.clients.map(function (c) { return c.key; }), ['ORE']);
+  assert.ok(!('note' in d.clients[0]));
+  assert.strictEqual(d.queue.length, 2);
+  assert.throws(function () { env.ctx.adminSaveUser(sal, 'x@example.com', '', 'admin'); }, /Μόνο για διαχειριστές/);
+  assert.throws(function () { env.ctx.adminAssign(sal, 'lead:a@example.com', 'sales@example.com'); }, /Μόνο για διαχειριστές/);
+  const adminView = JSON.parse(env.ctx.adminData(adm));
+  assert.strictEqual(adminView.leads.find(function (l) { return l.email === 'b@example.com'; }).seller, 'sales@example.com');
+  env.ctx.adminDeleteUser(adm, 'sales@example.com');
+  assert.throws(function () { env.ctx.adminData(sal); }, /login/, 'αφαιρέθηκε → έξω');
+  assert.strictEqual(env.props.ADMIN_ASSIGN, '{}', 'οι αναθέσεις του φεύγουν');
+});
+
+test('διαχειριστικό: ο λογαριασμός okpublisher και ο εαυτός σου δεν αφαιρούνται· άκυρα στοιχεία απορρίπτονται', function () {
+  const env = admEnv();
+  const adm = env.loginAs('system@example.com');
+  assert.throws(function () { env.ctx.adminDeleteUser(adm, 'system@example.com'); }, /δεν αφαιρείται/);
+  assert.throws(function () { env.ctx.adminSaveUser(adm, 'system@example.com', 'x', 'sales'); }, /πάντα διαχειριστής/);
+  assert.throws(function () { env.ctx.adminSaveUser(adm, 'όχι-email', '', 'sales'); }, /Μη έγκυρο email/);
+  assert.throws(function () { env.ctx.adminSaveUser(adm, 'a@b.gr', '', 'root'); }, /Άγνωστος ρόλος/);
+  env.ctx.adminSaveUser(adm, 'boss@example.com', 'Πέτρος', 'admin');
+  const boss = env.loginAs('boss@example.com');
+  assert.throws(function () { env.ctx.adminDeleteUser(boss, 'boss@example.com'); }, /τον εαυτό σας/);
+  assert.throws(function () { env.ctx.adminSaveUser(boss, 'boss@example.com', 'Π', 'sales'); }, /από τον εαυτό σας/);
+  assert.throws(function () { env.ctx.adminAssign(boss, 'lead:x@y.gr', 'nobody@example.com'); }, /δεν υπάρχει/);
+  assert.throws(function () { env.ctx.adminAssign(boss, 'bad key', ''); }, /Άκυρη/);
+  assert.strictEqual(JSON.parse(env.ctx.adminData(boss)).me.name, 'Πέτρος');
+});
+
+test('διαχειριστικό: η σελίδα (?a=admin) — μόνο έγκυρος κωδικός μπαίνει στη σελίδα', function () {
+  const env = admEnv();
+  const ok = env.ctx.doGet({ parameter: { a: 'admin', t: 'ab'.repeat(32) } });
+  assert.ok(/Διαχείριση/.test(ok.title) && ok.html.indexOf('var LOGIN_CODE="' + 'ab'.repeat(32) + '"') >= 0);
+  const evil = env.ctx.doGet({ parameter: { a: 'admin', t: '"</script><script>alert(1)</script>' } });
+  assert.ok(evil.html.indexOf('var LOGIN_CODE="";') >= 0);
+  assert.ok(evil.html.indexOf('alert(1)') < 0);
+  assert.ok(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'x' } }).html.indexOf('Διακοπή συνδρομής') >= 0, 'η «Διακοπή» δουλεύει όπως πριν');
+});
+
+test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {
+  const env = admEnv();
+  const r = env.ctx.admParseCsv_('﻿a,b\r\n"x\ny","z ""q"""\r\n,\n');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(r)), [['a', 'b'], ['x\ny', 'z "q"'], ['', '']]);
+});
 
 // ------------------------------------------------------------------ εκτέλεση
 let failed = 0;

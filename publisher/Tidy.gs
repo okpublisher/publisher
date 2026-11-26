@@ -19,7 +19,7 @@ const TIDY_ = {
 const DEDUPE_SKIP_ = ['ΕΓΚΡΙΣΗ', '_ΜΕΤΑΦΟΡΑ'];   // αρχεία που φτιάχνει το ίδιο το σύστημα· δεν πειράζονται
 const READY_REELS_DIR = 'REELS ΕΤΟΙΜΑ';           // τελικά reels του πελάτη: δημοσιεύονται όπως είναι
 
-function setupDailyDedupe() {
+function setupDailyDedupe() { manualOnly_('setupDailyDedupe');
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'dedupeMaterial') ScriptApp.deleteTrigger(t);
   });
@@ -82,7 +82,7 @@ function dedupeOnly_(K, deadline) {
   return x.ok;
 }
 
-function setupClientFolders() {
+function setupClientFolders() { manualOnly_('setupClientFolders');
   folderClients_().forEach(function (K) {
     try {
       const root = DriveApp.getFolderById(folderId_(K));

@@ -135,6 +135,15 @@ function systemNotify_(subject, text) {
   } catch (e) { console.error('email failed: ' + e.message); }
 }
 
+// Συναρτήσεις «με το χέρι» (editor / μενού): η σελίδα της εφαρμογής ιστού (HtmlService) αφήνει έναν επισκέπτη να καλέσει από
+// τον browser κάθε συνάρτηση που δεν τελειώνει σε «_» (google.script.run). Εκεί ο ενεργός χρήστης είναι κενός (ανώνυμος,
+// «εκτέλεση ως ιδιοκτήτης»), ενώ από τον editor είναι ο λογαριασμός που την τρέχει. Οι κύκλοι των triggers ΔΕΝ ελέγχονται.
+function manualOnly_(name) {
+  let who = '';
+  try { who = String(Session.getActiveUser().getEmail() || ''); } catch (e) { who = ''; }
+  if (!who) throw new Error(name + ': τρέχει μόνο από τον editor του Apps Script.');
+}
+
 function athens_(d, fmt) { return Utilities.formatDate(d, 'Europe/Athens', fmt); }
 
 function startAfter_() {
@@ -512,7 +521,7 @@ function allQueues_() {
 }
 
 // ------------------------------------------------------------------ manual helpers
-function findInstagramIds() {
+function findInstagramIds() { manualOnly_('findInstagramIds');
   const list = clients_();
   if (!list.length) { console.log('Βάλε πρώτα την Ιδιότητα CLIENTS (π.χ. ORE).'); return; }
   list.forEach(function (K) {
@@ -529,7 +538,7 @@ function findInstagramIds() {
   console.log('Μετά τρέξε το checkSetup.');
 }
 
-function checkSetup() {
+function checkSetup() { manualOnly_('checkSetup');
   const list = clients_();
   console.log('Πελάτες: ' + (list.join(', ') || '(κανένας — βάλε CLIENTS)'));
   const after = startAfter_();
@@ -586,7 +595,7 @@ function checkSetup() {
   syncSheet_(queues);
 }
 
-function dryRun() {
+function dryRun() { manualOnly_('dryRun');
   const S = P_(), now = new Date();
   const queues = allQueues_();
   Object.keys(queues).forEach(function (K) {
@@ -613,7 +622,7 @@ function dryRun() {
   });
 }
 
-function dryRunReel() {
+function dryRunReel() { manualOnly_('dryRunReel');
   const now = new Date();
   const queues = allQueues_();
   Object.keys(queues).forEach(function (K) {
@@ -631,7 +640,7 @@ function dryRunReel() {
 
 // Δοκιμή του reel στο Facebook: ανεβαίνει ως ΠΡΟΧΕΙΡΟ (DRAFT, δεν φαίνεται πουθενά) και σβήνεται αμέσως.
 // Αν δεν σβηστεί, μένει μόνο ως πρόχειρο στο Business Suite (Περιεχόμενο → Πρόχειρα) και το σβήνεις με το χέρι.
-function dryRunReelFb() {
+function dryRunReelFb() { manualOnly_('dryRunReelFb');
   const now = new Date();
   const queues = allQueues_();
   Object.keys(queues).forEach(function (K) {
@@ -667,7 +676,7 @@ function onOpen() {
     .addToUi();
 }
 
-function menuSetProperty() {
+function menuSetProperty() { manualOnly_('menuSetProperty');
   const ui = SpreadsheetApp.getUi();
   const k = ui.prompt('Αλλαγή ρύθμισης', 'Όνομα ρύθμισης, π.χ. CLIENTS, TOKEN_ORE, NOTIFY_TO_ORE, FOLDER_ORE, PAUSED, START_AFTER:', ui.ButtonSet.OK_CANCEL);
   if (k.getSelectedButton() !== ui.Button.OK) return;
@@ -691,7 +700,7 @@ function menuSetProperty() {
   ui.alert('Αποθηκεύτηκε: ' + key + ' = ' + (secret ? mask_(val) : val));
 }
 
-function menuShowSettings() {
+function menuShowSettings() { manualOnly_('menuShowSettings');
   const all = P_().getProperties();
   let status = 0;
   const lines = Object.keys(all).sort().filter(function (k) {
@@ -704,7 +713,7 @@ function menuShowSettings() {
   SpreadsheetApp.getUi().alert('Ρυθμίσεις', lines.join('\n') + '\n\n(+ ' + status + ' σημειώσεις κατάστασης δημοσιεύσεων)', SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
-function setup() {
+function setup() { manualOnly_('setup');
   if (!clients_().length) throw new Error('Βάλε πρώτα την Ιδιότητα CLIENTS (π.χ. ORE).');
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'run') ScriptApp.deleteTrigger(t);
@@ -715,5 +724,5 @@ function setup() {
   console.log('Έτοιμο: ο έλεγχος τρέχει κάθε ' + CFG.EVERY_MIN + ' λεπτά.');
 }
 
-function pause() { P_().setProperty('PAUSED', 'true'); console.log('Παύση: δεν θα δημοσιευτεί τίποτα μέχρι resume().'); }
-function resume() { P_().setProperty('PAUSED', 'false'); console.log('Συνέχεια δημοσιεύσεων.'); }
+function pause() { manualOnly_('pause'); P_().setProperty('PAUSED', 'true'); console.log('Παύση: δεν θα δημοσιευτεί τίποτα μέχρι resume().'); }
+function resume() { manualOnly_('resume'); P_().setProperty('PAUSED', 'false'); console.log('Συνέχεια δημοσιεύσεων.'); }
