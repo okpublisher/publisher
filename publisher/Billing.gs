@@ -369,6 +369,36 @@ function billingPlanPage_(q) {
   return billPage_('Αλλαγή πακέτου', body);
 }
 
+// Αλλαγή πακέτου σε ενεργή συνδρομή (σελίδα πελάτη ή διαχειριστικό): 'set' (προγραμματίστηκε από τον from), 'cancelled'
+// (ξανά το τρέχον πακέτο → η αλλαγή που περίμενε ακυρώθηκε) ή 'same' (τίποτα). by = ποιος την έκανε (για το email του okpublisher).
+function planChangeSet_(K, st, p, from, by) {
+  const cur = planOf_(st.plan);
+  if (cur && p.name === cur.name) {
+    if (!st.change) return 'same';
+    const old = st.change;
+    delete st.change;
+    billSave_(K, st);
+    billLog_(K, old.from, 0, 'αλλαγή πακέτου: ακύρωση', 'μένει ' + st.plan + ' (' + by + ')', '');
+    const repo = planChangeRepo_(K, { plan: st.plan, previous: st.plan, from: old.from, status: 'cancelled', cancelled: old.plan });
+    billNotify_(K, 'Μένετε στο πακέτο ' + st.plan, 'Ακυρώσαμε την αλλαγή σε ' + old.plan + '. Το πακέτο σας μένει ' + st.plan +
+      ' (€' + euros_(st.amount) + ' τον μήνα με ΦΠΑ).');
+    systemNotify_('Αλλαγή πακέτου: ' + K + ' (ακυρώθηκε)', 'Ακυρώθηκε (' + by + ') η αλλαγή του ' + K + ' σε ' + old.plan + ' από τον ' +
+      monthLabel_(old.from) + '. Μένει ' + st.plan + '.' + repo);
+    return 'cancelled';
+  }
+  st.change = { plan: p.name, amount: planCents_(p), from: from, at: new Date().toISOString(), previous: st.plan };
+  billSave_(K, st);
+  billLog_(K, from, st.change.amount, 'αλλαγή πακέτου', st.plan + ' → ' + p.name + ' από ' + monthLabel_(from) + ' (' + by + ')', '');
+  const repo = planChangeRepo_(K, { plan: p.name, previous: st.plan, from: from, week: p.week, status: 'scheduled' });
+  billNotify_(K, 'Αλλαγή πακέτου σε ' + p.name + ' από τον ' + monthLabel_(from),
+    'Από τον ' + monthLabel_(from) + ' το πακέτο σας γίνεται ' + p.name + ' (' + p.week + ' posts και ' + p.week +
+    ' stories την εβδομάδα), €' + euros_(st.change.amount) + ' τον μήνα με ΦΠΑ, με αυτόματη χρέωση την 1η του μήνα. ' +
+    'Ως τότε όλα μένουν ως έχουν (' + st.plan + ').');
+  systemNotify_('Αλλαγή πακέτου: ' + K, 'Αλλαγή πακέτου του ' + K + ' (' + by + '): ' + st.plan + ' → ' + p.name + ' από τον ' + monthLabel_(from) +
+    '. Η χρέωση αλλάζει μόνη της. Στην παραγωγή της 20ής: config.json (package, ημέρες posts/stories).' + repo);
+  return 'set';
+}
+
 // Καλείται από το κουμπί της σελίδας (google.script.run). Επιστρέφει το κείμενο που δείχνει η σελίδα.
 function billingPlanWeb(c, k, plan) {
   const lock = LockService.getUserLock();
@@ -377,32 +407,11 @@ function billingPlanWeb(c, k, plan) {
     const i = planInfo_(c, k), p = planOf_(plan);
     if (i.state !== 'active') return '<p>Δεν γίνεται αλλαγή πακέτου από εδώ. Γράψτε μας στο okpublisher.gr@gmail.com.</p>';
     if (!p) throw new Error('Άγνωστο πακέτο');
-    const K = i.K, st = i.st, cur = planOf_(st.plan);
-    if (cur && p.name === cur.name) {
-      if (!st.change) return '<p>Αυτό είναι ήδη το πακέτο σας: δεν αλλάζει τίποτα.</p>';
-      const old = st.change;
-      delete st.change;
-      billSave_(K, st);
-      billLog_(K, old.from, 0, 'αλλαγή πακέτου: ακύρωση', 'μένει ' + st.plan, '');
-      const repo = planChangeRepo_(K, { plan: st.plan, previous: st.plan, from: old.from, status: 'cancelled', cancelled: old.plan });
-      billNotify_(K, 'Μένετε στο πακέτο ' + st.plan, 'Ακυρώσαμε την αλλαγή σε ' + old.plan + '. Το πακέτο σας μένει ' + st.plan +
-        ' (€' + euros_(st.amount) + ' τον μήνα με ΦΠΑ).');
-      systemNotify_('Αλλαγή πακέτου: ' + K + ' (ακυρώθηκε)', 'Ο πελάτης ' + K + ' ακύρωσε την αλλαγή σε ' + old.plan + ' από τον ' +
-        monthLabel_(old.from) + '. Μένει ' + st.plan + '.' + repo);
-      return '<p><b>Έγινε.</b> Μένετε στο <b>' + esc_(st.plan) + '</b>. Σας στείλαμε email επιβεβαίωσης.</p>';
-    }
-    st.change = { plan: p.name, amount: planCents_(p), from: i.from, at: new Date().toISOString(), previous: st.plan };
-    billSave_(K, st);
-    billLog_(K, i.from, st.change.amount, 'αλλαγή πακέτου', st.plan + ' → ' + p.name + ' από ' + monthLabel_(i.from), '');
-    const repo = planChangeRepo_(K, { plan: p.name, previous: st.plan, from: i.from, week: p.week, status: 'scheduled' });
-    billNotify_(K, 'Αλλαγή πακέτου σε ' + p.name + ' από τον ' + monthLabel_(i.from),
-      'Λάβαμε το αίτημά σας. Από τον ' + monthLabel_(i.from) + ' το πακέτο σας γίνεται ' + p.name + ' (' + p.week + ' posts και ' + p.week +
-      ' stories την εβδομάδα), €' + euros_(st.change.amount) + ' τον μήνα με ΦΠΑ, με αυτόματη χρέωση την 1η του μήνα. ' +
-      'Ως τότε όλα μένουν ως έχουν (' + st.plan + ').');
-    systemNotify_('Αλλαγή πακέτου: ' + K, 'Ο πελάτης ' + K + ' άλλαξε πακέτο: ' + st.plan + ' → ' + p.name + ' από τον ' + monthLabel_(i.from) +
-      '. Η χρέωση αλλάζει μόνη της. Στην παραγωγή της 20ής: config.json (package, ημέρες posts/stories).' + repo);
+    const r = planChangeSet_(i.K, i.st, p, i.from, 'από τον πελάτη');
+    if (r === 'same') return '<p>Αυτό είναι ήδη το πακέτο σας: δεν αλλάζει τίποτα.</p>';
+    if (r === 'cancelled') return '<p><b>Έγινε.</b> Μένετε στο <b>' + esc_(i.st.plan) + '</b>. Σας στείλαμε email επιβεβαίωσης.</p>';
     return '<p><b>Έγινε.</b> Από τον <b>' + esc_(monthLabel_(i.from)) + '</b> το πακέτο σας γίνεται <b>' + esc_(p.name) + '</b> (€' +
-      euros_(st.change.amount) + ' τον μήνα με ΦΠΑ). Σας στείλαμε email επιβεβαίωσης.</p>';
+      euros_(i.st.change.amount) + ' τον μήνα με ΦΠΑ). Σας στείλαμε email επιβεβαίωσης.</p>';
   } finally { lock.releaseLock(); }
 }
 

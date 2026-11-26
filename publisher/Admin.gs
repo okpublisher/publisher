@@ -19,6 +19,15 @@
  *     (όνομα, παύση, πληρωμές BILLING_<K>). Ποτέ tokens ή κλειδιά στη σελίδα.
  *   - Δημοσιεύσεις, Ιστορικό, Πληρωμές: οι καρτέλες «Ουρά», «Ιστορικό», «Πληρωμές» του Sheet «okpublisher».
  * Η διεύθυνση του web app γράφεται μόνη της στο admin/webapp.json του publisher-work (για τη σελίδα του site).
+ *
+ * Ενέργειες διαχειριστή ανά πελάτη (από 26/11/2026, μόνο role admin):
+ *   - Πακέτο: με ενεργή συνδρομή → όπως η «Αλλαγή πακέτου» του πελάτη (planChangeSet_, email στον πελάτη)· χωρίς συνδρομή
+ *     (δωρεάν/κανένα) → clients/<K>/package_change.json (η παραγωγή της 20ής αλλάζει config). Από τον επόμενο μήνα έως τις 19,
+ *     αλλιώς από τον μεθεπόμενο.
+ *   - Δωρεάν (χωρίς λήξη ή έως μήνα) → config.json billing { type: free, until }. Όχι με ενεργή συνδρομή (πρώτα διακοπή).
+ *   - Χρέωση (πακέτο + πρώτος μήνας) → billing_start: σύνδεσμος πληρωμής στο email του πελάτη· config.json billing { type: paid }.
+ *   - Διακοπή συνδρομής → όπως το κουμπί του πελάτη (όροι Α.8), με email στον πελάτη.
+ *   Το config.json γράφεται με το GITHUB_TOKEN (μόνο τα πεδία billing)· κάθε ενέργεια → email στο okpublisher.
  */
 const ADM_ = {
   SESSION_DAYS: 30,
@@ -294,6 +303,8 @@ function admClients_() {
       let cfg = null, st = null;
       try { cfg = ghJson_('clients/' + K + '/config.json'); } catch (e) { cfg = null; }
       try { st = ghJson_('clients/' + K + '/state.json'); } catch (e) { st = null; }
+      let pc = null;
+      try { pc = ghJson_('clients/' + K + '/package_change.json'); } catch (e) { pc = null; }
       const pk = st && Array.isArray(st.packages) && st.packages.length ? st.packages[st.packages.length - 1] : null;
       gh[K] = {
         code: cfg && cfg.code ? String(cfg.code) : '', name: cfg && cfg.name ? String(cfg.name) : '',
@@ -302,6 +313,8 @@ function admClients_() {
         accounts: cfg && cfg.accounts ? { instagram: String(cfg.accounts.instagram || ''), facebook: String(cfg.accounts.facebook_page || '') } : {},
         approval: pk ? { month: String(pk.month || ''), status: String(pk.status || ''), round: pk.round || '', label: String(pk.label || '') } : null,
         free: cfg && cfg.billing && cfg.billing.type === 'free' ? { until: /^\d{4}-\d{2}$/.test(String(cfg.billing.until || '')) ? String(cfg.billing.until) : '' } : null,
+        pkg_change: pc && pc.status === 'scheduled' ? { plan: String(pc.plan || ''), from: String(pc.from || '') } : null,
+        has_config: !!cfg,
       };
     });
     try { cache.put('adm:clients', JSON.stringify(gh), ADM_.CLIENTS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
@@ -309,7 +322,8 @@ function admClients_() {
   return Object.keys(gh).sort().map(function (K) {
     const g = gh[K], nm = clientName_(K);
     return { key: K, code: g.code, name: nm !== K ? nm : (g.name || K), package: g.package, group: g.group, note: g.note,
-      accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null,
+      accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null, pkg_change: g.pkg_change || null,
+      has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(),
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
       paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
   });
@@ -416,6 +430,10 @@ function adminApi_(p) {
       case 'save_user': admSaveUser_(t, p.email, p.name, p.role); return out({ ok: true });
       case 'delete_user': admDeleteUser_(t, p.email); return out({ ok: true });
       case 'assign': admAssign_(t, p.key, p.email); return out({ ok: true });
+      case 'client_plan': return out({ ok: true, message: admClientPlan_(t, p.client, p.plan) });
+      case 'client_free': return out({ ok: true, message: admClientFree_(t, p.client, p.until) });
+      case 'client_charge': return out({ ok: true, message: admClientCharge_(t, p.client, p.plan, p.start) });
+      case 'client_stop': return out({ ok: true, message: admClientStop_(t, p.client) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
     }
   } catch (e) {
@@ -442,4 +460,102 @@ function adminUrlToRepo_() {
       'Διεύθυνση web app');
     P_().setProperty('WEBAPP_URL_REPO', u);
   } catch (e) { console.log('admin/webapp.json: ' + e.message); }
+}
+
+// ------------------------------------------------------------------ ενέργειες διαχειριστή ανά πελάτη
+// Ο πελάτης και το config.json του (υπάρχει φάκελος clients/<K> στο publisher-work).
+function admClientCfg_(K) {
+  K = String(K || '').toUpperCase();
+  if (!/^[A-Z0-9]{2,12}$/.test(K)) throw new Error('Άγνωστος πελάτης.');
+  const cfg = ghJson_('clients/' + K + '/config.json');
+  if (!cfg) throw new Error('Δεν βρέθηκε το config.json του ' + K + '.');
+  return { K: K, cfg: cfg };
+}
+function admSaveCfg_(K, cfg, what, me) {
+  ghPutJson_('clients/' + K + '/config.json', cfg, 'Διαχειριστικό (' + me.email + '): ' + K + ' ' + what);
+  try { CacheService.getScriptCache().remove('adm:clients'); } catch (e) { /* μένει 5′ */ }
+}
+function admWho_(K, cfg) { return (cfg.code ? cfg.code + ' · ' : '') + (cfg.name || clientName_(K)) + ' (' + K + ')'; }
+// Ενεργή συνδρομή: πληρωμένη κάρτα και όχι λήξη στο παρελθόν.
+function admPaying_(st) { return !!(st && st.tx && !(st.stop_after && st.stop_after < ym_(new Date()))); }
+
+function admClientPlan_(token, client, plan) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  const p = planOf_(plan);
+  if (!p) throw new Error('Διάλεξε πακέτο.');
+  const c = admClientCfg_(client), K = c.K, cfg = c.cfg, st = billState_(K);
+  if (admPaying_(st)) {
+    if (Object.keys(st.months || {}).some(function (m) { return st.months[m].st !== 'paid'; })) throw new Error('Υπάρχει απλήρωτος μήνας: πρώτα η πληρωμή.');
+    const from = planChangeFrom_(st, new Date());
+    if (!from) throw new Error('Η συνδρομή λήγει: δεν αλλάζει πακέτο.');
+    const r = planChangeSet_(K, st, p, from, 'διαχειριστικό: ' + me.email);
+    if (r === 'same') return 'Είναι ήδη ' + p.name + '.';
+    if (r === 'cancelled') return 'Η αλλαγή ακυρώθηκε: μένει ' + p.name + '. Ο πελάτης πήρε email.';
+    return p.name + ' από τον ' + monthLabel_(from) + ' (€' + euros_(planCents_(p)) + ' με ΦΠΑ). Ο πελάτης πήρε email.';
+  }
+  const from = planChangeFrom_({ months: {} }, new Date());
+  const was = String(cfg.package || '');
+  if (was === p.name) {
+    let pc = null;
+    try { pc = ghJson_('clients/' + K + '/package_change.json'); } catch (e) { pc = null; }
+    if (!pc || pc.status !== 'scheduled') return 'Είναι ήδη ' + p.name + '.';
+    planChangeRepo_(K, { plan: was, previous: was, from: pc.from, status: 'cancelled', cancelled: pc.plan, by: me.email });
+    try { CacheService.getScriptCache().remove('adm:clients'); } catch (e) { /* μένει 5′ */ }
+    return 'Η αλλαγή σε ' + pc.plan + ' ακυρώθηκε: μένει ' + p.name + '.';
+  }
+  const err = planChangeRepo_(K, { plan: p.name, previous: was, from: from, week: p.week, status: 'scheduled', by: me.email });
+  if (err) throw new Error('Δεν γράφτηκε: ' + err.trim());
+  try { CacheService.getScriptCache().remove('adm:clients'); } catch (e) { /* μένει 5′ */ }
+  systemNotify_('Αλλαγή πακέτου: ' + K, admWho_(K, cfg) + ' (χωρίς συνδρομή): ' + (was || 'δικό του πρόγραμμα') + ' → ' + p.name + ' από τον ' +
+    monthLabel_(from) + ' (διαχειριστικό: ' + me.email + '). Στην παραγωγή της 20ής: config.json (package, ημέρες posts/stories).');
+  return p.name + ' (' + p.week + '+' + p.week + ' την εβδομάδα) από τον ' + monthLabel_(from) + ': με αυτό ετοιμάζεται το πρόγραμμα στις 20.';
+}
+
+function admClientFree_(token, client, until) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  until = String(until || '');
+  if (until && (!/^\d{4}-\d{2}$/.test(until) || until < ym_(new Date()))) throw new Error('Άκυρος μήνας λήξης.');
+  const c = admClientCfg_(client), K = c.K, cfg = c.cfg;
+  if (admPaying_(billState_(K))) throw new Error('Ο πελάτης έχει ενεργή συνδρομή: πρώτα «Διακοπή συνδρομής».');
+  cfg.billing = until ? { type: 'free', until: until } : { type: 'free' };
+  admSaveCfg_(K, cfg, until ? 'δωρεάν έως ' + until : 'δωρεάν χωρίς λήξη', me);
+  P_().deleteProperty('FREE_REMINDED_' + K);
+  P_().deleteProperty('FREE_ENDED_' + K);
+  systemNotify_('Δωρεάν: ' + admWho_(K, cfg), (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) : 'Δωρεάν χωρίς λήξη') + ' (διαχειριστικό: ' + me.email + ').');
+  return until ? 'Δωρεάν έως και τον ' + monthLabel_(until) + '. Στις ' + BILL_.FREE_REMIND_DAY + ' του μήνα έρχεται υπενθύμιση.' : 'Δωρεάν χωρίς λήξη.';
+}
+
+function admClientCharge_(token, client, plan, start) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  const p = planOf_(plan);
+  if (!p) throw new Error('Διάλεξε πακέτο.');
+  start = String(start || '');
+  if (!/^\d{4}-\d{2}$/.test(start) || start < ym_(new Date())) throw new Error('Άκυρος πρώτος μήνας.');
+  const c = admClientCfg_(client), K = c.K, cfg = c.cfg, st = billState_(K);
+  if (admPaying_(st) && !st.stop_after) throw new Error('Ο πελάτης έχει ήδη συνδρομή: για άλλο πακέτο, «Πακέτο».');
+  if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Ο πελάτης δεν έχει email (NOTIFY_TO_' + K + ').');
+  const res = {};
+  billingRequest_(K, { type: 'billing_start', plan: p.name, amount_eur: planCents_(p) / 100, start: start, code: cfg.code || '' }, res);
+  cfg.billing = { type: 'paid', since: start };
+  let note = '';
+  try { admSaveCfg_(K, cfg, 'συνδρομή ' + p.name + ' από ' + start, me); } catch (e) { note = ' (config.json: ' + e.message + ')'; }
+  if (String(cfg.package || '') !== p.name) planChangeRepo_(K, { plan: p.name, previous: String(cfg.package || ''), from: start, week: p.week, status: 'scheduled', by: me.email });
+  systemNotify_('Χρέωση: ' + admWho_(K, cfg), 'Στάλθηκε σύνδεσμος πληρωμής (' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ) για τον ' + monthLabel_(start) +
+    ' (διαχειριστικό: ' + me.email + '). Το πρόγραμμα του ' + monthLabel_(start) + ' ετοιμάζεται μόνο αφού φανεί «πληρώθηκε».' + note);
+  return 'Στάλθηκε σύνδεσμος πληρωμής στο email του πελάτη: ' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ, για τον ' + monthLabel_(start) + '.' + note;
+}
+
+function admClientStop_(token, client) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  const c = admClientCfg_(client), K = c.K, st = billState_(K);
+  if (!admPaying_(st)) throw new Error('Δεν υπάρχει ενεργή συνδρομή.');
+  if (st.stop_after) return 'Η συνδρομή σταματά ήδη μετά τον ' + monthLabel_(st.stop_after) + '.';
+  const after = stopAfterFor_(st, new Date());
+  billingStop_(K, st, after, false, 'διαχειριστικό: ' + me.email);
+  systemNotify_('Διακοπή συνδρομής: ' + K, admWho_(K, c.cfg) + ': διακοπή από το διαχειριστικό (' + me.email + '). Τελευταίος μήνας: ' + monthLabel_(after) + '.');
+  return 'Η συνδρομή σταματά μετά τον ' + monthLabel_(after) + '. Ο πελάτης πήρε email.';
 }

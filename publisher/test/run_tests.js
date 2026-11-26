@@ -1616,9 +1616,11 @@ function admEnv(extraProps, opts) {
         if (opts.csvFail) return resp(403, '<html>no</html>', { 'Content-Type': 'text/html' });
         return resp(200, /gid=11$/.test(url) ? LEADS_CSV : SETUPS_CSV, { 'Content-Type': 'text/csv' });
       }
+      if (opts.viva) return opts.viva.fetch(url, o, resp);
       return null;
     },
   });
+  env.viva = opts.viva;
   env.ctx.Utilities.getUuid = function () { uuid++; return ('0000000' + uuid).slice(-8) + '-aaaa-4bbb-8ccc-' + ('00000000000' + uuid * 7).slice(-12); };
   const ss = env.ctx.SpreadsheetApp.getActive();
   const q = ss.insertSheet('Ουρά');
@@ -1833,6 +1835,95 @@ test('διεύθυνση web app: γράφεται μία φορά στο admin/
   assert.strictEqual(puts.length, 1);
   assert.strictEqual(JSON.parse(Buffer.from(JSON.parse(puts[0].payload).content, 'base64').toString('utf8')).url, ADM_EXEC);
   assert.ok(!env.mails.some(function (m) { return /Σύνδεσμος διαχειριστικού/.test(m.subject); }));
+});
+
+// ------------------------------------------------------------------ ενέργειες διαχειριστή ανά πελάτη
+function actEnv() {
+  const v = vivaFake();
+  const env = admEnv(Object.assign({}, VIVA_PROPS, { CLIENTS: 'ORE,OKP', NOTIFY_TO_OKP: 'okp-client@example.com', NAME_OKP: 'okpublisher' }), { viva: v, gh: {
+    'clients': [{ name: 'ORE', type: 'dir' }, { name: 'OKP', type: 'dir' }],
+    'clients/OKP/config.json': { key: 'OKP', code: 'OK-0000', name: 'okpublisher', package: 'Βασικό', post_days: ['Τρίτη', 'Πέμπτη'], billing: { type: 'free' } },
+  } });
+  env.tok = env.loginAs('system@example.com');
+  env.act = function (o) { return api(env, Object.assign({ token: env.tok }, o)); };
+  env.gh = function (path) {
+    const c = env.calls.filter(function (x) { return x.method === 'put' && decodeURIComponent(x.url).indexOf('/contents/' + path) > 0; }).pop();
+    return c ? JSON.parse(Buffer.from(JSON.parse(c.payload).content, 'base64').toString('utf8')) : null;
+  };
+  return env;
+}
+
+test('διαχειριστικό: πακέτο σε πελάτη χωρίς συνδρομή → package_change.json από τον επόμενο κατάλληλο μήνα· ξανά το ίδιο = ακύρωση', function () {
+  const env = actEnv();   // 26/11 → μετά τις 19 → από τον Ιανουάριο
+  const r = env.act({ act: 'client_plan', client: 'OKP', plan: 'Καθημερινό' });
+  assert.ok(r.ok && /Καθημερινό \(7\+7 την εβδομάδα\) από τον Ιανουάριο 2027/.test(r.message), r.message || r.error);
+  const pc = env.gh('clients/OKP/package_change.json');
+  assert.deepStrictEqual([pc.plan, pc.previous, pc.from, pc.status, pc.week, pc.by], ['Καθημερινό', 'Βασικό', '2027-01', 'scheduled', 7, 'system@example.com']);
+  assert.ok(env.mails.some(function (m) { return /Αλλαγή πακέτου: OKP/.test(m.subject) && /Βασικό → Καθημερινό από τον Ιανουάριο 2027/.test(m.body); }));
+  assert.ok(!env.mails.some(function (m) { return m.to === 'okp-client@example.com'; }), 'χωρίς συνδρομή: κανένα email στον πελάτη');
+  const d = env.act({ act: 'data' }).data;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.clients.find(function (c) { return c.key === 'OKP'; }).pkg_change)), { plan: 'Καθημερινό', from: '2027-01' });
+  const r2 = env.act({ act: 'client_plan', client: 'OKP', plan: 'Βασικό' });
+  assert.ok(/ακυρώθηκε/.test(r2.message));
+  assert.strictEqual(env.gh('clients/OKP/package_change.json').status, 'cancelled');
+  assert.ok(/Διάλεξε πακέτο/.test(env.act({ act: 'client_plan', client: 'OKP', plan: 'Χρυσό' }).error));
+});
+
+test('διαχειριστικό: πακέτο σε πελάτη με συνδρομή → όπως η «Αλλαγή πακέτου» (email στον πελάτη, χρέωση με το νέο ποσό)', function () {
+  const env = actEnv();
+  const r = env.act({ act: 'client_plan', client: 'ORE', plan: 'Μεσαίο' });
+  assert.ok(/Μεσαίο από τον Ιανουάριο 2027 \(€310,00 με ΦΠΑ\)/.test(r.message), r.message || r.error);
+  const st = JSON.parse(env.props.BILLING_ORE);
+  assert.deepStrictEqual([st.change.plan, st.change.amount, st.change.from], ['Μεσαίο', 31000, '2027-01']);
+  const m = env.mails.filter(function (x) { return x.to === 'center@example.com'; }).pop();
+  assert.ok(/Αλλαγή πακέτου σε Μεσαίο από τον Ιανουάριο 2027/.test(m.subject));
+  assert.ok(env.mails.some(function (x) { return /Αλλαγή πακέτου: ORE/.test(x.subject) && /διαχειριστικό: system@example\.com/.test(x.body); }));
+});
+
+test('διαχειριστικό: δωρεάν έως μήνα / χωρίς λήξη στο config.json· όχι με ενεργή συνδρομή· όχι σε περασμένο μήνα', function () {
+  const env = actEnv();
+  env.props.FREE_REMINDED_OKP = '2026-12';
+  const r = env.act({ act: 'client_free', client: 'OKP', until: '2027-02' });
+  assert.ok(/Δωρεάν έως και τον Φεβρουάριο 2027/.test(r.message), r.message || r.error);
+  const cfg = env.gh('clients/OKP/config.json');
+  assert.deepStrictEqual(cfg.billing, { type: 'free', until: '2027-02' });
+  assert.strictEqual(cfg.post_days.length, 2, 'τα υπόλοιπα πεδία μένουν');
+  assert.ok(!('FREE_REMINDED_OKP' in env.props), 'νέα λήξη → νέα υπενθύμιση');
+  env.act({ act: 'client_free', client: 'OKP', until: '' });
+  assert.deepStrictEqual(env.gh('clients/OKP/config.json').billing, { type: 'free' });
+  assert.ok(/ενεργή συνδρομή/.test(env.act({ act: 'client_free', client: 'ORE', until: '' }).error));
+  assert.ok(/Άκυρος μήνας/.test(env.act({ act: 'client_free', client: 'OKP', until: '2026-10' }).error));
+  assert.ok(/Άγνωστος πελάτης|Δεν βρέθηκε/.test(env.act({ act: 'client_free', client: '../x', until: '' }).error));
+});
+
+test('διαχειριστικό: χρέωση → σύνδεσμος πληρωμής στον πελάτη (πακέτο, ποσό, κωδικός πελάτη), config «paid», αλλαγή πακέτου για την παραγωγή', function () {
+  const env = actEnv();
+  const r = env.act({ act: 'client_charge', client: 'OKP', plan: 'Μεσαίο', start: '2027-01' });
+  assert.ok(/Στάλθηκε σύνδεσμος πληρωμής .*Μεσαίο, €310,00 με ΦΠΑ, για τον Ιανουάριο 2027/.test(r.message), r.message || r.error);
+  assert.strictEqual(env.viva.orders[0].amount, 31000);
+  const st = JSON.parse(env.props.BILLING_OKP);
+  assert.deepStrictEqual([st.plan, st.start, st.code], ['Μεσαίο', '2027-01', 'OK-0000']);
+  const m = env.mails.filter(function (x) { return x.to === 'okp-client@example.com'; }).pop();
+  assert.ok(/Πληρωμή συνδρομής για τον Ιανουάριο 2027/.test(m.subject) && /checkout\?ref=/.test(m.body));
+  assert.deepStrictEqual(env.gh('clients/OKP/config.json').billing, { type: 'paid', since: '2027-01' });
+  assert.strictEqual(env.gh('clients/OKP/package_change.json').plan, 'Μεσαίο');
+  assert.ok(/έχει ήδη συνδρομή/.test(env.act({ act: 'client_charge', client: 'ORE', plan: 'Βασικό', start: '2027-01' }).error));
+  assert.ok(/Άκυρος πρώτος μήνας/.test(env.act({ act: 'client_charge', client: 'OKP', plan: 'Βασικό', start: '2025-01' }).error));
+});
+
+test('διαχειριστικό: διακοπή συνδρομής (όροι Α.8, email στον πελάτη)· πωλητής: καμία ενέργεια', function () {
+  const env = actEnv();
+  const r = env.act({ act: 'client_stop', client: 'ORE' });
+  assert.ok(/σταματά μετά τον Δεκέμβριο 2026/.test(r.message), r.message || r.error);
+  assert.strictEqual(JSON.parse(env.props.BILLING_ORE).stop_after, '2026-12');
+  assert.ok(env.mails.some(function (x) { return x.to === 'center@example.com' && /σταματά μετά τον Δεκέμβριο 2026/.test(x.subject); }));
+  assert.ok(/σταματά ήδη/.test(env.act({ act: 'client_stop', client: 'ORE' }).message));
+  assert.ok(/Δεν υπάρχει ενεργή συνδρομή/.test(env.act({ act: 'client_stop', client: 'OKP' }).error));
+  env.act({ act: 'save_user', email: 'sales@example.com', name: 'Ν', role: 'sales' });
+  const sal = env.loginAs('sales@example.com');
+  ['client_plan', 'client_free', 'client_charge', 'client_stop'].forEach(function (a) {
+    assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: a, token: sal, client: 'OKP', plan: 'Βασικό', start: '2027-01', until: '' }).error), a);
+  });
 });
 
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {
