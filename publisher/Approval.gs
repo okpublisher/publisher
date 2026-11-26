@@ -33,6 +33,7 @@
  * Συναρτήσεις: checkApproval() (έλεγχος, δεν αλλάζει τίποτα) · setupApproval() (κάθε 15′) · approvalCycle().
  */
 const APPR_ = {
+  NOT_BEFORE_RE: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})$/,
   GH: 'https://api.github.com',
   GMAIL: 'https://gmail.googleapis.com/gmail/v1/users/me',
   GMAIL_UP: 'https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart',
@@ -127,10 +128,14 @@ function processOutbox_(K, start, problems) {
     }
     let req;
     try { req = JSON.parse(ghRaw_(f.path).getContentText()); } catch (e) { req = null; }
+    // not_before: το αίτημα περιμένει ως τότε (π.χ. το email «Συνεχίζουμε;» στην 5η μέρα της δωρεάν εβδομάδας).
+    // Μέχρι τότε δεν γράφεται τίποτα· ξαναδιαβάζεται σε κάθε κύκλο. Χωρίς ζώνη ώρας (+02:00) → σφάλμα παρακάτω.
+    if (req && req.not_before && APPR_.NOT_BEFORE_RE.test(req.not_before) && Date.now() < Date.parse(req.not_before)) return;
     const res = { id: id, type: req && req.type, ok: false, started_at: new Date().toISOString() };
     P_().setProperty(sk, JSON.stringify(res));
     try {
       if (!req) throw new Error('Το αίτημα δεν είναι έγκυρο JSON');
+      if (req.not_before && !APPR_.NOT_BEFORE_RE.test(req.not_before)) throw new Error('not_before: άκυρη ώρα (π.χ. "2027-01-17T10:00:00+02:00")');
       doRequest_(K, req, res);
       res.ok = !(res.errors && res.errors.length);
     } catch (e) {

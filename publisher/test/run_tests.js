@@ -581,6 +581,27 @@ test('έγκριση: email πακέτου ΜΟΝΟ στο email του πελά
   assert.ok(!Object.keys(env.props).some(function (k) { return /^OUTBOX_/.test(k); }));
 });
 
+test('αιτήματα: not_before → περιμένει χωρίς να γράψει τίποτα και τρέχει μόλις έρθει η ώρα· άκυρη ώρα → σφάλμα', function () {
+  const env = approvalEnv({ gh: {
+    'clients/ORE/config.json': ORE_CFG,
+    'clients/ORE/outbox/a-later.json': JSON.stringify({ type: 'email', subject: 'Συνεχίζουμε;', text: 't', not_before: '2026-12-20T14:00:00+02:00' }),
+    'clients/ORE/outbox/b-bad.json': JSON.stringify({ type: 'email', subject: 's', text: 't', not_before: '2026-12-21 10:00' }),
+  } });
+  env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 0);
+  assert.strictEqual(result(env, 'ORE', 'a-later'), undefined, 'κανένα αποτέλεσμα όσο περιμένει');
+  const bad = result(env, 'ORE', 'b-bad');
+  assert.ok(bad && !bad.ok && /not_before/.test(bad.error), JSON.stringify(bad));
+  assert.ok(!Object.keys(env.props).some(function (k) { return /^OUTBOX_ORE_a-later/.test(k); }));
+  env.nowMs += 60 * 60000; env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 0, '13:00: ακόμα νωρίς');
+  env.nowMs += 75 * 60000; env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 1, '14:15: στάλθηκε');
+  assert.ok(result(env, 'ORE', 'a-later').ok);
+  env.nowMs += 15 * 60000; env.ctx.approvalCycle();
+  assert.strictEqual(env.sent.length, 1, 'μία φορά');
+});
+
 test('έγκριση: απάντηση μέσα στο thread πάει ΜΟΝΟ στο κέντρο, ακόμα κι αν απάντησε το προσωπικό email', function () {
   const mails = {
     m1: msg('m1', 'T1', 'OK Publisher <okp@example.com>', 'Πρόγραμμα Ιανουάριος 2027', 'πακέτο', '2026-12-20T10:00:00+02:00', { labelIds: ['SENT'] }),
@@ -1099,10 +1120,42 @@ test('πληρωμές: η χειροκίνητη παύση (PAUSED_<K>) δεν
 test('πληρωμές: billing_stop → καμία χρέωση μετά τον τελευταίο μήνα', function () {
   const env = billEnv('2027-02-10T10:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB) });
   env.req({ type: 'billing_stop', after: '2027-02' });
+  assert.strictEqual(env.mails.length, 1, 'email επιβεβαίωσης διακοπής');
+  assert.strictEqual(env.mails[0].to, 'center@example.com');
+  assert.ok(/Η συνδρομή σας σταματά μετά τον Φεβρουάριο 2027/.test(env.mails[0].subject), env.mails[0].subject);
+  assert.ok(/δεν θα γίνει καμία άλλη χρέωση/.test(env.mails[0].body));
   env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
   env.at('2027-04-01T10:00:00+02:00'); env.ctx.billingCycle();
   assert.strictEqual(env.viva.charges.length, 0);
+  assert.strictEqual(env.mails.length, 1);
+});
+
+test('πληρωμές: billing_stop με quiet → χωρίς email στον πελάτη', function () {
+  const env = billEnv('2027-02-10T10:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB) });
+  env.req({ type: 'billing_stop', after: '2027-02', quiet: true });
   assert.strictEqual(env.mails.length, 0);
+  assert.strictEqual(env.state().stop_after, '2027-02');
+});
+
+test('πληρωμές: μετά τη δωρεάν εβδομάδα (trial) → «Συνεχίζουμε;» με σύνδεσμο για τον 1ο μήνα, μετά αυτόματα', function () {
+  const env = billEnv('2027-01-17T10:00:00+02:00');
+  const res = env.req({ type: 'billing_start', plan: 'Μεσαίο', amount_eur: 310, start: '2027-02', trial: true });
+  const m = env.mails[0];
+  assert.strictEqual(env.mails.length, 1);
+  assert.strictEqual(m.to, 'center@example.com');
+  assert.ok(/Πώς σας φάνηκε η δωρεάν εβδομάδα; Συνεχίζουμε;/.test(m.subject), m.subject);
+  assert.ok(m.body.indexOf('πληρώνετε τον Φεβρουάριο 2027 και ξεκινάμε την 1η του μήνα') >= 0, m.body);
+  assert.ok(m.body.indexOf(res.link) >= 0 && /310,00/.test(m.body));
+  assert.ok(/Η επόμενη χρέωση, για τον Μάρτιο 2027/.test(m.body));
+  assert.ok(/Αν δεν συνεχίσουμε, δεν χρειάζεται να κάνετε τίποτα/.test(m.body));
+  assert.ok(!/Καλώς ήρθατε|συνεχίζουμε μαζί/.test(m.body));
+  env.viva.paid[lastOrderCode(env)] = 'TX7';
+  env.at('2027-01-18T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.ok(/Λάβαμε την πληρωμή για τον Φεβρουάριο 2027/.test(env.mails[env.mails.length - 1].subject));
+  env.at('2027-02-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0, 'ο Φεβρουάριος πληρώθηκε');
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.deepStrictEqual([env.viva.charges.length, env.viva.charges[0].tx], [1, 'TX7']);
 });
 
 test('πληρωμές: απλήρωτος προηγούμενος μήνας → ο νέος μήνας δεν χρεώνεται', function () {
