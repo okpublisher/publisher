@@ -1064,6 +1064,8 @@ test('πληρωμές: επιβεβαίωση χωρίς «επόμενη χρ�
 });
 
 const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
+// τα email εκτός από το μία-φορά «Σύνδεσμος διαχειριστικού» (Upload.gs → adminLinkOnce_)
+function noAdmLink(env) { return env.mails.filter(function (m) { return !/Σύνδεσμος διαχειριστικού/.test(m.subject); }); }
 
 test('web app: την πρώτη φορά που ανοίγει γράφει τη διεύθυνσή του (/exec) στο WEBAPP_URL· όχι /dev ή κενό', function () {
   const env = billEnv('2027-02-10T10:00:00+02:00');
@@ -1074,7 +1076,7 @@ test('web app: την πρώτη φορά που ανοίγει γράφει τ�
   env.ctx.doGet({ parameter: {} });
   assert.strictEqual(env.props.WEBAPP_URL, EXEC);
   env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-03' });
-  assert.ok(env.mails[0].body.indexOf('Διακοπή συνδρομής: ' + EXEC + '?a=stop&c=ORE&k=') >= 0, 'το email παίρνει τη διεύθυνση');
+  assert.ok(noAdmLink(env)[0].body.indexOf('Διακοπή συνδρομής: ' + EXEC + '?a=stop&c=ORE&k=') >= 0, 'το email παίρνει τη διεύθυνση');
 });
 function stopKey(env) { return env.props.BILLING_KEY_ORE; }
 
@@ -1110,7 +1112,7 @@ test('διακοπή: η σελίδα δεν σταματά τίποτα μόν�
   assert.ok(/<button id="b">Διακοπή συνδρομής<\/button>/.test(page.html) && /billingStopWeb\("ore","k123456789012345678901234"\)/.test(page.html));
   assert.strictEqual(page.title, 'Διακοπή συνδρομής · okpublisher');
   assert.strictEqual(env.state().stop_after, null, 'το άνοιγμα δεν αλλάζει τίποτα');
-  assert.strictEqual(env.mails.length, 0);
+  assert.strictEqual(noAdmLink(env).length, 0);
   assert.ok(/δεν ισχύει/.test(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'λάθος' } }).html));
   assert.ok(/δεν ισχύει/.test(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE' } }).html));
   const e2 = billEnv('2027-02-10T10:00:00+02:00', { BILLING_KEY_ORE: 'k123456789012345678901234' });
@@ -1579,6 +1581,18 @@ test('διαχειριστικό: η σελίδα (?a=admin) — μόνο έγκ
   assert.ok(evil.html.indexOf('var LOGIN_CODE="";') >= 0);
   assert.ok(evil.html.indexOf('alert(1)') < 0);
   assert.ok(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'x' } }).html.indexOf('Διακοπή συνδρομής') >= 0, 'η «Διακοπή» δουλεύει όπως πριν');
+});
+
+test('σύνδεσμος διαχειριστικού: email στον λογαριασμό του okpublisher μία φορά για κάθε διεύθυνση', function () {
+  const env = admEnv();
+  env.ctx.doGet({ parameter: {} }); env.ctx.doGet({ parameter: { a: 'admin' } });
+  const m = env.mails.filter(function (x) { return /Σύνδεσμος διαχειριστικού/.test(x.subject); });
+  assert.strictEqual(m.length, 1);
+  assert.strictEqual(m[0].to, 'system@example.com');
+  assert.ok(m[0].body.indexOf(ADM_EXEC + '?a=admin') >= 0);
+  env.props.WEBAPP_URL = 'https://script.google.com/macros/s/OTHER/exec';
+  env.ctx.doGet({ parameter: {} });
+  assert.strictEqual(env.mails.filter(function (x) { return /Σύνδεσμος διαχειριστικού/.test(x.subject); }).length, 2);
 });
 
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {

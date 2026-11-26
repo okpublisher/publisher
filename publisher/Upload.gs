@@ -89,6 +89,20 @@ function rememberWebappUrl_() {
     const u = String(ScriptApp.getService().getUrl() || '').replace(/\?.*$/, '');
     if (/^https:\/\/script\.google\.com\/.+\/exec$/.test(u) && prop_('WEBAPP_URL', '') !== u) P_().setProperty('WEBAPP_URL', u);
   } catch (e) { /* χωρίς διεύθυνση: τα email γράφουν «απαντήστε σε αυτό το email» */ }
+  adminLinkOnce_();
+}
+
+// Μία φορά για κάθε διεύθυνση: email στον λογαριασμό του okpublisher με τον σύνδεσμο του διαχειριστικού (Admin.gs).
+function adminLinkOnce_() {
+  try {
+    const u = webappUrl_(), me = admOwner_();
+    if (!u || !me || prop_('ADMIN_LINK_SENT', '') === u) return;
+    P_().setProperty('ADMIN_LINK_SENT', u);
+    MailApp.sendEmail({ to: me, name: CFG.SENDER_NAME, subject: '[okpublisher] Σύνδεσμος διαχειριστικού',
+      body: 'Το διαχειριστικό του okpublisher:\n\n' + u + '?a=admin\n\n' +
+        'Πρώτη φορά: γράψτε ' + me + ', ανοίξτε τον σύνδεσμο που θα σας έρθει, «Σύνδεση». Μετά, στην καρτέλα «Χρήστες», ' +
+        'προσθέστε όποιον άλλον θέλετε (π.χ. το προσωπικό σας email) ως Διαχειριστή.\n\nΚρατήστε τον σύνδεσμο (π.χ. στην αρχική οθόνη του κινητού).' });
+  } catch (e) { console.log('σύνδεσμος διαχειριστικού: ' + e.message); }
 }
 
 // Στέλνει σε κάθε πελάτη (NOTIFY_TO_<K>) τον δικό του σύνδεσμο για τη συντόμευση.
