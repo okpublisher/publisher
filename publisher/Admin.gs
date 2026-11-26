@@ -259,7 +259,8 @@ function admData_(token) {
     try {
       out.payments = admSheet_(BILL_.SHEET).slice(1).slice(-ADM_.ROWS).reverse().map(function (r) {
         return { at: admIso_(r[0]), client: String(r[1] || ''), month: String(r[2] || ''), amount: r[3] === '' ? '' : Number(r[3]),
-          action: String(r[4] || ''), result: String(r[5] || '') };
+          action: String(r[4] || ''), result: String(r[5] || ''), pay: String(r[7] || ''), code: String(r[8] || ''), name: String(r[9] || ''),
+          plan: String(r[10] || '') };
       });
     } catch (e) { out.payments = []; out.errors.push('Πληρωμές: ' + e.message); }
     const u = admUsers_();
@@ -318,7 +319,7 @@ function admBilling_(K) {
   const st = billState_(K);
   if (!st) return null;
   const cur = ym_(new Date()), months = st.months || {};
-  const list = Object.keys(months).sort().slice(-6).map(function (m) { return { month: m, st: String(months[m].st || '') }; });
+  const list = Object.keys(months).sort().slice(-6).map(function (m) { return { month: m, st: String(months[m].st || ''), pay: String(months[m].pay || '') }; });
   let next = st.start && st.start > cur ? st.start : cur;         // ο πρώτος μήνας από σήμερα που δεν έχει πληρωθεί
   for (let i = 0; i < 24 && months[next] && months[next].st === 'paid'; i++) next = nextYm_(next);
   if (st.stop_after && next > st.stop_after) next = '';

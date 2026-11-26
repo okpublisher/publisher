@@ -48,7 +48,7 @@ const APPR_ = {
   MAX_ATTACH_BYTES: 20 * 1024 * 1024,
   TEXT_MAX: 8000,
   FULL_MAX: 20000,
-  TYPES: ['ensure_folder', 'email', 'move_sources', 'notify', 'billing_start', 'billing_stop'],
+  TYPES: ['ensure_folder', 'email', 'move_sources', 'notify', 'billing_start', 'billing_stop', 'test_client_remove'],
 };
 
 // ------------------------------------------------------------------ κύκλος
@@ -169,7 +169,7 @@ function doRequest_(K, req, res) {
     moveSources_(K, req, res);
     return;
   }
-  if (req.type === 'billing_start' || req.type === 'billing_stop') {
+  if (req.type === 'billing_start' || req.type === 'billing_stop' || req.type === 'test_client_remove') {
     billingRequest_(K, req, res);
     return;
   }

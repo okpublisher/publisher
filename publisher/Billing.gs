@@ -31,6 +31,12 @@
  *   (πριν από τη χρέωση). Email στον πελάτη + «Αλλαγή πακέτου: K» στο okpublisher + clients/<K>/package_change.json
  *   στο publisher-work (η παραγωγή της 20ής αλλάζει config: package και ημέρες). Ίδιο πακέτο ξανά = ακύρωση της αλλαγής.
  *   Μόνο με ενεργή, πληρωμένη συνδρομή χωρίς απλήρωτο μήνα· αλλιώς «γράψτε μας».
+ * Κάθε πληρωμή (με σύνδεσμο ή αυτόματη χρέωση) παίρνει μοναδικό κωδικό PAY-0001, PAY-0002, … (μετρητής PAY_SEQ, ποτέ ξανά
+ *   ο ίδιος) και γράφεται στην καρτέλα «Πληρωμές» με κωδικό πελάτη (OK-…), όνομα, πακέτο και μήνα· ο κωδικός μπαίνει και
+ *   στο email του πελάτη και στο BILLING_<K>.months[μήνας].pay. Κωδικός πελάτη: billing_start { code } ή το config.json.
+ * Αίτημα test_client_remove (από 26/11/2026): μόνο για δοκιμαστικό πελάτη (TEST_CLIENTS, όχι CLIENTS) → σβήνει τις
+ *   ρυθμίσεις του (*_<K>, και τη συνδρομή του), τον βγάζει από το TEST_CLIENTS και σβήνει τις γραμμές του στις «Πληρωμές».
+ *   Τίποτα στο Drive ή στη Viva.
  * Ρυθμίσεις (Script Properties, τα κλειδιά τα βάζει μόνο ο διαχειριστής):
  *   VIVA_ENV            demo (προεπιλογή) ή live
  *   VIVA_CLIENT_ID / VIVA_CLIENT_SECRET   Smart Checkout credentials (Settings → API Access)
@@ -54,7 +60,8 @@ const BILL_ = {
   PLANS: [{ name: 'Βασικό', net: 150, week: 2 }, { name: 'Μεσαίο', net: 250, week: 4 }, { name: 'Καθημερινό', net: 400, week: 7 }],
   VAT: 0.24,
   CHANGE_LAST_DAY: 19,  // αλλαγή πακέτου έως τις 19 → από τον επόμενο μήνα (η παραγωγή του γίνεται στις 20)
-  HEAD: ['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός'],
+  HEAD: ['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός', 'Κωδικός πληρωμής', 'Κωδικός πελάτη', 'Όνομα πελάτη', 'Πακέτο'],
+  PAY_PREFIX: 'PAY-',
   MONTHS_NOM: ['Ιανουάριος', 'Φεβρουάριος', 'Μάρτιος', 'Απρίλιος', 'Μάιος', 'Ιούνιος', 'Ιούλιος', 'Αύγουστος', 'Σεπτέμβριος', 'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος'],
   MONTHS: ['Ιανουάριο', 'Φεβρουάριο', 'Μάρτιο', 'Απρίλιο', 'Μάιο', 'Ιούνιο', 'Ιούλιο', 'Αύγουστο', 'Σεπτέμβριο', 'Οκτώβριο', 'Νοέμβριο', 'Δεκέμβριο'],
 };
@@ -404,6 +411,36 @@ function planChangeRepo_(K, o) {
   } catch (e) { return '\n\n(Δεν γράφτηκε στο publisher-work: ' + e.message + ' — ενημέρωσε το config με το χέρι.)'; }
 }
 
+// Δοκιμαστικός πελάτης έξω: ρυθμίσεις *_<K> (και η συνδρομή του), TEST_CLIENTS, γραμμές του στις «Πληρωμές». Μόνο αν δεν
+// είναι στο CLIENTS (πραγματικοί πελάτες ποτέ). Το Drive και η Viva μένουν ως έχουν.
+function testClientRemove_(K, res) {
+  const test = String(prop_('TEST_CLIENTS', '')).split(',').map(function (x) { return x.trim().toUpperCase(); }).filter(String);
+  if (!/^[A-Z0-9]{2,12}$/.test(K) || test.indexOf(K) < 0 || clients_().indexOf(K) >= 0) {
+    throw new Error('test_client_remove: μόνο για δοκιμαστικό πελάτη (TEST_CLIENTS, όχι CLIENTS)');
+  }
+  const P = P_(), all = P.getProperties(), removed = [];
+  Object.keys(all).forEach(function (k) { if (k.slice(-(K.length + 1)) === '_' + K) { P.deleteProperty(k); removed.push(k); } });
+  P.setProperty('TEST_CLIENTS', test.filter(function (x) { return x !== K; }).join(','));
+  if (String(prop_('BILLING_TEST_CLIENT', '')).trim().toUpperCase() === K) { P.deleteProperty('BILLING_TEST_CLIENT'); removed.push('BILLING_TEST_CLIENT'); }
+  let rows = 0;
+  const sh = SpreadsheetApp.getActive().getSheetByName(BILL_.SHEET);
+  if (sh) {
+    const v = sh.getDataRange().getValues();
+    if (v.length > 1) {
+      const width = v[0].length, keep = v.slice(1).filter(function (r) { return String(r[1]) !== K; });
+      rows = v.length - 1 - keep.length;
+      if (rows) {
+        sh.getRange(2, 1, v.length - 1, width).clearContent();
+        if (keep.length) sh.getRange(2, 1, keep.length, width).setValues(keep);
+      }
+    }
+  }
+  res.removed_settings = removed.sort();
+  res.removed_payment_rows = rows;
+  systemNotify_('Δοκιμαστικός πελάτης ' + K + ': σβήστηκε', 'Σβήστηκαν ' + removed.length + ' ρυθμίσεις (' + removed.join(', ') + ') και ' + rows +
+    ' γραμμές στις «Πληρωμές». Το Drive και η Viva δεν άλλαξαν.');
+}
+
 function nextYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] === 12 ? (p[0] + 1) + '-01' : p[0] + '-' + ('0' + (p[1] + 1)).slice(-2); }
 // «Η επόμενη χρέωση…» μόνο αν θα υπάρξει (όχι μετά από λύση).
 function nextChargeText_(st, m) {
@@ -418,9 +455,43 @@ function billingClients_() {
   return approvalClients_().filter(function (K) { return !!billState_(K); });
 }
 
-function billLog_(K, month, cents, action, result, code) {
-  try { sheet_(BILL_.SHEET, BILL_.HEAD).appendRow([new Date(), K, month, cents ? cents / 100 : '', action, String(result || '').slice(0, 300), String(code || '')]); }
-  catch (e) { console.log('Πληρωμές (Sheet): ' + e.message); }
+function billLog_(K, month, cents, action, result, code, pay) {
+  try {
+    const st = billState_(K) || {};
+    billSheet_().appendRow([new Date(), K, month, cents ? cents / 100 : '', action, String(result || '').slice(0, 300), String(code || ''),
+      String(pay || ''), String(st.code || ''), clientName_(K), String(st.plan || '')]);
+  } catch (e) { console.log('Πληρωμές (Sheet): ' + e.message); }
+}
+
+// Η καρτέλα «Πληρωμές»· οι νέες στήλες μπαίνουν στο τέλος της επικεφαλίδας (οι παλιές δεν μετακινούνται).
+function billSheet_() {
+  const sh = sheet_(BILL_.SHEET, BILL_.HEAD);
+  const h = sh.getRange(1, 1, 1, BILL_.HEAD.length).getValues()[0];
+  if (String(h[BILL_.HEAD.length - 1] || '') !== BILL_.HEAD[BILL_.HEAD.length - 1]) sh.getRange(1, 1, 1, BILL_.HEAD.length).setValues([BILL_.HEAD]);
+  return sh;
+}
+
+// Νέος κωδικός πληρωμής: PAY-0001, PAY-0002, … (ποτέ ξανά ο ίδιος· τον καλεί μόνο ο κύκλος πληρωμών, με κλειδαριά).
+function newPayId_() {
+  const n = Number(prop_('PAY_SEQ', '0')) + 1;
+  P_().setProperty('PAY_SEQ', String(n));
+  return BILL_.PAY_PREFIX + ('000' + n).slice(-Math.max(4, String(n).length));
+}
+
+// Κωδικός πελάτη (OK-…): από τη συνδρομή, αλλιώς από το config.json του publisher-work (και κρατιέται στη συνδρομή).
+function billCode_(K, st) {
+  if (!st.code) { try { const c = ghJson_('clients/' + K + '/config.json'); if (c && c.code) st.code = String(c.code); } catch (e) { /* χωρίς κωδικό */ } }
+  return st.code || '';
+}
+
+// Η πληρωμή του μήνα m έγινε: κωδικός πληρωμής, πακέτο και ποσό εκείνης της πληρωμής. Επιστρέφει τη γραμμή για το email.
+function markPaid_(K, st, m, tx) {
+  const rec = st.months[m];
+  rec.st = 'paid'; rec.tx = tx; rec.paid_at = new Date().toISOString();
+  rec.pay = newPayId_(); rec.plan = st.plan; rec.amount = st.amount;
+  billCode_(K, st);
+  billSave_(K, st);
+  return 'Κωδικός πληρωμής: ' + rec.pay + (st.code ? ' · Πελάτης: ' + st.code : '') + ' · Πακέτο: ' + st.plan + ' · Μήνας: ' + monthNom_(m) + '.';
 }
 
 // Νέος σύνδεσμος αν δεν υπάρχει ή αν ο τελευταίος είναι παλιός (λήγει). Επιστρέφει τον σύνδεσμο.
@@ -453,6 +524,8 @@ function billingRequest_(K, req, res) {
     Object.keys((old && old.months) || {}).forEach(function (m) { if (old.months[m].st === 'paid') months[m] = old.months[m]; });
     if (months[req.start]) throw new Error('billing_start: ο μήνας ' + req.start + ' έχει ήδη πληρωθεί');
     const st = { plan: String(req.plan), amount: amount, start: req.start, stop_after: null, tx: (old && old.tx) || null, months: months };
+    if (req.code && /^OK-\d{4,}$/.test(String(req.code))) st.code = String(req.code);
+    else if (old && old.code) st.code = old.code;
     if (free) st.free_month = free;
     st.months[req.start] = { st: 'pending' };
     const link = freshLink_(K, st, req.start);   // αν η Viva αρνηθεί, δεν αποθηκεύεται τίποτα
@@ -483,6 +556,10 @@ function billingRequest_(K, req, res) {
     res.link = link;
     return;
   }
+  if (req.type === 'test_client_remove') {
+    testClientRemove_(K, res);
+    return;
+  }
   if (req.type === 'billing_stop') {
     const st = billState_(K);
     if (!st) throw new Error('billing_stop: δεν υπάρχει συνδρομή');
@@ -500,7 +577,7 @@ function setupBilling() { manualOnly_('setupBilling');
     if (t.getHandlerFunction() === 'billingCycle') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('billingCycle').timeBased().everyHours(BILL_.EVERY_H).create();
-  sheet_(BILL_.SHEET, BILL_.HEAD);
+  billSheet_();
   console.log('Έτοιμο: ο κύκλος πληρωμών τρέχει κάθε ώρα (χρεώσεις μόνο από τις ' + BILL_.ACT_HOUR + ':00). Τρέχει και τώρα μία φορά…');
   billingCycle();
 }
@@ -545,18 +622,17 @@ function billingClient_(K, now) {
     for (let i = 0; i < orders.length; i++) {
       const p = vivaPaidTx_(orders[i]);
       if (!p) continue;
-      rec.st = 'paid'; rec.tx = p.tx; rec.paid_at = new Date().toISOString();
       st.tx = p.tx;     // η τελευταία πληρωμή με κάρτα γίνεται η βάση για τις επόμενες χρεώσεις
-      billSave_(K, st);
-      billLog_(K, m, st.amount, 'πληρωμή με σύνδεσμο', 'πληρώθηκε', p.tx);
+      const payLine = markPaid_(K, st, m, p.tx);
+      billLog_(K, m, st.amount, 'πληρωμή με σύνδεσμο', 'πληρώθηκε', p.tx, rec.pay);
       if (billPaused_(K) && !months.some(function (x) { return x !== m && st.months[x].st === 'pending'; })) {
         P_().deleteProperty('BILLING_PAUSED_' + K);
         billLog_(K, m, 0, 'επανεκκίνηση', 'οι δημοσιεύσεις συνεχίζονται', '');
-        billNotify_(K, 'Η πληρωμή έγινε: οι δημοσιεύσεις συνεχίζονται', 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ). Οι δημοσιεύσεις σας συνεχίζονται κανονικά. Ευχαριστούμε!');
+        billNotify_(K, 'Η πληρωμή έγινε: οι δημοσιεύσεις συνεχίζονται', 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ). Οι δημοσιεύσεις σας συνεχίζονται κανονικά. Ευχαριστούμε!\n\n' + payLine);
       } else {
         billNotify_(K, 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m), 'Λάβαμε την πληρωμή της συνδρομής σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ). ' +
           (st.free_month && m === st.start ? 'Ο ' + monthNom_(st.free_month) + ' είναι δώρο μας: ξεκινάμε να τον ετοιμάζουμε. ' : '') +
-          nextChargeText_(st, m) + 'Ευχαριστούμε!');
+          nextChargeText_(st, m) + 'Ευχαριστούμε!\n\n' + payLine);
       }
       return;
     }
@@ -576,10 +652,9 @@ function billingClient_(K, now) {
       billSave_(K, st);                                   // πριν από τη χρέωση: ποτέ δεύτερη για τον ίδιο μήνα
       const c = vivaCharge_(st, K, m);
       if (c.ok) {
-        rec.st = 'paid'; rec.tx = c.tx; rec.paid_at = new Date().toISOString();
-        billSave_(K, st);
-        billLog_(K, m, st.amount, 'αυτόματη χρέωση', 'πληρώθηκε', c.tx);
-        billNotify_(K, 'Χρεώθηκε η συνδρομή για τον ' + monthLabel_(m), 'Η συνδρομή σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ) χρεώθηκε στην κάρτα σας. Ευχαριστούμε!');
+        const payLine = markPaid_(K, st, m, c.tx);
+        billLog_(K, m, st.amount, 'αυτόματη χρέωση', 'πληρώθηκε', c.tx, rec.pay);
+        billNotify_(K, 'Χρεώθηκε η συνδρομή για τον ' + monthLabel_(m), 'Η συνδρομή σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ) χρεώθηκε στην κάρτα σας. Ευχαριστούμε!\n\n' + payLine);
         return;
       }
       rec.st = 'pending'; rec.charge_error = c.error;

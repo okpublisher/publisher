@@ -1379,6 +1379,63 @@ if (OLD_DIR) {
   });
 }
 
+// ------------------------------------------------------------------ κωδικός πληρωμής + διαγραφή δοκιμαστικού πελάτη
+test('κωδικός πληρωμής: κάθε πληρωμή PAY-0001, PAY-0002… με πελάτη, πακέτο και μήνα (καρτέλα, email, κατάσταση)', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00');
+  env.req({ type: 'billing_start', plan: 'Μεσαίο', amount_eur: 310, start: '2027-02', code: 'OK-0007' });
+  env.viva.paid[lastOrderCode(env)] = 'TX9';
+  env.at('2027-01-28T13:00:00+02:00'); env.ctx.billingCycle();
+  let st = env.state();
+  assert.deepStrictEqual([st.code, st.months['2027-02'].pay, st.months['2027-02'].plan, st.months['2027-02'].amount], ['OK-0007', 'PAY-0001', 'Μεσαίο', 31000]);
+  const m1 = env.mails[env.mails.length - 1];
+  assert.ok(/Κωδικός πληρωμής: PAY-0001 · Πελάτης: OK-0007 · Πακέτο: Μεσαίο · Μήνας: Φεβρουάριος 2027\./.test(m1.body), m1.body);
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  st = env.state();
+  assert.strictEqual(st.months['2027-03'].pay, 'PAY-0002');
+  assert.ok(/Κωδικός πληρωμής: PAY-0002 · Πελάτης: OK-0007 · Πακέτο: Μεσαίο · Μήνας: Μάρτιος 2027\./.test(env.mails[env.mails.length - 1].body));
+  const sh = env.sheets['Πληρωμές'];
+  assert.deepStrictEqual(sh.rows[0].slice(7), ['Κωδικός πληρωμής', 'Κωδικός πελάτη', 'Όνομα πελάτη', 'Πακέτο']);
+  const paid = sh.rows.filter(function (r) { return r[5] === 'πληρώθηκε'; });
+  assert.deepStrictEqual(paid.map(function (r) { return [r[1], r[2], r[3], r[7], r[8], r[9], r[10]]; }),
+    [['ORE', '2027-02', 310, 'PAY-0001', 'OK-0007', 'Learning & Sensory Ωραιόκαστρο', 'Μεσαίο'], ['ORE', '2027-03', 310, 'PAY-0002', 'OK-0007', 'Learning & Sensory Ωραιόκαστρο', 'Μεσαίο']]);
+  assert.ok(sh.rows.filter(function (r) { return r[5] !== 'πληρώθηκε' && r !== sh.rows[0]; }).every(function (r) { return r[7] === ''; }), 'κωδικός μόνο στις πληρωμές');
+  assert.strictEqual(env.props.PAY_SEQ, '2');
+});
+
+test('κωδικός πληρωμής: παλιά καρτέλα «Πληρωμές» → οι νέες στήλες μπαίνουν στο τέλος της επικεφαλίδας', function () {
+  const env = billEnv('2027-02-10T12:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB) });
+  const sh = env.ctx.SpreadsheetApp.getActive().insertSheet('Πληρωμές');
+  sh.getRange(1, 1, 1, 7).setValues([['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός']]);
+  sh.appendRow(['t', 'ORE', '2027-02', 186, 'πληρωμή με σύνδεσμο', 'πληρώθηκε', 'TX1']);
+  env.req({ type: 'billing_stop', after: '2027-03' });
+  assert.strictEqual(sh.rows[0].length, 11);
+  assert.strictEqual(sh.rows[0][7], 'Κωδικός πληρωμής');
+  assert.strictEqual(sh.rows[1][6], 'TX1', 'οι παλιές γραμμές δεν άλλαξαν');
+});
+
+test('δοκιμαστικός πελάτης: test_client_remove σβήνει ρυθμίσεις, συνδρομή και γραμμές πληρωμών — μόνο του TST', function () {
+  const env = billEnv('2026-11-26T18:00:00+02:00', { TEST_CLIENTS: 'TST', BILLING_TEST_CLIENT: 'TST', NAME_TST: 'Δοκιμή okpublisher',
+    NOTIFY_TO_TST: 'okp@example.com', BILLING_TST: '{"plan":"Βασικό","amount":100}', BILLING_KEY_TST: 'k', BILLING_PAUSED_TST: 'false',
+    BILLING_ORE: JSON.stringify(PAID_FEB), BILLING_KEY_ORE: 'ok' });
+  const sh = env.ctx.SpreadsheetApp.getActive().insertSheet('Πληρωμές');
+  sh.getRange(1, 1, 1, 7).setValues([['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός']]);
+  sh.appendRow(['t1', 'TST', '2026-12', 1, 'πληρωμή με σύνδεσμο', 'πληρώθηκε', 'x']);
+  sh.appendRow(['t2', 'ORE', '2027-02', 186, 'πληρωμή με σύνδεσμο', 'πληρώθηκε', 'y']);
+  sh.appendRow(['t3', 'TST', 'demo', 1, 'δοκιμαστική χρέωση', 'πέρασε', 'z']);
+  assert.throws(function () { env.ctx.doRequest_('ORE', { type: 'test_client_remove' }, {}); }, /μόνο για δοκιμαστικό/, 'πραγματικός πελάτης: ποτέ');
+  const res = {};
+  env.ctx.doRequest_('TST', { type: 'test_client_remove' }, res);
+  assert.deepStrictEqual(Array.from(res.removed_settings), ['BILLING_KEY_TST', 'BILLING_PAUSED_TST', 'BILLING_TEST_CLIENT', 'BILLING_TST', 'NAME_TST', 'NOTIFY_TO_TST']);
+  assert.strictEqual(res.removed_payment_rows, 2);
+  assert.ok(Object.keys(env.props).every(function (k) { return !/_TST$/.test(k); }));
+  assert.strictEqual(env.props.TEST_CLIENTS, '');
+  assert.ok(env.props.BILLING_ORE && env.props.BILLING_KEY_ORE && env.props.NAME_ORE, 'ο ORE δεν άγγιξε');
+  const left = sh.rows.slice(1).filter(function (r) { return r.length && r[0] !== ''; });
+  assert.deepStrictEqual(left.map(function (r) { return r[1]; }), ['ORE']);
+  assert.ok(/Δοκιμαστικός πελάτης TST: σβήστηκε/.test(env.mails[env.mails.length - 1].subject));
+  assert.throws(function () { env.ctx.doRequest_('TST', { type: 'test_client_remove' }, {}); }, /μόνο για δοκιμαστικό/, 'δεύτερη φορά: δεν υπάρχει πια');
+});
+
 // ------------------------------------------------------------------ αλλαγή πακέτου (Billing.gs, όροι v7 Α.3)
 function planEnv(now, st) {
   const env = billEnv(now, { BILLING_ORE: JSON.stringify(st || PAID_FEB), BILLING_KEY_ORE: 'pk123', WEBAPP_URL: EXEC, GITHUB_TOKEN: 'ghtok' });
@@ -1522,7 +1579,7 @@ function admEnv(extraProps, opts) {
   h.rows.push([new Date('2026-11-25T20:01:00+02:00'), 'ORE', 'ORE-0', 'STORY', 'Σφάλμα IG', 'mock']);
   const pay = ss.insertSheet('Πληρωμές');
   pay.rows.push(['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός']);
-  pay.rows.push([new Date('2026-11-20T10:00:00+02:00'), 'ORE', '2026-12', 186, 'πληρωμή', 'πληρώθηκε', '9999']);
+  pay.rows.push([new Date('2026-11-20T10:00:00+02:00'), 'ORE', '2026-12', 186, 'πληρωμή', 'πληρώθηκε', '9999', 'PAY-0001', 'OK-0001', 'Learning ORE', 'Βασικό']);
   env.loginAs = function (email) {
     env.cache = {};   // χωρίς όριο αιτημάτων στις δοκιμές
     api(env, { act: 'login', email: email });
@@ -1639,6 +1696,7 @@ test('διαχειριστικό: ο admin βλέπει πελάτες (με κ�
   assert.strictEqual(d.heartbeat, new Date('2026-11-26T17:55:00+02:00').toISOString());
   assert.strictEqual(d.history[0].status, 'Σφάλμα IG');
   assert.strictEqual(d.payments[0].amount, 186);
+  assert.deepStrictEqual([d.payments[0].pay, d.payments[0].code, d.payments[0].plan], ['PAY-0001', 'OK-0001', 'Βασικό']);
   assert.ok(d.users.some(function (u) { return u.owner && u.role === 'admin'; }));
   const csv = env.calls.filter(function (c) { return /docs\.google\.com/.test(c.url); });
   assert.ok(csv.length === 2 && csv.every(function (c) { return c.headers.Authorization === 'Bearer oauth'; }));
