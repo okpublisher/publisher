@@ -8,8 +8,11 @@
  *   η ίδια ακριβώς αποστολή ξανά μέσα σε 10 λεπτά (διπλό πάτημα) αγνοείται σιωπηλά (από 26/11/2026).
  * Αυτόματη απάντηση στον ενδιαφερόμενο (από 26/11/2026): ανάλογα με το πακέτο που διάλεξε (ή όλα, αν δεν ξέρει),
  *   ελληνικά ή αγγλικά (πεδίο lang), με τη δωρεάν εβδομάδα (όροι v6 Α.4) και τα επόμενα βήματα. Μία ανά email κάθε 6 ώρες.
- * Σετάρισμα: στήλη «Δωρεάν εβδομάδα» = ναι / όχι (μία ανά ΑΦΜ).
- * Η σελίδα setup.html στέλνει "type": "setup" → καρτέλα «Σεταρίσματα» + email «Σετάρισμα: …» (στοιχεία νέου πελάτη).
+ * Σετάρισμα: στήλη «Δωρεάν εβδομάδα» = ναι / όχι (μία ανά ΑΦΜ). Στήλη «Κωδικός πελάτη» (από 26/11/2026): OK-0002, OK-0003, …
+ *   με σειρά (ο ίδιος ΑΦΜ παίρνει τον ίδιο κωδικό)· μπαίνει και στο email.
+ * Καρτέλα «Ρυθμίσεις» (στήλες Ρύθμιση | Τιμή, τη γράφει ο Πέτρος ή ο Claude με το ΟΚ του): «Αντίγραφο σεταρισμάτων» και
+ *   «Αντίγραφο ενδιαφερόντων» = email (χωρισμένα με κόμμα) που παίρνουν αντίγραφο (cc) του αντίστοιχου email. Χωρίς καρτέλα: κανένα.
+ * Η σελίδα setup.html στέλνει "type": "setup" → καρτέλα «Σεταρίσματα» + email «Σετάρισμα OK-…: …» (στοιχεία νέου πελάτη).
  *   Υποχρεωτική η αποδοχή των όρων (terms.html): πεδίο terms = έκδοση (π.χ. v1-2026-11-25) → στήλη «Όροι (έκδοση)».
  *   Στοιχεία τιμολόγησης (bill_name, bill_afm, bill_doy, bill_address) → στήλες μετά τους «Όρους». Τα ελέγχει η σελίδα·
  *   εδώ ΔΕΝ απορρίπτουμε (η σελίδα στέλνει no-cors και δεν θα έβλεπε το λάθος): ό,τι λείπει ή ΑΦΜ που δεν περνά τον
@@ -33,6 +36,10 @@ const FORM_ = {
   MAX_PER_HOUR: 30,
   LEN: { name: 120, business: 160, email: 160, phone: 40, plan: 40, social: 160, message: 3000, lang: 4, source: 200, news: 4 },
   SETUP_SHEET: 'Σεταρίσματα',
+  SETTINGS_SHEET: 'Ρυθμίσεις',
+  CC_SETUP: 'Αντίγραφο σεταρισμάτων',
+  CC_LEAD: 'Αντίγραφο ενδιαφερόντων',
+  FIRST_NO: 2,   // OK-0000 = το ίδιο το okpublisher (OKP), OK-0001 = ο πρώτος πελάτης (ORE)· τα σεταρίσματα ξεκινούν από OK-0002
   // Πακέτα για την αυτόματη απάντηση (ίδια με το site και τους όρους· τιμές χωρίς ΦΠΑ).
   PLANS: [
     { el: 'Βασικό', en: 'Basic', price: 150, week: 2, month: 9 },
@@ -79,7 +86,7 @@ function doPost(e) {
   const me = Session.getEffectiveUser().getEmail();
   const replied = autoReply_(r, me);
   if (me) {
-    MailApp.sendEmail({
+    mail_(FORM_.CC_LEAD, me, {
       to: me, replyTo: r.email, name: 'okpublisher.gr',
       subject: '[okpublisher.gr] Νέο ενδιαφέρον: ' + r.business + (r.plan ? ' (' + r.plan + ')' : ''),
       body: ['Όνομα: ' + r.name, 'Επιχείρηση: ' + r.business, 'Email: ' + r.email, 'Τηλέφωνο: ' + (r.phone || '—'),
@@ -198,26 +205,28 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα']);
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη']);
   const x = {};
   FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
-  let trial = 'ναι';
+  let trial = 'ναι', code = '';
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
     const sh = sheet_(FORM_.SETUP_SHEET, head);
     trial = trialCheck_(sh, head.indexOf('ΑΦΜ') + 1, b.bill_afm);
+    code = clientCode_(sh, head.indexOf('ΑΦΜ') + 1, head.indexOf('Κωδικός πελάτη') + 1, b.bill_afm);
     sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
-      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial]));
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   if (me) {
-    MailApp.sendEmail({
+    mail_(FORM_.CC_SETUP, me, {
       to: me, replyTo: r.email, name: 'okpublisher.gr',
-      subject: '[okpublisher.gr] Σετάρισμα: ' + r.business + ' (' + (r.plan.split(' ')[0] || '—') + ')',
-      body: FORM_.SETUP.concat(FORM_.EXTRA).map(function (f) { return f[1] + ': ' + (r[f[0]] || x[f[0]] || '—'); }).join('\n') +
+      subject: '[okpublisher.gr] Σετάρισμα ' + code + ': ' + r.business + ' (' + (r.plan.split(' ')[0] || '—') + ')',
+      body: 'Κωδικός πελάτη: ' + code + '\n' +
+        FORM_.SETUP.concat(FORM_.EXTRA).map(function (f) { return f[1] + ': ' + (r[f[0]] || x[f[0]] || '—'); }).join('\n') +
         '\nΌροι: αποδοχή στη φόρμα, έκδοση ' + terms +
         '\n\nΤιμολόγηση:\n' + FORM_.BILL.map(function (f) { return f[1] + ': ' + (b[f[0]] || '—'); }).join('\n') +
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +
@@ -239,6 +248,45 @@ function trialCheck_(sh, col, afm) {
     if (String(vals[i][0]).replace(/^'/, '') === afm) return 'όχι: ο ίδιος ΑΦΜ έχει ήδη σετάρισμα (γραμμή ' + (i + 2) + ')';
   }
   return 'ναι';
+}
+
+// Κωδικός πελάτη OK-NNNN: ο επόμενος από τον μεγαλύτερο της στήλης (τουλάχιστον FIRST_NO)· ο ίδιος ΑΦΜ → ο ίδιος κωδικός.
+function clientCode_(sh, afmCol, codeCol, afm) {
+  let max = FORM_.FIRST_NO - 1;
+  const last = sh.getLastRow();
+  if (last >= 2 && codeCol >= 1) {
+    const codes = sh.getRange(2, codeCol, last - 1, 1).getValues();
+    const afms = afmCol >= 1 ? sh.getRange(2, afmCol, last - 1, 1).getValues() : [];
+    for (let i = 0; i < codes.length; i++) {
+      const c = String(codes[i][0]).trim(), m = /^OK-(\d{4,})$/.exec(c);
+      if (!m) continue;
+      if (afm && afms[i] && String(afms[i][0]).replace(/^'/, '') === afm) return c;
+      max = Math.max(max, Number(m[1]));
+    }
+  }
+  return 'OK-' + ('000' + (max + 1)).slice(-Math.max(4, String(max + 1).length));
+}
+
+// Email στον λογαριασμό της φόρμας, με αντίγραφο σε όσους ορίζει η ρύθμιση (αν υπάρχουν).
+function mail_(setting, me, o) {
+  const cc = ccList_(setting, me);
+  if (cc) o.cc = cc;
+  MailApp.sendEmail(o);
+}
+
+// Αντίγραφο (cc) από την καρτέλα «Ρυθμίσεις»: έγκυρα email, όχι ο ίδιος ο λογαριασμός, το πολύ 5. '' αν δεν υπάρχει.
+function ccList_(name, me) {
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName(FORM_.SETTINGS_SHEET);
+    if (!sh || sh.getLastRow() < 2) return '';
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]).trim() !== name) continue;
+      return String(rows[i][1]).split(/[,;\s]+/).map(function (s) { return s.trim().toLowerCase(); })
+        .filter(function (s) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s) && s !== String(me || '').toLowerCase(); }).slice(0, 5).join(',');
+    }
+  } catch (e) { console.error('Ρυθμίσεις: ' + e.message); }
+  return '';
 }
 
 // ΑΦΜ: χωρίς κενά/τελείες/παύλες και χωρίς πρόθεμα EL/GR.

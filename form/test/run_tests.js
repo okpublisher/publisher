@@ -187,8 +187,8 @@ test('σετάρισμα: καρτέλα «Σεταρίσματα» + email «Σ
   assert.ok(sh);
   assert.strictEqual(sh.head[0], 'Χρόνος');
   assert.strictEqual(col(sh, 'Όροι (έκδοση)'), col(sh, 'Κατάσταση') + 1);
-  assert.deepStrictEqual(Array.from(sh.head).slice(col(sh, 'Όροι (έκδοση)') + 1, -2), BILL_HEAD, 'τα στοιχεία τιμολόγησης μετά τους όρους');
-  assert.deepStrictEqual(Array.from(sh.head).slice(-2), ['Μουσική στα reels', 'Δωρεάν εβδομάδα'], 'μουσική και δωρεάν εβδομάδα στο τέλος');
+  assert.deepStrictEqual(Array.from(sh.head).slice(col(sh, 'Όροι (έκδοση)') + 1, -3), BILL_HEAD, 'τα στοιχεία τιμολόγησης μετά τους όρους');
+  assert.deepStrictEqual(Array.from(sh.head).slice(-3), ['Μουσική στα reels', 'Δωρεάν εβδομάδα', 'Κωδικός πελάτη'], 'μουσική, δωρεάν εβδομάδα και κωδικός στο τέλος');
   assert.strictEqual(sh.rows[0].length, sh.head.length);
   assert.strictEqual(sh.rows[0][col(sh, 'Κατάσταση')], 'νέο');
   assert.strictEqual(sh.rows[0][col(sh, 'Όροι (έκδοση)')], 'v1-2026-11-25');
@@ -196,7 +196,7 @@ test('σετάρισμα: καρτέλα «Σεταρίσματα» + email «Σ
   assert.ok(!e.sheets['Ενδιαφέροντα'], 'δεν γράφει στα Ενδιαφέροντα');
   assert.strictEqual(e.mails[0].to, ME);
   assert.strictEqual(e.mails[0].replyTo, 'owner@example.com');
-  assert.strictEqual(e.mails[0].subject, '[okpublisher.gr] Σετάρισμα: Φούρνος Δοκιμή (Βασικό)');
+  assert.strictEqual(e.mails[0].subject, '[okpublisher.gr] Σετάρισμα OK-0002: Φούρνος Δοκιμή (Βασικό)');
 });
 
 test('σετάρισμα χωρίς αποδοχή όρων (ή με άκυρη τιμή) → απόρριψη, τίποτα στο Sheet', function () {
@@ -226,7 +226,7 @@ test('σετάρισμα: στοιχεία τιμολόγησης στο Sheet �
   const e = makeEnv();
   e.post(Object.assign({}, SETUP, { bill_afm: 'EL 012-345.670' }));
   const sh = e.sheets['Σεταρίσματα'], r = sh.rows[0];
-  assert.deepStrictEqual(Array.from(r.slice(-7, -2)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
+  assert.deepStrictEqual(Array.from(r.slice(-8, -3)), ['Φούρνος Δοκιμή ΙΚΕ', "'012345670", 'Δοκιμαστική ΔΟΥ', 'Οδός Δοκιμής 1, 00000 Πόλη', 'ΟΚ']);
   const body = e.mails[0].body;
   assert.ok(/Τιμολόγηση:\nΕπωνυμία τιμολόγησης: Φούρνος Δοκιμή ΙΚΕ\nΑΦΜ: 012345670\nΔΟΥ: Δοκιμαστική ΔΟΥ\nΔιεύθυνση τιμολόγησης: Οδός Δοκιμής 1/.test(body), body);
   assert.ok(!/⚠/.test(body));
@@ -273,7 +273,7 @@ test('καρτέλα με στήλη «Όροι» στο τέλος: τα στο
   old.appendRow(['t'].concat(oldHead.slice(1, -2).map(function () { return 'x'; }), ['νέο', 'v3-2026-11-25']));
   e.post(SETUP);
   assert.deepStrictEqual(Array.from(old.head).slice(0, oldHead.length), oldHead);
-  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD.concat(['Μουσική στα reels', 'Δωρεάν εβδομάδα']));
+  assert.deepStrictEqual(Array.from(old.head).slice(oldHead.length), BILL_HEAD.concat(['Μουσική στα reels', 'Δωρεάν εβδομάδα', 'Κωδικός πελάτη']));
   assert.strictEqual(old.rows[1][oldHead.length - 1], 'v1-2026-11-25');
   assert.strictEqual(old.rows[1][oldHead.length], 'Φούρνος Δοκιμή ΙΚΕ');
 });
@@ -349,6 +349,40 @@ test('διπλό πάτημα: ξανά μετά από 10 λεπτά → γρά
   Object.keys(e.cache).filter(function (k) { return /^d:/.test(k); }).forEach(function (k) { delete e.cache[k]; });   // έληξε
   e.post(BASE);
   assert.strictEqual(e.sheets['Ενδιαφέροντα'].rows.length, 2);
+});
+
+test('κωδικός πελάτη: OK-0002, OK-0003… με σειρά· ο ίδιος ΑΦΜ → ο ίδιος κωδικός· στο email', function () {
+  const e = makeEnv();
+  e.post(SETUP);
+  e.post(Object.assign({}, SETUP, { email: 'b@example.com', bill_afm: '012345670' }));
+  e.post(Object.assign({}, SETUP, { email: 'c@example.com', business: 'Ξανά ο ίδιος' }));   // ίδιος ΑΦΜ με τον 1ο
+  const sh = e.sheets['Σεταρίσματα'], c = col(sh, 'Κωδικός πελάτη');
+  assert.deepStrictEqual(sh.rows.map(function (r) { return r[c]; }), ['OK-0002', 'OK-0003', 'OK-0002']);
+  assert.ok(/Σετάρισμα OK-0003: Φούρνος Δοκιμή/.test(e.mails[1].subject), e.mails[1].subject);
+  assert.ok(/^Κωδικός πελάτη: OK-0003\n/.test(e.mails[1].body));
+  sh.rows.push(sh.rows[0].map(function (v, i) { return i === c ? 'OK-0041' : (i === col(sh, 'ΑΦΜ') ? '' : v); }));   // π.χ. με το χέρι
+  e.post(Object.assign({}, SETUP, { email: 'd@example.com', bill_afm: '094014201' }));
+  assert.strictEqual(sh.rows[sh.rows.length - 1][c], 'OK-0042');
+});
+
+test('αντίγραφο (cc) από την καρτέλα «Ρυθμίσεις»: μόνο έγκυρα, όχι ο ίδιος λογαριασμός· χωρίς καρτέλα → χωρίς cc', function () {
+  const e = makeEnv();
+  e.post(SETUP); e.post(Object.assign({}, BASE, { message: 'πριν' }));
+  assert.ok(!('cc' in e.mails[0]) && !('cc' in owner(e)[1]), 'χωρίς καρτέλα');
+  const st = e.ctx.SpreadsheetApp.getActive().insertSheet('Ρυθμίσεις');
+  st.getRange(1, 1, 1, 2).setValues([['Ρύθμιση', 'Τιμή']]);
+  st.appendRow(['Αντίγραφο σεταρισμάτων', 'Boss@Example.com, όχι-email; ' + ME]);
+  st.appendRow(['Αντίγραφο ενδιαφερόντων', '']);
+  e.post(Object.assign({}, SETUP, { email: 'x@example.com' }));
+  const m = e.mails[e.mails.length - 1];
+  assert.ok(/Σετάρισμα/.test(m.subject));
+  assert.strictEqual(m.cc, 'boss@example.com');
+  e.post(Object.assign({}, BASE, { message: 'μετά' }));
+  assert.ok(!('cc' in owner(e)[owner(e).length - 1]), 'κενή ρύθμιση ενδιαφερόντων → χωρίς cc');
+  st.rows[1][1] = 'sales@example.com';
+  e.post(Object.assign({}, BASE, { message: 'μετά 2' }));
+  assert.strictEqual(owner(e)[owner(e).length - 1].cc, 'sales@example.com');
+  assert.ok(replies(e).every(function (r) { return !('cc' in r); }), 'η αυτόματη απάντηση στον ενδιαφερόμενο ποτέ με cc');
 });
 
 test('doGet: η απάντηση που ελέγχει το deploy', function () {
