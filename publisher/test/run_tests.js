@@ -131,6 +131,8 @@ function makeEnv(opts) {
     },
     DriveApp: opts.DriveApp || { getFolderById: function (id) { return folder(id, 'Φάκελος ' + id); } },
     ContentService: { createTextOutput: function (s) { return { text: s, setMimeType: function () { return this; } }; }, MimeType: { JSON: 'json' } },
+    HtmlService: { createHtmlOutput: function (h) { const o = { html: h, title: '', setTitle: function (t) { o.title = t; return o; },
+      addMetaTag: function () { return o; }, getContent: function () { return h; } }; return o; } },
   };
   function folder(id, name) {
     return { getId: () => id, getName: () => name, getFoldersByName: function (n) { return { hasNext: () => false }; },
@@ -1047,6 +1049,89 @@ test('πληρωμές: επιβεβαίωση χωρίς «επόμενη χρ�
   const c = env.mails[env.mails.length - 1];
   assert.ok(/Λάβαμε την πληρωμή για τον Δεκέμβριο 2027/.test(c.subject));
   assert.ok(!/επόμενη χρέωση/.test(c.body), c.body);
+});
+
+const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
+function stopKey(env) { return env.props.BILLING_KEY_ORE; }
+
+test('διακοπή: κουμπί «Διακοπή συνδρομής» στα email πληρωμής (κείμενο + html), όχι στο email της δωρεάν εβδομάδας', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00', { UPLOAD_URL: EXEC });
+  env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  const m = env.mails[0];
+  const url = EXEC + '?a=stop&c=ORE&k=' + stopKey(env);
+  assert.ok(stopKey(env) && stopKey(env).length >= 20, 'κλειδί πελάτη');
+  assert.ok(m.body.indexOf('Διακοπή συνδρομής: ' + url) >= 0, m.body);
+  assert.ok(m.htmlBody.indexOf('href="' + url.replace(/&/g, '&amp;') + '"') >= 0 && />Διακοπή συνδρομής<\/a>/.test(m.htmlBody), m.htmlBody);
+  assert.ok(/<a href="https:\/\/demo\.vivapayments\.com/.test(m.htmlBody), 'ο σύνδεσμος πληρωμής πατιέται');
+  env.viva.paid[lastOrderCode(env)] = 'TX1';
+  env.at('2027-01-28T13:00:00+02:00'); env.ctx.billingCycle();
+  assert.ok(env.mails[1].body.indexOf('Διακοπή συνδρομής: ' + url) >= 0, 'και στην επιβεβαίωση πληρωμής');
+  const t = billEnv('2027-01-17T10:00:00+02:00', { UPLOAD_URL: EXEC });
+  t.req({ type: 'billing_start', plan: 'Μεσαίο', amount_eur: 310, start: '2027-02', trial: true });
+  assert.ok(!/Διακοπή συνδρομής/.test(t.mails[0].body) && !t.mails[0].htmlBody, 'όχι στη δωρεάν εβδομάδα');
+});
+
+test('διακοπή: χωρίς διεύθυνση web app → «απαντήστε σε αυτό το email» αντί για σύνδεσμο', function () {
+  const env = billEnv('2027-01-28T12:00:00+02:00');
+  env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  assert.ok(/Για διακοπή της συνδρομής, απαντήστε σε αυτό το email έως τις 15 του μήνα/.test(env.mails[0].body));
+  assert.ok(!/a=stop/.test(env.mails[0].body));
+});
+
+test('διακοπή: η σελίδα δεν σταματά τίποτα μόνη της· λάθος κλειδί → «δεν ισχύει»· χωρίς πληρωμή → «δεν βρέθηκε»', function () {
+  const env = billEnv('2027-02-10T10:00:00+02:00', { UPLOAD_URL: EXEC, BILLING_ORE: JSON.stringify(PAID_FEB), BILLING_KEY_ORE: 'k123456789012345678901234' });
+  const page = env.ctx.doGet({ parameter: { a: 'stop', c: 'ore', k: 'k123456789012345678901234' } });
+  assert.ok(/Συνδρομή: <b>Βασικό<\/b> · €186,00/.test(page.html), page.html);
+  assert.ok(/έως το τέλος του <b>Φεβρουάριο 2027<\/b>/.test(page.html), 'έως τις 15 → μετά τον τρέχοντα μήνα');
+  assert.ok(/<button id="b">Διακοπή συνδρομής<\/button>/.test(page.html) && /billingStopWeb\("ore","k123456789012345678901234"\)/.test(page.html));
+  assert.strictEqual(page.title, 'Διακοπή συνδρομής · okpublisher');
+  assert.strictEqual(env.state().stop_after, null, 'το άνοιγμα δεν αλλάζει τίποτα');
+  assert.strictEqual(env.mails.length, 0);
+  assert.ok(/δεν ισχύει/.test(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'λάθος' } }).html));
+  assert.ok(/δεν ισχύει/.test(env.ctx.doGet({ parameter: { a: 'stop', c: 'ORE' } }).html));
+  const e2 = billEnv('2027-02-10T10:00:00+02:00', { BILLING_KEY_ORE: 'k123456789012345678901234' });
+  assert.ok(/Δεν βρέθηκε ενεργή συνδρομή/.test(e2.ctx.doGet({ parameter: { a: 'stop', c: 'ORE', k: 'k123456789012345678901234' } }).html));
+  // το doGet της συντόμευσης δεν άλλαξε
+  assert.deepStrictEqual(JSON.parse(env.ctx.doGet({ parameter: {} }).text), { error: 'Λάθος κλειδί', service: 'okpublisher' });
+});
+
+test('διακοπή: το κουμπί → λύση (έως τις 15: μετά τον τρέχοντα μήνα), email στον πελάτη + στο okpublisher, μία φορά', function () {
+  const env = billEnv('2027-02-10T10:00:00+02:00', { UPLOAD_URL: EXEC, BILLING_ORE: JSON.stringify(PAID_FEB), BILLING_KEY_ORE: 'k123456789012345678901234' });
+  const r = env.ctx.billingStopWeb('ORE', 'k123456789012345678901234');
+  assert.ok(/Έγινε\./.test(r) && /μετά τον <b>Φεβρουάριο 2027<\/b>/.test(r), r);
+  assert.strictEqual(env.state().stop_after, '2027-02');
+  const toClient = env.mails.filter(function (m) { return m.to === 'center@example.com'; });
+  const toSystem = env.mails.filter(function (m) { return m.to === 'system@example.com'; });
+  assert.strictEqual(toClient.length, 1);
+  assert.ok(/Η συνδρομή σας σταματά μετά τον Φεβρουάριο 2027/.test(toClient[0].subject));
+  assert.strictEqual(toSystem.length, 1);
+  assert.ok(/Διακοπή συνδρομής: ORE/.test(toSystem[0].subject));
+  assert.ok(env.sheets['Πληρωμές'].rows.some(function (row) { return row.indexOf('λύση (κουμπί)') >= 0; }));
+  const again = env.ctx.billingStopWeb('ORE', 'k123456789012345678901234');
+  assert.ok(/σταματά ήδη μετά τον <b>Φεβρουάριο 2027/.test(again));
+  assert.strictEqual(env.mails.length, 2, 'δεύτερο πάτημα: κανένα νέο email');
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 0, 'καμία χρέωση τον Μάρτιο');
+  assert.ok(/Δεν βρέθηκε ενεργή συνδρομή/.test(env.ctx.billingStopWeb('ORE', 'λάθος')));
+});
+
+test('διακοπή: μετά τις 15 → μετά τον επόμενο μήνα· πληρωμένος μήνας που δεν ξεκίνησε παραδίδεται', function () {
+  let env = billEnv('2027-02-20T10:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB), BILLING_KEY_ORE: 'k123456789012345678901234' });
+  env.ctx.billingStopWeb('ORE', 'k123456789012345678901234');
+  assert.strictEqual(env.state().stop_after, '2027-03');
+  env.at('2027-03-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 1, 'ο Μάρτιος χρεώνεται (λύση μετά τις 15)');
+  env.at('2027-04-01T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.viva.charges.length, 1, 'ο Απρίλιος όχι');
+  // πλήρωσε τον Φεβρουάριο (1ο μήνα) στις 18/1 και διακόπτει στις 20/1 → ο Φεβρουάριος παραδίδεται
+  env = billEnv('2027-01-20T10:00:00+02:00', { BILLING_ORE: JSON.stringify(PAID_FEB), BILLING_KEY_ORE: 'k123456789012345678901234' });
+  env.ctx.billingStopWeb('ORE', 'k123456789012345678901234');
+  assert.strictEqual(env.state().stop_after, '2027-02');
+});
+
+test('web app: appsscript.json με «webapp» (εκτέλεση ως ο ιδιοκτήτης, πρόσβαση οποιοσδήποτε) — αλλιώς η νέα έκδοση σπάει το /exec', function () {
+  const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'appsscript.json'), 'utf8'));
+  assert.deepStrictEqual(m.webapp, { executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' });
 });
 
 test('πληρωμές: η πληρωμή με τον σύνδεσμο βρίσκεται μόνη της· αυτόματη χρέωση την 1η από τις 09:00, μία φορά', function () {

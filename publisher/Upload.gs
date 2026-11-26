@@ -75,8 +75,9 @@ function doPost(e) {
 // Άνοιγμα της διεύθυνσης σε browser: απλός έλεγχος ότι η εφαρμογή ιστού δουλεύει.
 function doGet(e) {
   const q = (e && e.parameter) || {};
+  if (q.a === 'stop') return billingCancelPage_(q);   // «Διακοπή συνδρομής» (Billing.gs)
   const K = uploadClient_(q.c, q.key);
-  return uploadOut_(K ? { ok: true, client: K } : { error: 'Λάθος κλειδί' });
+  return uploadOut_(K ? { ok: true, client: K } : { error: 'Λάθος κλειδί', service: 'okpublisher' });
 }
 
 // Στέλνει σε κάθε πελάτη (NOTIFY_TO_<K>) τον δικό του σύνδεσμο για τη συντόμευση.

@@ -1,5 +1,7 @@
 # Αυτόματο ανέβασμα του Apps Script του okpublisher: αλλαγή στο publisher/*.gs (ή appsscript.json) στο main →
-# δοκιμές → έλεγχος ότι κανείς δεν άλλαξε κώδικα στον editor → clasp push → επαλήθευση → ετικέτα deployed-gas.
+# δοκιμές → έλεγχος ότι κανείς δεν άλλαξε κώδικα στον editor → clasp push → επαλήθευση → ετικέτα deployed-gas →
+# νέα έκδοση στο ΙΔΙΟ /exec της εφαρμογής ιστού (συντόμευση «Στείλε στο ΥΛΙΚΟ», «Διακοπή συνδρομής»), με έλεγχο,
+# αλλιώς επιστροφή στην προηγούμενη έκδοση. Αν αποτύχει μόνο αυτό: ξανά «Run workflow» (ανεβάζει πάντα νέα έκδοση).
 # Αλλαγές στο main μόνο μετά από ρητό ΟΚ του Πέτρου (βλ. CLAUDE.md του publisher-work).
 # Χωρίς την ετικέτα deployed-gas δεν ανεβαίνει τίποτα: πρώτα το «Έλεγχος live».
 # Στο log γράφονται μόνο ονόματα αρχείων — όχι κώδικας ή IDs (το repo είναι δημόσιο).
@@ -84,6 +86,37 @@ jobs:
           node tools/gas/compare.js /tmp/live2/src /tmp/head
           git tag -f deployed-gas HEAD
           git push -qf origin refs/tags/deployed-gas
+      - name: Νέα έκδοση στο ίδιο /exec (εφαρμογή ιστού)
+        id: webapp
+        if: steps.gate.outputs.go == 'true' && (steps.drift.outputs.changed == 'true' || github.event_name == 'workflow_dispatch')
+        env:
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          cd /tmp/live2
+          # Οι αναπτύξεις με έκδοση (όχι η @HEAD του editor): «ID έκδοση» ανά γραμμή. Το ID δεν γράφεται στο log.
+          deps() { clasp list-deployments --json | node -e "let t='';process.stdin.on('data',d=>t+=d).on('end',()=>{const a=JSON.parse(t.slice(t.indexOf('['),t.lastIndexOf(']')+1));console.log(a.filter(x=>x.versionNumber).map(x=>x.deploymentId+' '+x.versionNumber).join('\n'))})"; }
+          list=$(deps)
+          n=$(printf '%s\n' "$list" | grep -c . || true)
+          if [ "$n" != 1 ]; then echo "::error::Βρέθηκαν $n αναπτύξεις εφαρμογής ιστού (περιμέναμε 1). Δεν άλλαξε τίποτα στο /exec."; exit 1; fi
+          id=${list%% *}; before=${list##* }
+          echo "::add-mask::$id"
+          clasp update-deployment "$id" -d "okpublisher ${GITHUB_SHA::7}" >/dev/null
+          after="$before"
+          for i in 1 2 3 4 5 6; do l=$(deps); after=${l##* }; [ "$after" != "$before" ] && break; sleep 5; done
+          echo "Έκδοση στο /exec: @$before → @$after"
+          ok=""
+          for i in 1 2 3 4 5 6; do
+            r=$(curl -sL --max-time 30 "https://script.google.com/macros/s/$id/exec" || true)
+            if grep -q '"service":"okpublisher"' <<<"$r"; then ok=1; break; fi
+            sleep 10
+          done
+          if [ -z "$ok" ] || [ "$after" = "$before" ]; then
+            echo "::error::Η νέα έκδοση δεν απαντά στο /exec — επιστροφή στην @$before."
+            clasp update-deployment "$id" -V "$before" -d "επιστροφή (αποτυχία ${GITHUB_SHA::7})" >/dev/null
+            exit 1
+          fi
+          echo "version=$after" >> "$GITHUB_OUTPUT"
+          echo "✓ Το /exec απαντά με την @$after.
       - name: Σύνοψη
         if: always()
         run: |
@@ -91,4 +124,5 @@ jobs:
             echo "### Deploy Apps Script"
             echo "- Commit: ${GITHUB_SHA::7}"
             echo "- Ανέβηκε νέος κώδικας: ${{ steps.drift.outputs.changed == 'true' && 'ναι' || 'όχι' }}"
+            echo "- Έκδοση στο /exec: ${{ steps.webapp.outputs.version || '—' }}"
           } >> "$GITHUB_STEP_SUMMARY"

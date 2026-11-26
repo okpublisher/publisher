@@ -115,11 +115,13 @@ function api_(method, path, params, tok) {
 }
 
 // Ειδοποίηση προς τον πελάτη K (μόνο στο δικό του email). Χωρίς NOTIFY_TO_<K> δεν στέλνεται τίποτα.
-function notify_(K, subject, text) {
+function notify_(K, subject, text, html) {
   const to = String(cprop_(K, 'NOTIFY_TO', '')).trim();
   if (!to) { console.warn('[' + K + '] Δεν στάλθηκε email (λείπει NOTIFY_TO_' + K + '): ' + subject); return; }
   try {
-    MailApp.sendEmail({ to: to, subject: '[' + clientName_(K) + '] ' + subject, body: text, name: CFG.SENDER_NAME });
+    const m = { to: to, subject: '[' + clientName_(K) + '] ' + subject, body: text, name: CFG.SENDER_NAME };
+    if (html) m.htmlBody = html;
+    MailApp.sendEmail(m);
   } catch (e) { console.error('email failed: ' + e.message); }
 }
 
