@@ -25,6 +25,7 @@
  *     (δωρεάν/κανένα) → clients/<K>/package_change.json (η παραγωγή της 20ής αλλάζει config). Από τον επόμενο μήνα έως τις 19,
  *     αλλιώς από τον μεθεπόμενο.
  *   - Δωρεάν (χωρίς λήξη ή έως μήνα) → config.json billing { type: free, until }. Όχι με ενεργή συνδρομή (πρώτα διακοπή).
+ *     Απλήρωτος σύνδεσμος πληρωμής (π.χ. «Χρέωση» κατά λάθος) → ακυρώνεται: καμία υπενθύμιση/παύση, email στον πελάτη.
  *   - Χρέωση (πακέτο + πρώτος μήνας) → billing_start: σύνδεσμος πληρωμής στο email του πελάτη· config.json billing { type: paid }.
  *   - Διακοπή συνδρομής → όπως το κουμπί του πελάτη (όροι Α.8), με email στον πελάτη.
  *   Το config.json γράφεται με το GITHUB_TOKEN (μόνο τα πεδία billing)· κάθε ενέργεια → email στο okpublisher.
@@ -523,8 +524,10 @@ function admClientFree_(token, client, until) {
   admSaveCfg_(K, cfg, until ? 'δωρεάν έως ' + until : 'δωρεάν χωρίς λήξη', me);
   P_().deleteProperty('FREE_REMINDED_' + K);
   P_().deleteProperty('FREE_ENDED_' + K);
-  systemNotify_('Δωρεάν: ' + admWho_(K, cfg), (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) : 'Δωρεάν χωρίς λήξη') + ' (διαχειριστικό: ' + me.email + ').');
-  return until ? 'Δωρεάν έως και τον ' + monthLabel_(until) + '. Στις ' + BILL_.FREE_REMIND_DAY + ' του μήνα έρχεται υπενθύμιση.' : 'Δωρεάν χωρίς λήξη.';
+  const cancelled = billingCancelUnpaid_(K, 'διαχειριστικό: ' + me.email);
+  const extra = cancelled.length ? ' Ακυρώθηκε ο απλήρωτος σύνδεσμος για τον ' + cancelled.map(monthLabel_).join(', ') + ' (ο πελάτης πήρε email).' : '';
+  systemNotify_('Δωρεάν: ' + admWho_(K, cfg), (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) : 'Δωρεάν χωρίς λήξη') + ' (διαχειριστικό: ' + me.email + ').' + extra);
+  return (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) + '. Στις ' + BILL_.FREE_REMIND_DAY + ' του μήνα έρχεται υπενθύμιση.' : 'Δωρεάν χωρίς λήξη.') + extra;
 }
 
 function admClientCharge_(token, client, plan, start) {
@@ -537,6 +540,8 @@ function admClientCharge_(token, client, plan, start) {
   const c = admClientCfg_(client), K = c.K, cfg = c.cfg, st = billState_(K);
   if (admPaying_(st) && !st.stop_after) throw new Error('Ο πελάτης έχει ήδη συνδρομή: για άλλο πακέτο, «Πακέτο».');
   if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Ο πελάτης δεν έχει email (NOTIFY_TO_' + K + ').');
+  const wasFree = cfg.billing && cfg.billing.type === 'free' && (!cfg.billing.until || cfg.billing.until >= start)
+    ? (cfg.billing.until ? ' Ακυρώθηκαν οι δωρεάν μήνες ' + monthLabel_(start) + '–' + monthLabel_(cfg.billing.until) + '.' : ' Δεν είναι πια δωρεάν.') : '';
   const res = {};
   billingRequest_(K, { type: 'billing_start', plan: p.name, amount_eur: planCents_(p) / 100, start: start, code: cfg.code || '' }, res);
   cfg.billing = { type: 'paid', since: start };
@@ -544,8 +549,8 @@ function admClientCharge_(token, client, plan, start) {
   try { admSaveCfg_(K, cfg, 'συνδρομή ' + p.name + ' από ' + start, me); } catch (e) { note = ' (config.json: ' + e.message + ')'; }
   if (String(cfg.package || '') !== p.name) planChangeRepo_(K, { plan: p.name, previous: String(cfg.package || ''), from: start, week: p.week, status: 'scheduled', by: me.email });
   systemNotify_('Χρέωση: ' + admWho_(K, cfg), 'Στάλθηκε σύνδεσμος πληρωμής (' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ) για τον ' + monthLabel_(start) +
-    ' (διαχειριστικό: ' + me.email + '). Το πρόγραμμα του ' + monthLabel_(start) + ' ετοιμάζεται μόνο αφού φανεί «πληρώθηκε».' + note);
-  return 'Στάλθηκε σύνδεσμος πληρωμής στο email του πελάτη: ' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ, για τον ' + monthLabel_(start) + '.' + note;
+    ' (διαχειριστικό: ' + me.email + '). Το πρόγραμμα του ' + monthLabel_(start) + ' ετοιμάζεται μόνο αφού φανεί «πληρώθηκε».' + wasFree + note);
+  return 'Στάλθηκε σύνδεσμος πληρωμής στο email του πελάτη: ' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ, για τον ' + monthLabel_(start) + '.' + wasFree + note;
 }
 
 function admClientStop_(token, client) {

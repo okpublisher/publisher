@@ -497,6 +497,29 @@ function freeCycle_(now) {
   });
 }
 
+function prevYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] === 1 ? (p[0] - 1) + '-12' : p[0] + '-' + ('0' + (p[1] - 1)).slice(-2); }
+
+// Ο πελάτης περνά σε «Δωρεάν»: κάθε απλήρωτος μήνας ακυρώνεται, καμία νέα χρέωση/υπενθύμιση/παύση, email στον πελάτη.
+// Επιστρέφει τους μήνες που ακυρώθηκαν ([] αν δεν υπήρχε τίποτα απλήρωτο).
+function billingCancelUnpaid_(K, by) {
+  const st = billState_(K);
+  if (!st) return [];
+  const months = st.months || {}, cancelled = [];
+  Object.keys(months).sort().forEach(function (m) {
+    if (months[m].st === 'pending' || months[m].st === 'charging') { months[m].st = 'cancelled'; months[m].cancelled_at = new Date().toISOString(); cancelled.push(m); }
+  });
+  const stop = prevYm_(cancelled.length ? cancelled[0] : (st.start || ym_(new Date())));
+  if (!st.stop_after || st.stop_after > stop) st.stop_after = stop;
+  billSave_(K, st);
+  P_().deleteProperty('BILLING_PAUSED_' + K);
+  if (cancelled.length) {
+    billLog_(K, cancelled.join(', '), 0, 'σύνδεσμος ακυρώθηκε', 'πέρασε σε «Δωρεάν» (' + by + ')', '');
+    notify_(K, 'Ο σύνδεσμος πληρωμής ακυρώθηκε', 'Ο σύνδεσμος πληρωμής για τον ' + cancelled.map(monthLabel_).join(', ') +
+      ' δεν χρειάζεται πια: δεν χρειάζεται να κάνετε τίποτα και δεν θα γίνει καμία χρέωση. Οι δημοσιεύσεις σας συνεχίζονται κανονικά.');
+  }
+  return cancelled;
+}
+
 function nextYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] === 12 ? (p[0] + 1) + '-01' : p[0] + '-' + ('0' + (p[1] + 1)).slice(-2); }
 // «Η επόμενη χρέωση…» μόνο αν θα υπάρξει (όχι μετά από λύση).
 function nextChargeText_(st, m) {
@@ -674,6 +697,23 @@ function billingClient_(K, now) {
   // 1. Παραγγελίες σε αναμονή: πληρώθηκαν; (κάθε ώρα, ώστε η επανεκκίνηση να είναι γρήγορη)
   months.forEach(function (m) {
     const rec = st.months[m];
+    // Ακυρωμένος σύνδεσμος (ο πελάτης πέρασε σε «Δωρεάν»): ελέγχεται ακόμα όσο μπορεί να πληρωθεί, για να μη χαθεί πληρωμή.
+    const late = rec.st === 'cancelled' && rec.order && rec.cancelled_at &&
+      Date.now() - new Date(rec.cancelled_at).getTime() < (BILL_.LINK_SECONDS / 86400 + 2) * 86400000;
+    if (late) {
+      const orders0 = [rec.order].concat(rec.old_orders || []);
+      for (let i = 0; i < orders0.length; i++) {
+        const p0 = vivaPaidTx_(orders0[i]);
+        if (!p0) continue;
+        st.tx = p0.tx;
+        markPaid_(K, st, m, p0.tx);
+        billLog_(K, m, st.amount, 'πληρωμή ακυρωμένου συνδέσμου', 'πληρώθηκε', p0.tx, rec.pay);
+        systemNotify_('Πληρώθηκε ακυρωμένος σύνδεσμος: ' + K, 'Ο ' + K + ' πλήρωσε τον ' + monthLabel_(m) + ' (' + rec.pay + ', €' + euros_(st.amount) +
+          ') με σύνδεσμο που είχε ακυρωθεί (πέρασε σε «Δωρεάν»). Αποφάσισε: επιστροφή από τη Viva ή κανονική συνδρομή από το διαχειριστικό.');
+        return;
+      }
+      return;
+    }
     if (rec.st !== 'pending' || !rec.order) return;
     const orders = [rec.order].concat(rec.old_orders || []);
     for (let i = 0; i < orders.length; i++) {

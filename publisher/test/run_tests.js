@@ -1926,6 +1926,38 @@ test('διαχειριστικό: διακοπή συνδρομής (όροι Α
   });
 });
 
+test('διαχειριστικό: «Χρέωση» κατά λάθος σε δωρεάν πελάτη → λέει τι ακυρώνει· «Δωρεάν» μετά → ακυρώνει τον σύνδεσμο, καμία υπενθύμιση/παύση', function () {
+  const env = actEnv();
+  env.act({ act: 'client_free', client: 'OKP', until: '2027-04' });
+  const r = env.act({ act: 'client_charge', client: 'OKP', plan: 'Μεσαίο', start: '2027-01' });
+  assert.ok(/Ακυρώθηκαν οι δωρεάν μήνες Ιανουάριο 2027–Απρίλιο 2027\./.test(r.message), r.message || r.error);
+  assert.strictEqual(JSON.parse(env.props.BILLING_OKP).months['2027-01'].st, 'pending');
+  const order = String(9000000000000000 + env.viva.n);
+  const f = env.act({ act: 'client_free', client: 'OKP', until: '2027-04' });
+  assert.ok(/Ακυρώθηκε ο απλήρωτος σύνδεσμος για τον Ιανουάριο 2027/.test(f.message), f.message || f.error);
+  const st = JSON.parse(env.props.BILLING_OKP);
+  assert.deepStrictEqual([st.months['2027-01'].st, st.stop_after], ['cancelled', '2026-12']);
+  assert.deepStrictEqual(env.gh('clients/OKP/config.json').billing, { type: 'free', until: '2027-04' });
+  const toClient = function () { return env.mails.filter(function (m) { return m.to === 'okp-client@example.com'; }); };
+  assert.ok(/Ο σύνδεσμος πληρωμής ακυρώθηκε/.test(toClient().pop().subject));
+  const n = toClient().length;
+  ['2027-01-01T10:00:00+02:00', '2027-01-08T10:00:00+02:00', '2027-01-16T10:00:00+02:00', '2027-02-01T10:00:00+02:00'].forEach(function (t) {
+    env.nowMs = new Date(t).getTime(); env.ctx.billingCycle();
+  });
+  assert.strictEqual(toClient().length, n, 'καμία υπενθύμιση ή νέος σύνδεσμος');
+  assert.ok(!env.props.BILLING_PAUSED_OKP, 'καμία παύση');
+  assert.strictEqual(env.viva.orders.length, 1, 'καμία νέα παραγγελία');
+  // αν πληρώσει τον ακυρωμένο σύνδεσμο μέσα στις μέρες που ισχύει → καταγράφεται + email στο okpublisher
+  const env2 = actEnv();
+  env2.act({ act: 'client_charge', client: 'OKP', plan: 'Βασικό', start: '2027-01' });
+  env2.act({ act: 'client_free', client: 'OKP', until: '' });
+  env2.viva.paid[String(9000000000000000 + env2.viva.n)] = 'TXLATE';
+  env2.nowMs += 2 * 86400000; env2.ctx.billingCycle();
+  const st2 = JSON.parse(env2.props.BILLING_OKP);
+  assert.deepStrictEqual([st2.months['2027-01'].st, st2.months['2027-01'].pay], ['paid', 'PAY-0001']);
+  assert.ok(env2.mails.some(function (m) { return /Πληρώθηκε ακυρωμένος σύνδεσμος: OKP/.test(m.subject); }));
+});
+
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {
   const env = admEnv();
   const r = env.ctx.admParseCsv_('﻿a,b\r\n"x\ny","z ""q"""\r\n,\n');
