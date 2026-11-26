@@ -2337,7 +2337,7 @@ function fbLinkEnv(fail) {
     } });
 }
 
-test('Facebook: σύνδεσμος = permalink_url (ανοίγει και στο κινητό) για post/carousel/reel· story χωρίς permalink → κενό', function () {
+test('Facebook: σύνδεσμος = permalink_url (ανοίγει και στο κινητό) για post/carousel/reel· story χωρίς permalink → stories της σελίδας', function () {
   const env = fbLinkEnv(false), ctx = env.ctx;
   const img = ctx.publishFb_({ client: 'ORE', id: 'A', type: 'IMAGE', images: ['https://x/1.jpg'], caption: 'c' });
   assert.ok(/^https:\/\/www\.facebook\.com\/okpage\/posts\/pfbid0PP\d+$/.test(img.link), img.link);
@@ -2346,7 +2346,9 @@ test('Facebook: σύνδεσμος = permalink_url (ανοίγει και στο
   const reel = ctx.publishFb_({ client: 'ORE', id: 'C', type: 'REEL', video: 'https://x/v.mp4', caption: 'c' });
   assert.ok(/^https:\/\/www\.facebook\.com\/reel\/V\d+\/$/.test(reel.link), 'σχετικός σύνδεσμος βίντεο → πλήρης: ' + reel.link);
   const st = ctx.publishFb_({ client: 'ORE', id: 'D', type: 'STORY', images: ['https://x/1.jpg'] });
-  assert.strictEqual(st.link, '');
+  assert.strictEqual(st.link, 'https://www.facebook.com/stories/PAGE1', 'story χωρίς permalink → τα stories της σελίδας (24 ώρες)');
+  const vs = ctx.publishFb_({ client: 'ORE', id: 'E', type: 'STORY', images: [], video: 'https://x/s.mp4' });
+  assert.ok(/^https:\/\/www\.facebook\.com\/(reel\/V\d+\/|stories\/PAGE1)$/.test(vs.link), vs.link);
   assert.ok(env.calls.some(function (c) { return /PS\d+\?fields=permalink_url/.test(c.url); }), 'ζητήθηκε και για το story');
 });
 

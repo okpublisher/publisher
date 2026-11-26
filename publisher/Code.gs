@@ -302,8 +302,13 @@ function fbVideo_(pid, pt, edge, videoUrl, desc) {
   const fin = { upload_phase: 'finish', video_id: st.video_id };
   if (edge === 'video_reels') { fin.video_state = 'PUBLISHED'; fin.description = desc || ''; }
   const r = api_('post', pid + '/' + edge, fin, pt);
-  return { id: r.post_id || st.video_id, link: fbPermalink_(r.post_id, pt) || fbPermalink_(st.video_id, pt) };
+  return { id: r.post_id || st.video_id, link: fbPermalink_(r.post_id, pt) || fbPermalink_(st.video_id, pt) ||
+    (edge === 'video_stories' ? fbStoriesLink_(pid) : '') };
 }
+
+// Stories στο Facebook: η Meta δεν δίνει σύνδεσμο ανάρτησης (δοκιμή 26/11/2026: «nonexisting field (permalink_url)»).
+// Απόφαση Πέτρου 26/11: σύνδεσμος στα stories της σελίδας — ανοίγει το story μόνο τις 24 ώρες που ζει.
+function fbStoriesLink_(pid) { return pid ? 'https://www.facebook.com/stories/' + pid : ''; }
 
 // Σύνδεσμος δημοσίευσης στο Facebook (από 26/11/2026): το permalink_url του Graph, που ανοίγει και στην εφαρμογή του κινητού
 // (το «facebook.com/<σελίδα>_<post>» ανοίγει μόνο από υπολογιστή). Σχετικός (/…) → https://www.facebook.com/…. Ποτέ σφάλμα:
@@ -339,7 +344,7 @@ function publishFb_(item) {
       if (item.video) return fbVideo_(pid, pt, 'video_stories', item.video, '');
       const ph = api_('post', pid + '/photos', { url: item.images[0], published: 'false' }, pt);
       const r = api_('post', pid + '/photo_stories', { photo_id: ph.id }, pt);
-      return { id: r.post_id || ph.id, link: fbPermalink_(r.post_id, pt) };
+      return { id: r.post_id || ph.id, link: fbPermalink_(r.post_id, pt) || fbStoriesLink_(pid) };
     }
     case 'REEL':
       return fbVideo_(pid, pt, 'video_reels', item.video, cap);
