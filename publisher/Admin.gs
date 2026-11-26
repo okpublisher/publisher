@@ -505,18 +505,29 @@ function admClients_() {
 
 function admDays_(a) { return Array.isArray(a) ? a.map(String).slice(0, 7) : []; }
 
-// Σύνοψη πληρωμών ενός πελάτη (χωρίς κωδικούς Viva).
+// Σύνοψη πληρωμών ενός πελάτη (χωρίς κωδικούς Viva). Από 26/11/2026 με «μέρα» πελάτη (περίοδοι) και το «Συνεχίζουμε;».
 function admBilling_(K) {
   const st = billState_(K);
   if (!st) return null;
-  const cur = ym_(new Date()), months = st.months || {};
-  const list = Object.keys(months).sort().slice(-6).map(function (m) { return { month: m, st: String(months[m].st || ''), pay: String(months[m].pay || '') }; });
-  let next = st.start && st.start > cur ? st.start : cur;         // ο πρώτος μήνας από σήμερα που δεν έχει πληρωθεί
+  const now = new Date();
+  if (st.offer) {
+    return { plan: String(st.plan || ''), amount_eur: st.amount ? st.amount / 100 : 0, start: '', stop_after: '', card: false, months: [], next: '',
+      next_date: '', change: null, unpaid: [], unpaid_labels: [], day: 0,
+      offer: { trial_start: st.offer.trial_start, chosen: st.offer.chosen || '', day: offerDay_(st, now), until: addDays_(st.offer.trial_start, OFFER_.LAST_DAY - 1),
+        closed: st.offer.closed || '', cancelled: !!st.offer.cancelled } };
+  }
+  if (!st.start) return null;
+  const cur = periodOf_(st, now), months = st.months || {};
+  const list = Object.keys(months).sort().slice(-6).map(function (m) { return { month: m, label: perShort_(st, m), st: String(months[m].st || ''), pay: String(months[m].pay || '') }; });
+  let next = st.start && st.start > cur ? st.start : cur;         // η πρώτη περίοδος από σήμερα που δεν έχει πληρωθεί
   for (let i = 0; i < 24 && months[next] && months[next].st === 'paid'; i++) next = nextYm_(next);
   if (st.stop_after && next > st.stop_after) next = '';
+  const unpaid = Object.keys(months).filter(function (m) { return m <= cur && months[m].st !== 'paid' && months[m].st !== 'cancelled'; }).sort();
   return { plan: String(st.plan || ''), amount_eur: st.amount ? st.amount / 100 : 0, start: st.start || '', stop_after: st.stop_after || '',
-    card: !!st.tx, months: list, next: next, change: st.change ? { plan: String(st.change.plan), from: String(st.change.from) } : null,
-    unpaid: Object.keys(months).filter(function (m) { return m <= cur && months[m].st !== 'paid'; }).sort() };
+    card: !!st.tx, months: list, next: next, next_date: next ? perStart_(st, next) : '', day: billDay_(st),
+    change: st.change ? { plan: String(st.change.plan), from: String(st.change.from), from_label: perShort_(st, st.change.from) } : null,
+    stop_label: st.stop_after ? perShort_(st, st.stop_after) : '',
+    unpaid: unpaid, unpaid_labels: unpaid.map(function (m) { return perShort_(st, m); }) };
 }
 
 // Επαφές και σεταρίσματα από το Sheet της φόρμας (CSV με το token του script). Cache 1′.
@@ -655,7 +666,7 @@ function admSaveCfg_(K, cfg, what, me) {
 }
 function admWho_(K, cfg) { return (cfg.code ? cfg.code + ' · ' : '') + (cfg.name || clientName_(K)) + ' (' + K + ')'; }
 // Ενεργή συνδρομή: πληρωμένη κάρτα και όχι λήξη στο παρελθόν.
-function admPaying_(st) { return !!(st && st.tx && !(st.stop_after && st.stop_after < ym_(new Date()))); }
+function admPaying_(st) { return !!(st && st.tx && st.start && !st.offer && !(st.stop_after && st.stop_after < periodOf_(st, new Date()))); }
 
 function admClientPlan_(token, client, plan) {
   const me = admSession_(token);
@@ -670,7 +681,7 @@ function admClientPlan_(token, client, plan) {
     const r = planChangeSet_(K, st, p, from, 'διαχειριστικό: ' + me.email);
     if (r === 'same') return 'Είναι ήδη ' + p.name + '.';
     if (r === 'cancelled') return 'Η αλλαγή ακυρώθηκε: μένει ' + p.name + '. Ο πελάτης πήρε email.';
-    return p.name + ' από τον ' + monthLabel_(from) + ' (€' + euros_(planCents_(p)) + ' με ΦΠΑ). Ο πελάτης πήρε email.';
+    return p.name + ' από ' + perFor_(st, from) + ' (€' + euros_(planCents_(p)) + ' με ΦΠΑ). Ο πελάτης πήρε email.';
   }
   const from = planChangeFrom_({ months: {} }, new Date());
   const was = String(cfg.package || '');
@@ -702,7 +713,8 @@ function admClientFree_(token, client, until) {
   P_().deleteProperty('FREE_REMINDED_' + K);
   P_().deleteProperty('FREE_ENDED_' + K);
   const cancelled = billingCancelUnpaid_(K, 'διαχειριστικό: ' + me.email);
-  const extra = cancelled.length ? ' Ακυρώθηκε ο απλήρωτος σύνδεσμος για τον ' + cancelled.map(monthLabel_).join(', ') + ' (ο πελάτης πήρε email).' : '';
+  const extra = cancelled[0] === 'offer' ? ' Έκλεισαν οι σύνδεσμοι πληρωμής μετά τη δωρεάν εβδομάδα.'
+    : cancelled.length ? ' Ακυρώθηκε ο απλήρωτος σύνδεσμος για τον ' + cancelled.map(monthLabel_).join(', ') + ' (ο πελάτης πήρε email).' : '';
   systemNotify_('Δωρεάν: ' + admWho_(K, cfg), (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) : 'Δωρεάν χωρίς λήξη') + ' (διαχειριστικό: ' + me.email + ').' + extra);
   return (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) + '. Στις ' + BILL_.FREE_REMIND_DAY + ' του μήνα έρχεται υπενθύμιση.' : 'Δωρεάν χωρίς λήξη.') + extra;
 }
@@ -735,11 +747,11 @@ function admClientStop_(token, client) {
   admNeedAdmin_(me);
   const c = admClientCfg_(client), K = c.K, st = billState_(K);
   if (!admPaying_(st)) throw new Error('Δεν υπάρχει ενεργή συνδρομή.');
-  if (st.stop_after) return 'Η συνδρομή σταματά ήδη μετά τον ' + monthLabel_(st.stop_after) + '.';
+  if (st.stop_after) return 'Η συνδρομή σταματά ήδη μετά ' + perFor_(st, st.stop_after) + '.';
   const after = stopAfterFor_(st, new Date());
   billingStop_(K, st, after, false, 'διαχειριστικό: ' + me.email);
-  systemNotify_('Διακοπή συνδρομής: ' + K, admWho_(K, c.cfg) + ': διακοπή από το διαχειριστικό (' + me.email + '). Τελευταίος μήνας: ' + monthLabel_(after) + '.');
-  return 'Η συνδρομή σταματά μετά τον ' + monthLabel_(after) + '. Ο πελάτης πήρε email.';
+  systemNotify_('Διακοπή συνδρομής: ' + K, admWho_(K, c.cfg) + ': διακοπή από το διαχειριστικό (' + me.email + '). Τελευταία περίοδος: ' + perShort_(st, after) + '.');
+  return 'Η συνδρομή σταματά μετά ' + perFor_(st, after) + '. Ο πελάτης πήρε email.';
 }
 
 // Έγκριση: 'email' (κανονικά, ΟΚ στο email του μήνα) ή 'none' (χωρίς έγκριση· μόνο ενημερωτικό email). Ισχύει από την επόμενη παραγωγή.

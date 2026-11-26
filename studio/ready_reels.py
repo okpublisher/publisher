@@ -145,6 +145,10 @@ def locked_date(name):
 
 
 def month_days(month):
+    """Οι μέρες της περιόδου: «ΕΕΕΕ-ΜΜ» (ημερολογιακός μήνας) ή «ΕΕΕΕ-ΜΜ-ΗΗ:ΕΕΕΕ-ΜΜ-ΗΗ» (περίοδος πελάτη, από 26/11/2026)."""
+    if ':' in month:
+        a, b = (date.fromisoformat(x) for x in month.split(':'))
+        return [date.fromordinal(o).isoformat() for o in range(a.toordinal(), b.toordinal() + 1)]
     y, m = map(int, month.split('-'))
     return [date(y, m, d).isoformat() for d in range(1, calendar.monthrange(y, m)[1] + 1)]
 
@@ -153,6 +157,7 @@ def place(month, post_weekdays, our_reels, names, mode):
     """Καθαρή λογική (χωρίς αρχεία). Επιστρέφει {'assign': {ημ: όνομα}, 'replaces': {ημ: reel|post|extra},
     'next_month': [ονόματα], 'notes': [...]}. Ποτέ δύο σε μία ημέρα."""
     days = month_days(month)
+    first, last = days[0], days[-1]
     posts = [d for d in days if date.fromisoformat(d).weekday() in post_weekdays]
     our = [d for d in posts if d in set(our_reels)]
     assign, replaces, nxt, notes = {}, {}, [], []
@@ -163,13 +168,13 @@ def place(month, post_weekdays, our_reels, names, mode):
     free = []
     for n in sorted(names, key=lambda x: (locked_date(x) or '9999', Path(x).name)):
         ld = locked_date(n)
-        if ld and ld[:7] == month:
+        if ld and first <= ld <= last:
             if ld in assign:
                 notes.append(f'{Path(n).name}: η {ld} έχει ήδη έτοιμο reel → μπαίνει σε ελεύθερη θέση')
                 free.append(n)
             else:
                 assign[ld] = n; replaces[ld] = kind(ld)
-        elif ld and ld[:7] > month:
+        elif ld and ld > last:
             nxt.append(n); notes.append(f'{Path(n).name}: κλειδωμένο για {ld} → επόμενος μήνας')
         elif ld:
             notes.append(f'{Path(n).name}: η ημερομηνία {ld} πέρασε → μπαίνει σε ελεύθερη θέση')
@@ -217,7 +222,7 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('check'); c.add_argument('files', nargs='+')
-    p = sub.add_parser('plan'); p.add_argument('month'); p.add_argument('files', nargs='*')
+    p = sub.add_parser('plan'); p.add_argument('month', help='ΕΕΕΕ-ΜΜ ή ΕΕΕΕ-ΜΜ-ΗΗ:ΕΕΕΕ-ΜΜ-ΗΗ (περίοδος)'); p.add_argument('files', nargs='*')
     p.add_argument('--our-reels', default=''); p.add_argument('--client')
     d = sub.add_parser('add'); d.add_argument('batch'); d.add_argument('day'); d.add_argument('file'); d.add_argument('--client')
     a = ap.parse_args()

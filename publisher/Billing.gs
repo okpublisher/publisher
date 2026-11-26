@@ -1,7 +1,13 @@
 /**
  * Πληρωμές συνδρομής μέσω Viva (okpublisher, ξεχωριστό αρχείο στο ίδιο project).
  *
- * Ροή (όροι Α.7):
+ * Περίοδοι (από 26/11/2026, όροι v8 Α.7): κάθε συνδρομή έχει «μέρα» (st.day, 1–28 = η μέρα της πρώτης πληρωμής· 29–31 →
+ *   1η του επόμενου μήνα). Οι περίοδοι ξεκινούν κάθε μήνα εκείνη τη μέρα· το κλειδί τους στο st.months μένει «ΕΕΕΕ-ΜΜ» (ο μήνας
+ *   όπου ξεκινούν). Χρέωση την 1η μέρα της περιόδου (από τις 09:00), υπενθύμιση την 8η, παύση την 16η, διακοπή/αλλαγή πακέτου
+ *   με τις μέρες της περιόδου. Χωρίς st.day (ORE, OKP, παλιές) = από την 1η του μήνα, όπως πριν (ίδια κείμενα). Βλ. «περίοδοι».
+ * Μετά τη δωρεάν εβδομάδα (όροι v8 Α.4): billing_start { trial: true, trial_start } χωρίς start → «Συνεχίζουμε;» με σύνδεσμο ανά
+ *   πακέτο· η πληρωμή ορίζει τη «μέρα» και την 1η περίοδο (βλ. OFFER_ πιο κάτω).
+ * Ροή (όροι Α.7, παλιά διατύπωση με «1η του μήνα» = περίοδοι με day 1):
  *   1. Ο πελάτης λέει «ναι» μετά τον δωρεάν μήνα → ο Claude γράφει αίτημα billing_start στο outbox του πελάτη.
  *      Το Apps Script φτιάχνει παραγγελία πληρωμής στη Viva (με αποθήκευση κάρτας για μηνιαία χρέωση) και στέλνει
  *      τον σύνδεσμο ΜΟΝΟ στο NOTIFY_TO_<K>.
@@ -113,12 +119,12 @@ function vivaBasic_() {
 }
 
 // Νέα παραγγελία πληρωμής (Smart Checkout) με αποθήκευση κάρτας για τη μηνιαία χρέωση.
-function vivaCreateOrder_(K, st, month) {
+function vivaCreateOrder_(K, st, month, label) {
   const to = String(cprop_(K, 'NOTIFY_TO', '')).split(',')[0].trim();
   const body = {
     amount: st.amount, allowRecurring: true,
     paymentTimeout: Number(prop_('VIVA_LINK_SECONDS', BILL_.LINK_SECONDS)),
-    customerTrns: 'okpublisher · ' + st.plan + ' · ' + monthLabel_(month),
+    customerTrns: 'okpublisher · ' + st.plan + ' · ' + (label || perShort_(st, month)),
     merchantTrns: 'okp ' + K + ' ' + month,
     customer: { email: to, fullName: clientName_(K), countryCode: 'GR', requestLang: 'el-GR' },
     tags: ['okpublisher', K, month],
@@ -158,7 +164,7 @@ function vivaPaidTx_(orderCode) {
 
 // Μηνιαία χρέωση με το ID της πρώτης συναλλαγής. { ok, tx, error }
 function vivaCharge_(st, K, month) {
-  const body = { amount: st.amount, customerTrns: 'okpublisher · ' + st.plan + ' · ' + monthLabel_(month), merchantTrns: 'okp ' + K + ' ' + month };
+  const body = { amount: st.amount, customerTrns: 'okpublisher · ' + st.plan + ' · ' + perShort_(st, month), merchantTrns: 'okp ' + K + ' ' + month };
   const src = String(prop_('VIVA_SOURCE_CODE', '')).trim();
   if (src) body.sourceCode = src;
   const r = UrlFetchApp.fetch(vivaHosts_().web + '/api/transactions/' + encodeURIComponent(st.tx), { method: 'post', muteHttpExceptions: true,
@@ -178,14 +184,44 @@ function billState_(K) {
 function billSave_(K, st) { P_().setProperty('BILLING_' + K, JSON.stringify(st)); }
 function billPaused_(K) { return cprop_(K, 'BILLING_PAUSED', 'false') === 'true'; }
 function ym_(d) { return athens_(d, 'yyyy-MM'); }
+
+// ---------------------------------------------------------------- περίοδοι (από 26/11/2026)
+// Κάθε πελάτης έχει «τη μέρα του» (st.day, 1–28: η μέρα της πρώτης πληρωμής· 29–31 → 1η του επόμενου μήνα). Μία περίοδος
+// ξεκινά κάθε μήνα εκείνη τη μέρα, άρα το κλειδί της (st.months) μένει «ΕΕΕΕ-ΜΜ» = ο μήνας στον οποίο ξεκινά. Χωρίς st.day
+// (παλιές συνδρομές, ORE, OKP) = 1η του μήνα, όπως πριν: ίδια κείμενα, ίδιες ημερομηνίες.
+function billDay_(st) { const d = Number(st && st.day) || 1; return d >= 1 && d <= 28 ? Math.floor(d) : 1; }
+function ymd_(y, m, d) { return y + '-' + ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2); }
+function utc_(s) { const p = String(s).split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]); }
+function addDays_(s, n) { const d = new Date(utc_(s) + n * 86400000); return ymd_(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()); }
+function perStart_(st, ym) { const p = String(ym).split('-').map(Number); return ymd_(p[0], p[1], billDay_(st)); }
+function perEnd_(st, ym) { return addDays_(perStart_(st, nextYm_(ym)), -1); }
+// Η περίοδος (κλειδί ΕΕΕΕ-ΜΜ) στην οποία είμαστε τώρα.
+function periodOf_(st, now) { const m = ym_(now); return Number(athens_(now, 'd')) >= billDay_(st) ? m : prevYm_(m); }
+// Πόσο μέσα στην περίοδο είμαστε: 1 = η πρώτη μέρα της.
+function periodDay_(st, now, ym) { return Math.round((utc_(athens_(now, 'yyyy-MM-dd')) - utc_(perStart_(st, ym || periodOf_(st, now)))) / 86400000) + 1; }
+function dm_(s, withYear) { const p = String(s).split('-').map(Number); return p[2] + '/' + p[1] + (withYear ? '/' + p[0] : ''); }
+// «27/1–26/2/2027» (ή «27/12/2026–26/1/2027» όταν αλλάζει ο χρόνος).
+function perRange_(st, ym) {
+  const a = perStart_(st, ym), b = perEnd_(st, ym);
+  return dm_(a, a.slice(0, 4) !== b.slice(0, 4)) + '–' + dm_(b, true);
+}
+// Το ίδιο, με το όνομα του μήνα / τις ημερομηνίες σε <b> (για τις σελίδες).
+function perForB_(st, ym) { return billDay_(st) === 1 ? 'τον <b>' + esc_(monthLabel_(ym)) + '</b>' : 'την περίοδο <b>' + esc_(perRange_(st, ym)) + '</b>'; }
+function perFor_(st, ym) { return billDay_(st) === 1 ? 'τον ' + monthLabel_(ym) : 'την περίοδο ' + perRange_(st, ym); }
+function perNom_(st, ym) { return billDay_(st) === 1 ? 'Μήνας: ' + monthNom_(ym) : 'Περίοδος: ' + perRange_(st, ym); }
+function perShort_(st, ym) { return billDay_(st) === 1 ? monthNom_(ym) : perRange_(st, ym); }
+// «έως τις 15 του μήνα» (1η) ή «έως τις 10/3» (η n-οστή μέρα της περιόδου ym).
+function perBy_(st, ym, n) { return billDay_(st) === 1 ? 'έως τις ' + n + ' του μήνα' : 'έως τις ' + dm_(addDays_(perStart_(st, ym), n - 1)); }
+// Για τη διακοπή (όροι Α.8), χωρίς συγκεκριμένη περίοδο.
+function stopRule_(st) { return billDay_(st) === 1 ? 'έως τις 15 του μήνα' : 'μέσα στις πρώτες 15 μέρες της περιόδου'; }
 // ---------------------------------------------------------------- διακοπή συνδρομής
 function billingStop_(K, st, after, quiet, how) {
   st.stop_after = after;
   billSave_(K, st);
-  billLog_(K, after, 0, 'λύση (' + how + ')', 'καμία χρέωση μετά τον ' + monthLabel_(after), '');
+  billLog_(K, after, 0, 'λύση (' + how + ')', 'καμία χρέωση μετά ' + perFor_(st, after), '');
   if (quiet) return;
-  notify_(K, 'Η συνδρομή σας σταματά μετά τον ' + monthLabel_(after),
-    'Λάβαμε το αίτημά σας. Η συνδρομή σας (' + st.plan + ') σταματά μετά τον ' + monthLabel_(after) + ': ' +
+  notify_(K, 'Η συνδρομή σας σταματά μετά ' + perFor_(st, after),
+    'Λάβαμε το αίτημά σας. Η συνδρομή σας (' + st.plan + ') σταματά μετά ' + perFor_(st, after) + ': ' +
     'οι δημοσιεύσεις συνεχίζονται έως το τέλος του μήνα και δεν θα γίνει καμία άλλη χρέωση. ' +
     'Μετά αφαιρούμε την πρόσβασή μας και σβήνουμε τα στοιχεία σας μέσα σε 30 ημέρες. Ό,τι έχει δημοσιευτεί μένει στη σελίδα σας.\n\n' +
     'Ευχαριστούμε για τη συνεργασία! Αν αλλάξετε γνώμη, απαντήστε σε αυτό το email.');
@@ -211,9 +247,9 @@ function esc_(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 // Email πληρωμής με το κουμπί «Διακοπή συνδρομής» (και ως σύνδεσμο στο απλό κείμενο).
 function billNotify_(K, subject, text) {
-  const u = cancelUrl_(K), pu = planUrl_(K);
+  const u = cancelUrl_(K), pu = planUrl_(K), rule = stopRule_(billState_(K));
   const tail = (pu ? '\n\nΑλλαγή πακέτου: ' + pu : '') +
-    (u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email έως τις 15 του μήνα.');
+    (u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email ' + rule + '.');
   const btn = function (href, label) {
     return '<a href="' + esc_(href) + '" style="display:inline-block;padding:9px 18px;margin:0 8px 8px 0;border:2px solid #5B21D6;' +
       'border-radius:999px;color:#5B21D6;text-decoration:none;font-weight:bold">' + label + '</a>';
@@ -221,15 +257,15 @@ function billNotify_(K, subject, text) {
   const html = '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E">' +
     esc_(text).replace(/(https:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>') +
     (u ? '<p style="margin-top:28px">' + (pu ? btn(pu, 'Αλλαγή πακέτου') : '') + btn(u, 'Διακοπή συνδρομής') + '</p>'
-      : '<p style="margin-top:24px;color:#4A4C66">Για διακοπή της συνδρομής, απαντήστε σε αυτό το email έως τις 15 του μήνα.</p>') + '</div>';
+      : '<p style="margin-top:24px;color:#4A4C66">Για διακοπή της συνδρομής, απαντήστε σε αυτό το email ' + rule + '.</p>') + '</div>';
   notify_(K, subject, text + tail, html);
 }
 
 // Πότε σταματά αν ζητήσει διακοπή τώρα (όροι Α.8): έως τις 15 → μετά τον τρέχοντα μήνα, αλλιώς μετά τον επόμενο.
 // Ό,τι έχει ήδη πληρωθεί (π.χ. ο 1ος μήνας πριν ξεκινήσει) παραδίδεται.
 function stopAfterFor_(st, now) {
-  const cur = athens_(now, 'yyyy-MM');
-  let after = Number(athens_(now, 'd')) <= 15 ? cur : nextYm_(cur);
+  const cur = periodOf_(st, now);
+  let after = periodDay_(st, now, cur) <= 15 ? cur : nextYm_(cur);
   Object.keys(st.months || {}).forEach(function (m) { if (st.months[m].st === 'paid' && m > after) after = m; });
   return after;
 }
@@ -250,9 +286,9 @@ function billingCancelPage_(q) {
   let body;
   if (i.state === 'bad') body = '<p>Ο σύνδεσμος δεν ισχύει. Γράψτε μας στο <a href="mailto:okpublisher.gr@gmail.com">okpublisher.gr@gmail.com</a>.</p>';
   else if (i.state === 'none') body = '<p>Δεν βρέθηκε ενεργή συνδρομή. Για οτιδήποτε, γράψτε μας στο <a href="mailto:okpublisher.gr@gmail.com">okpublisher.gr@gmail.com</a>.</p>';
-  else if (i.state === 'stopped') body = '<p>Η συνδρομή σας σταματά ήδη μετά τον <b>' + esc_(monthLabel_(i.after)) + '</b>. Δεν θα γίνει καμία άλλη χρέωση.</p>';
+  else if (i.state === 'stopped') body = '<p>Η συνδρομή σας σταματά ήδη μετά ' + perForB_(i.st, i.after) + '. Δεν θα γίνει καμία άλλη χρέωση.</p>';
   else body = '<p>Συνδρομή: <b>' + esc_(i.st.plan) + '</b> · €' + euros_(i.st.amount) + ' τον μήνα (με ΦΠΑ).</p>' +
-    '<p>Αν τη διακόψετε σήμερα, οι δημοσιεύσεις συνεχίζονται ως και τον <b>' + esc_(monthLabel_(i.after)) + '</b> ' +
+    '<p>Αν τη διακόψετε σήμερα, οι δημοσιεύσεις συνεχίζονται ως και ' + perForB_(i.st, i.after) + ' ' +
     'και μετά δεν γίνεται καμία άλλη χρέωση.</p>' +
     '<p><button id="b">Διακοπή συνδρομής</button></p><p id="m" class="fine">Αν αλλάξατε γνώμη, απλώς κλείστε αυτή τη σελίδα.</p>' +
     '<script>document.getElementById("b").onclick=function(){var b=this;b.disabled=true;b.textContent="Μια στιγμή…";' +
@@ -278,12 +314,12 @@ function billingStopWeb(c, k) {
   try {
     const i = cancelInfo_(c, k);
     if (i.state === 'bad' || i.state === 'none') return '<p>Δεν βρέθηκε ενεργή συνδρομή. Γράψτε μας στο okpublisher.gr@gmail.com.</p>';
-    if (i.state === 'stopped') return '<p>Η συνδρομή σας σταματά ήδη μετά τον <b>' + esc_(monthLabel_(i.after)) + '</b>. Δεν θα γίνει καμία άλλη χρέωση.</p>';
+    if (i.state === 'stopped') return '<p>Η συνδρομή σας σταματά ήδη μετά ' + perForB_(i.st, i.after) + '. Δεν θα γίνει καμία άλλη χρέωση.</p>';
     billingStop_(i.K, i.st, i.after, false, 'κουμπί');
     systemNotify_('Διακοπή συνδρομής: ' + i.K, 'Ο πελάτης ' + i.K + ' (' + i.st.plan + ') διέκοψε τη συνδρομή με το κουμπί. ' +
-      'Τελευταίος μήνας: ' + monthLabel_(i.after) + '. Μετά: αφαίρεση πρόσβασης και διαγραφή δεδομένων σε 30 ημέρες (όροι Β.11).');
-    return '<p><b>Έγινε.</b> Η συνδρομή σας σταματά μετά τον <b>' + esc_(monthLabel_(i.after)) + '</b>: οι δημοσιεύσεις συνεχίζονται ' +
-      'ως και τον ' + esc_(monthLabel_(i.after)) + ' και δεν θα γίνει καμία άλλη χρέωση. Σας στείλαμε και email επιβεβαίωσης.</p><p>Ευχαριστούμε για τη συνεργασία!</p>';
+      'Τελευταία περίοδος: ' + perShort_(i.st, i.after) + '. Μετά: αφαίρεση πρόσβασης και διαγραφή δεδομένων σε 30 ημέρες (όροι Β.11).');
+    return '<p><b>Έγινε.</b> Η συνδρομή σας σταματά μετά ' + perForB_(i.st, i.after) + ': οι δημοσιεύσεις συνεχίζονται ' +
+      'ως και ' + esc_(perFor_(i.st, i.after)) + ' και δεν θα γίνει καμία άλλη χρέωση. Σας στείλαμε και email επιβεβαίωσης.</p><p>Ευχαριστούμε για τη συνεργασία!</p>';
   } finally { lock.releaseLock(); }
 }
 
@@ -298,8 +334,8 @@ function planUrl_(K) { const u = webappUrl_(); return u ? u + '?a=plan&c=' + K +
 // Από ποιον μήνα ισχύει μια αλλαγή που ζητείται τώρα: έως τις 19 → ο επόμενος, μετά → ο μεθεπόμενος (η παραγωγή του
 // επόμενου μήνα γίνεται στις 20). Ποτέ μήνας που έχει ήδη πληρωθεί. '' αν η συνδρομή λήγει πριν.
 function planChangeFrom_(st, now) {
-  const cur = ym_(now), months = st.months || {};
-  let from = Number(athens_(now, 'd')) <= BILL_.CHANGE_LAST_DAY ? nextYm_(cur) : nextYm_(nextYm_(cur));
+  const cur = periodOf_(st, now), months = st.months || {};
+  let from = periodDay_(st, now, cur) <= BILL_.CHANGE_LAST_DAY ? nextYm_(cur) : nextYm_(nextYm_(cur));
   if (st.start && from < st.start) from = st.start;
   for (let i = 0; i < 24 && months[from] && months[from].st === 'paid'; i++) from = nextYm_(from);
   return st.stop_after && from > st.stop_after ? '' : from;
@@ -320,8 +356,8 @@ function planInfo_(c, k) {
 // Για το email έγκρισης ({{PLAN_CHANGE_LINE}} στο αίτημα email): η γραμμή με τον σύνδεσμο, μόνο με ενεργή συνδρομή.
 function planChangeLine_(K, html) {
   const st = billState_(K), u = planUrl_(K);
-  if (!u || !st || !st.tx || (st.stop_after && st.stop_after <= ym_(new Date()))) return '';
-  return html ? '<p style="color:#4A4C66">Θέλετε άλλο πακέτο; <a href="' + esc_(u) + '">Αλλαγή πακέτου</a> (ισχύει από τον επόμενο μήνα).</p>'
+  if (!u || !st || !st.tx || (st.stop_after && st.stop_after <= periodOf_(st, new Date()))) return '';
+  return html ? '<p style="color:#4A4C66">Θέλετε άλλο πακέτο; <a href="' + esc_(u) + '">Αλλαγή πακέτου</a> (ισχύει από ' + (billDay_(st) === 1 ? 'τον επόμενο μήνα' : 'την επόμενη περίοδο') + ').</p>'
     : 'Θέλετε άλλο πακέτο; Αλλαγή πακέτου: ' + u;
 }
 
@@ -345,19 +381,19 @@ function billingPlanPage_(q) {
   if (i.state === 'bad') body = '<p>Ο σύνδεσμος δεν ισχύει. Γράψτε μας στο ' + mail + '.</p>';
   else if (i.state === 'none') body = '<p>Δεν βρέθηκε ενεργή συνδρομή. Για αλλαγή πακέτου, γράψτε μας στο ' + mail + '.</p>';
   else if (i.state === 'unpaid') body = '<p>Υπάρχει πληρωμή σε εκκρεμότητα. Μόλις γίνει, θα μπορείτε να αλλάξετε πακέτο από εδώ. Ή γράψτε μας στο ' + mail + '.</p>';
-  else if (i.state === 'ends') body = '<p>Η συνδρομή σας σταματά μετά τον <b>' + esc_(monthLabel_(i.st.stop_after)) + '</b>, οπότε δεν αλλάζει πακέτο. ' +
+  else if (i.state === 'ends') body = '<p>Η συνδρομή σας σταματά μετά ' + perForB_(i.st, i.st.stop_after) + ', οπότε δεν αλλάζει πακέτο. ' +
     'Αν θέλετε να συνεχίσουμε, γράψτε μας στο ' + mail + '.</p>';
   else {
     const cur = planOf_(i.st.plan), ch = i.st.change;
     body = '<p>Τώρα: <b>' + esc_(i.st.plan) + '</b> · €' + euros_(i.st.amount) + ' τον μήνα (με ΦΠΑ).</p>' +
-      (ch ? '<p class="note">Έχετε ήδη ζητήσει <b>' + esc_(ch.plan) + '</b> από τον ' + esc_(monthLabel_(ch.from)) + '. Μπορείτε να διαλέξετε άλλο ή να μείνετε στο τρέχον.</p>' : '') +
+      (ch ? '<p class="note">Έχετε ήδη ζητήσει <b>' + esc_(ch.plan) + '</b> από ' + esc_(perFor_(i.st, ch.from)) + '. Μπορείτε να διαλέξετε άλλο ή να μείνετε στο τρέχον.</p>' : '') +
       BILL_.PLANS.map(function (p) {
         const on = ch ? p.name === ch.plan : !!(cur && p.name === cur.name);
         return '<label class="pl"><input type="radio" name="p" value="' + esc_(p.name) + '"' + (on ? ' checked' : '') + '><span><b>' + esc_(p.name) +
           '</b> · €' + p.net + ' + ΦΠΑ τον μήνα' + (cur && p.name === cur.name ? ' <i>(τρέχον)</i>' : '') + '<br>' + p.week + ' posts και ' + p.week +
           ' stories την εβδομάδα</span></label>';
       }).join('') +
-      '<p>Η αλλαγή ισχύει από τον <b>' + esc_(monthLabel_(i.from)) + '</b>: το πρόγραμμα του μήνα και η χρέωση της 1ης βγαίνουν με το νέο πακέτο. ' +
+      '<p>Η αλλαγή ισχύει από ' + perForB_(i.st, i.from) + ': το πρόγραμμα και η χρέωσή ' + (billDay_(i.st) === 1 ? 'του (την 1η)' : 'της') + ' βγαίνουν με το νέο πακέτο. ' +
       'Ως τότε όλα μένουν ως έχουν. Χωρίς αναλογικές χρεώσεις ή επιστροφές.</p>' +
       '<p><button id="b">Επιβεβαίωση</button></p><p id="m" class="fine">Αν αλλάξατε γνώμη, απλώς κλείστε αυτή τη σελίδα.</p>' +
       '<script>document.getElementById("b").onclick=function(){var b=this,c=document.querySelector("input[name=p]:checked");if(!c)return;' +
@@ -382,20 +418,20 @@ function planChangeSet_(K, st, p, from, by) {
     const repo = planChangeRepo_(K, { plan: st.plan, previous: st.plan, from: old.from, status: 'cancelled', cancelled: old.plan });
     billNotify_(K, 'Μένετε στο πακέτο ' + st.plan, 'Ακυρώσαμε την αλλαγή σε ' + old.plan + '. Το πακέτο σας μένει ' + st.plan +
       ' (€' + euros_(st.amount) + ' τον μήνα με ΦΠΑ).');
-    systemNotify_('Αλλαγή πακέτου: ' + K + ' (ακυρώθηκε)', 'Ακυρώθηκε (' + by + ') η αλλαγή του ' + K + ' σε ' + old.plan + ' από τον ' +
-      monthLabel_(old.from) + '. Μένει ' + st.plan + '.' + repo);
+    systemNotify_('Αλλαγή πακέτου: ' + K + ' (ακυρώθηκε)', 'Ακυρώθηκε (' + by + ') η αλλαγή του ' + K + ' σε ' + old.plan + ' από ' +
+      perFor_(st, old.from) + '. Μένει ' + st.plan + '.' + repo);
     return 'cancelled';
   }
   st.change = { plan: p.name, amount: planCents_(p), from: from, at: new Date().toISOString(), previous: st.plan };
   billSave_(K, st);
   billLog_(K, from, st.change.amount, 'αλλαγή πακέτου', st.plan + ' → ' + p.name + ' από ' + monthLabel_(from) + ' (' + by + ')', '');
   const repo = planChangeRepo_(K, { plan: p.name, previous: st.plan, from: from, week: p.week, status: 'scheduled' });
-  billNotify_(K, 'Αλλαγή πακέτου σε ' + p.name + ' από τον ' + monthLabel_(from),
-    'Από τον ' + monthLabel_(from) + ' το πακέτο σας γίνεται ' + p.name + ' (' + p.week + ' posts και ' + p.week +
-    ' stories την εβδομάδα), €' + euros_(st.change.amount) + ' τον μήνα με ΦΠΑ, με αυτόματη χρέωση την 1η του μήνα. ' +
+  billNotify_(K, 'Αλλαγή πακέτου σε ' + p.name + ' από ' + perFor_(st, from),
+    'Από ' + perFor_(st, from) + ' το πακέτο σας γίνεται ' + p.name + ' (' + p.week + ' posts και ' + p.week +
+    ' stories την εβδομάδα), €' + euros_(st.change.amount) + ' τον μήνα με ΦΠΑ, με αυτόματη χρέωση ' + chargeDayText_(st) + '. ' +
     'Ως τότε όλα μένουν ως έχουν (' + st.plan + ').');
-  systemNotify_('Αλλαγή πακέτου: ' + K, 'Αλλαγή πακέτου του ' + K + ' (' + by + '): ' + st.plan + ' → ' + p.name + ' από τον ' + monthLabel_(from) +
-    '. Η χρέωση αλλάζει μόνη της. Στην παραγωγή της 20ής: config.json (package, ημέρες posts/stories).' + repo);
+  systemNotify_('Αλλαγή πακέτου: ' + K, 'Αλλαγή πακέτου του ' + K + ' (' + by + '): ' + st.plan + ' → ' + p.name + ' από ' + perFor_(st, from) +
+    '. Η χρέωση αλλάζει μόνη της. Στην παραγωγή εκείνης της περιόδου: config.json (package, ημέρες posts/stories).' + repo);
   return 'set';
 }
 
@@ -410,7 +446,7 @@ function billingPlanWeb(c, k, plan) {
     const r = planChangeSet_(i.K, i.st, p, i.from, 'από τον πελάτη');
     if (r === 'same') return '<p>Αυτό είναι ήδη το πακέτο σας: δεν αλλάζει τίποτα.</p>';
     if (r === 'cancelled') return '<p><b>Έγινε.</b> Μένετε στο <b>' + esc_(i.st.plan) + '</b>. Σας στείλαμε email επιβεβαίωσης.</p>';
-    return '<p><b>Έγινε.</b> Από τον <b>' + esc_(monthLabel_(i.from)) + '</b> το πακέτο σας γίνεται <b>' + esc_(p.name) + '</b> (€' +
+    return '<p><b>Έγινε.</b> Από ' + perForB_(i.st, i.from) + ' το πακέτο σας γίνεται <b>' + esc_(p.name) + '</b> (€' +
       euros_(i.st.change.amount) + ' τον μήνα με ΦΠΑ). Σας στείλαμε email επιβεβαίωσης.</p>';
   } finally { lock.releaseLock(); }
 }
@@ -504,6 +540,13 @@ function prevYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] 
 function billingCancelUnpaid_(K, by) {
   const st = billState_(K);
   if (!st) return [];
+  if (st.offer && !st.offer.closed) {                // ανοιχτό «Συνεχίζουμε;»: κλείνει (οι σύνδεσμοι ελέγχονται ακόμα, βλ. παρακάτω)
+    st.offer.closed = new Date().toISOString();
+    st.offer.cancelled = true;
+    billSave_(K, st);
+    billLog_(K, '', 0, 'δωρεάν εβδομάδα: σύνδεσμοι ακυρώθηκαν', 'πέρασε σε «Δωρεάν» (' + by + ')', '');
+    return ['offer'];
+  }
   const months = st.months || {}, cancelled = [];
   Object.keys(months).sort().forEach(function (m) {
     if (months[m].st === 'pending' || months[m].st === 'charging') { months[m].st = 'cancelled'; months[m].cancelled_at = new Date().toISOString(); cancelled.push(m); }
@@ -514,7 +557,7 @@ function billingCancelUnpaid_(K, by) {
   P_().deleteProperty('BILLING_PAUSED_' + K);
   if (cancelled.length) {
     billLog_(K, cancelled.join(', '), 0, 'σύνδεσμος ακυρώθηκε', 'πέρασε σε «Δωρεάν» (' + by + ')', '');
-    notify_(K, 'Ο σύνδεσμος πληρωμής ακυρώθηκε', 'Ο σύνδεσμος πληρωμής για τον ' + cancelled.map(monthLabel_).join(', ') +
+    notify_(K, 'Ο σύνδεσμος πληρωμής ακυρώθηκε', 'Ο σύνδεσμος πληρωμής για ' + cancelled.map(function (x) { return perFor_(st, x); }).join(', ') +
       ' δεν χρειάζεται πια: δεν χρειάζεται να κάνετε τίποτα και δεν θα γίνει καμία χρέωση. Οι δημοσιεύσεις σας συνεχίζονται κανονικά.');
   }
   return cancelled;
@@ -524,8 +567,10 @@ function nextYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] 
 // «Η επόμενη χρέωση…» μόνο αν θα υπάρξει (όχι μετά από λύση).
 function nextChargeText_(st, m) {
   const n = nextYm_(m);
-  return st.stop_after && n > st.stop_after ? '' : 'Η επόμενη χρέωση, για τον ' + monthLabel_(n) + ', γίνεται αυτόματα την 1η του μήνα. ';
+  return st.stop_after && n > st.stop_after ? '' : 'Η επόμενη χρέωση, για ' + perFor_(st, n) + ', γίνεται αυτόματα ' +
+    (billDay_(st) === 1 ? 'την 1η του μήνα' : 'στις ' + dm_(perStart_(st, n), true)) + '. ';
 }
+function chargeDayText_(st) { return billDay_(st) === 1 ? 'την 1η του μήνα' : 'στις ' + billDay_(st) + ' κάθε μήνα'; }
 function monthNom_(ym) { const p = String(ym).split('-'); return BILL_.MONTHS_NOM[Number(p[1]) - 1] + ' ' + p[0]; }   // «Ο Ιανουάριος 2027 …»
 function monthLabel_(ym) { const p = String(ym).split('-'); return BILL_.MONTHS[Number(p[1]) - 1] + ' ' + p[0]; }
 function euros_(cents) { return (cents / 100).toFixed(2).replace('.', ','); }
@@ -570,7 +615,7 @@ function markPaid_(K, st, m, tx) {
   rec.pay = newPayId_(); rec.plan = st.plan; rec.amount = st.amount;
   billCode_(K, st);
   billSave_(K, st);
-  return 'Κωδικός πληρωμής: ' + rec.pay + (st.code ? ' · Πελάτης: ' + st.code : '') + ' · Πακέτο: ' + st.plan + ' · Μήνας: ' + monthNom_(m) + '.';
+  return 'Κωδικός πληρωμής: ' + rec.pay + (st.code ? ' · Πελάτης: ' + st.code : '') + ' · Πακέτο: ' + st.plan + ' · ' + perNom_(st, m) + '.';
 }
 
 // Νέος σύνδεσμος αν δεν υπάρχει ή αν ο τελευταίος είναι παλιός (λήγει). Επιστρέφει τον σύνδεσμο.
@@ -586,12 +631,167 @@ function freshLink_(K, st, month) {
   return vivaLink_(rec.order);
 }
 
+// ---------------------------------------------------------------- «Συνεχίζουμε;» μετά τη δωρεάν εβδομάδα (από 26/11/2026)
+// billing_start { trial: true, trial_start: "2027-01-12", plan, code } με not_before = 5η μέρα 10:00 και ΧΩΡΙΣ start:
+// email με ένα κουμπί πληρωμής για κάθε πακέτο (σύνδεσμοι Viva). Υπενθυμίσεις την 6η, την 7η (τελευταία μέρα της
+// εβδομάδας) και τη 10η· ο σύνδεσμος μένει ανοιχτός ως και τη 14η μέρα, μετά κλείνει (email + ειδοποίηση στο okpublisher).
+// Μόλις πληρώσει: «η μέρα του» = η μέρα της πληρωμής (29–31 → 1η του επόμενου), η 1η περίοδος πληρωμένη, config.json
+// στο publisher-work (billing.day, package) και η παραγωγή της 1ης περιόδου ξεκινά αμέσως (RUNBOOK §2).
+const OFFER_ = { REMIND: [6, 7, 10], LAST_DAY: 14, HOUR: 10 };
+
+function offerStart_(K, req, res) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.trial_start || ''))) throw new Error('billing_start (δωρεάν εβδομάδα): λείπει το trial_start ("2027-01-12")');
+  if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Λείπει το NOTIFY_TO_' + K);
+  const old = billState_(K);
+  if (old && old.tx && !old.stop_after) throw new Error('billing_start: ο πελάτης έχει ήδη ενεργή συνδρομή');
+  const p = planOf_(req.plan) || planOf_('Μεσαίο');
+  const months = {};
+  Object.keys((old && old.months) || {}).forEach(function (m) { if (old.months[m].st === 'paid') months[m] = old.months[m]; });
+  const st = { plan: p.name, amount: planCents_(p), start: null, stop_after: null, tx: (old && old.tx) || null, months: months,
+    offer: { trial_start: String(req.trial_start), chosen: p.name, orders: {}, sent: {}, at: new Date().toISOString() } };
+  if (req.code && /^OK-\d{4,}$/.test(String(req.code))) st.code = String(req.code);
+  else if (old && old.code) st.code = old.code;
+  const links = offerLinks_(K, st);              // αν η Viva αρνηθεί, δεν αποθηκεύεται τίποτα
+  const idx = offerDay_(st, new Date());
+  OFFER_.REMIND.concat([5]).forEach(function (d) { if (d <= idx) st.offer.sent['d' + d] = new Date().toISOString(); });
+  billSave_(K, st);
+  P_().deleteProperty('BILLING_PAUSED_' + K);
+  offerEmail_(K, st, idx >= 7 ? 'd7' : 'd5', links);
+  billLog_(K, '', 0, 'δωρεάν εβδομάδα: «Συνεχίζουμε;»', 'σύνδεσμοι για ' + Object.keys(links).join(', '), '');
+  res.links = links;
+}
+
+// Πόσο μέσα στη δωρεάν εβδομάδα (1 = η πρώτη μέρα της).
+function offerDay_(st, now) { return Math.round((utc_(athens_(now, 'yyyy-MM-dd')) - utc_(st.offer.trial_start)) / 86400000) + 1; }
+
+// Ένας σύνδεσμος πληρωμής ανά πακέτο· νέος αν ο προηγούμενος είναι παλιός (λήγει σε 5 ημέρες).
+function offerLinks_(K, st) {
+  const out = {};
+  BILL_.PLANS.forEach(function (p) {
+    const rec = st.offer.orders[p.name] = st.offer.orders[p.name] || {};
+    const age = rec.order_at ? (Date.now() - new Date(rec.order_at).getTime()) / 86400000 : 999;
+    if (!rec.order || age > BILL_.LINK_REFRESH_DAYS) {
+      if (rec.order) (rec.old_orders = rec.old_orders || []).push(rec.order);
+      rec.order = vivaCreateOrder_(K, { plan: p.name, amount: planCents_(p) }, 'start', 'πρώτος μήνας');
+      rec.order_at = new Date().toISOString();
+    }
+    out[p.name] = vivaLink_(rec.order);
+  });
+  return out;
+}
+
+function offerEmail_(K, st, kind, links) {
+  const until = dm_(addDays_(st.offer.trial_start, OFFER_.LAST_DAY - 1));
+  const T = {
+    d5: ['Πώς σας φάνηκε η δωρεάν εβδομάδα; Συνεχίζουμε;', 'Ελπίζουμε να σας αρέσουν οι δημοσιεύσεις της δωρεάν εβδομάδας!\n\n' +
+      'Αν θέλετε να συνεχίσουμε, διαλέξτε πακέτο και πληρώστε με κάρτα: ξεκινάμε αμέσως. Ετοιμάζουμε το πρόγραμμα των επόμενων 30 ημερών ' +
+      'και σας το στέλνουμε για ΟΚ μέσα σε 1–2 μέρες.'],
+    d6: ['Συνεχίζουμε;', 'Μια μικρή υπενθύμιση: αν θέλετε να συνεχίσουμε μετά τη δωρεάν εβδομάδα, διαλέξτε πακέτο και πληρώστε με κάρτα. Ξεκινάμε αμέσως.'],
+    d7: ['Σήμερα τελειώνει η δωρεάν εβδομάδα', 'Σήμερα είναι η τελευταία μέρα της δωρεάν εβδομάδας. Αν θέλετε να συνεχίσουμε, διαλέξτε πακέτο ' +
+      'και πληρώστε με κάρτα (οι σύνδεσμοι ισχύουν ως τις ' + until + '). Ξεκινάμε αμέσως.'],
+    d10: ['Τελευταία υπενθύμιση: συνεχίζουμε;', 'Οι σύνδεσμοι για να συνεχίσουμε ισχύουν ως τις ' + until + '. Μόλις πληρώσετε, ξεκινάμε αμέσως.'],
+  }[kind];
+  const pl = BILL_.PLANS.map(function (p) {
+    return p.name + ' · €' + euros_(planCents_(p)) + ' τον μήνα με ΦΠΑ (' + p.week + ' posts + ' + p.week + ' stories την εβδομάδα)' +
+      (p.name === st.offer.chosen ? ' · αυτό που διαλέξατε' : '') + ': ' + links[p.name];
+  });
+  const rest = 'Η χρέωση γίνεται μετά αυτόματα κάθε μήνα, την ίδια μέρα με την πρώτη πληρωμή. Τα στοιχεία της κάρτας τα κρατά η Viva, όχι εμείς. ' +
+    'Η συνδρομή σταματά όποτε θέλετε, με ένα κουμπί σε κάθε email πληρωμής.\n\n' +
+    'Αν δεν συνεχίσουμε, δεν χρειάζεται να κάνετε τίποτα: μετά τις ' + until + ' αφαιρούμε την πρόσβασή μας και σβήνουμε τα στοιχεία σας ' +
+    'μέσα σε 30 ημέρες. Ό,τι δημοσιεύτηκε μένει στη σελίδα σας. Για οτιδήποτε, απαντήστε σε αυτό το email.';
+  const btn = function (p) {
+    const on = p.name === st.offer.chosen;
+    return '<a href="' + esc_(links[p.name]) + '" style="display:block;max-width:420px;padding:12px 18px;margin:0 0 10px;border:2px solid #5B21D6;' +
+      'border-radius:16px;text-decoration:none;color:' + (on ? '#fff' : '#5B21D6') + ';background:' + (on ? '#5B21D6' : '#fff') + '"><b>' + esc_(p.name) +
+      '</b> · €' + euros_(planCents_(p)) + ' τον μήνα με ΦΠΑ<br><span style="font-size:14px">' + p.week + ' posts + ' + p.week + ' stories την εβδομάδα' +
+      (on ? ' · αυτό που διαλέξατε' : '') + '</span></a>';
+  };
+  const html = '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E"><p>' + esc_(T[1]).replace(/\n/g, '<br>') + '</p>' +
+    BILL_.PLANS.map(btn).join('') + '<p style="color:#4A4C66">' + esc_(rest).replace(/\n/g, '<br>') + '</p></div>';
+  notify_(K, T[0], T[1] + '\n\n' + pl.join('\n') + '\n\n' + rest, html);
+}
+
+// Κάθε ώρα: πληρώθηκε κάποιος σύνδεσμος; Αλλιώς υπενθυμίσεις (από τις 10:00) και κλείσιμο μετά τη 14η μέρα.
+function offerClient_(K, st, now) {
+  vivaNeed_(['VIVA_CLIENT_ID', 'VIVA_CLIENT_SECRET', 'VIVA_MERCHANT_ID', 'VIVA_API_KEY']);
+  const o = st.offer;
+  if (o.closed) return;
+  const fresh = function (at) { return Date.now() - new Date(at || 0).getTime() < (BILL_.LINK_SECONDS / 86400 + 2) * 86400000; };
+  const names = Object.keys(o.orders);
+  for (let i = 0; i < names.length; i++) {
+    const rec = o.orders[names[i]], codes = [rec.order].concat(rec.old_orders || []).filter(String);
+    if (!fresh(rec.order_at) && !(rec.old_orders || []).length) continue;
+    for (let j = 0; j < codes.length; j++) {
+      const paid = vivaPaidTx_(codes[j]);
+      if (paid) { offerPaid_(K, st, names[i], codes[j], paid, now); return; }
+    }
+  }
+  const idx = offerDay_(st, now);
+  if (Number(athens_(now, 'HH')) < OFFER_.HOUR) return;
+  if (idx > OFFER_.LAST_DAY) {
+    o.closed = new Date().toISOString();
+    billSave_(K, st);
+    billLog_(K, '', 0, 'δωρεάν εβδομάδα: έκλεισε', 'δεν πληρώθηκε έως τη ' + OFFER_.LAST_DAY + 'η μέρα', '');
+    notify_(K, 'Ευχαριστούμε που δοκιμάσατε το okpublisher', 'Ευχαριστούμε που δοκιμάσατε το okpublisher! Κλείσαμε τους συνδέσμους πληρωμής ' +
+      'και δεν χρωστάτε τίποτα. Αφαιρούμε την πρόσβασή μας και σβήνουμε τα στοιχεία σας μέσα σε 30 ημέρες· ό,τι δημοσιεύτηκε μένει στη σελίδα σας.\n\n' +
+      'Αν θέλετε να συνεχίσουμε κάποια στιγμή, απλώς απαντήστε σε αυτό το email.');
+    systemNotify_('Δεν συνέχισε μετά τη δωρεάν εβδομάδα: ' + K, 'Ο ' + (st.code ? st.code + ' · ' : '') + clientName_(K) + ' (' + K + ') δεν πλήρωσε ως τη ' +
+      OFFER_.LAST_DAY + 'η μέρα. Πήρε email ευχαριστίας. Επόμενα (όροι Α.4/Α.8): αφαίρεση πρόσβασης (σελίδα, Instagram, Drive), «active»: false στο config, ' +
+      'διαγραφή δεδομένων σε 30 ημέρες.');
+    return;
+  }
+  const due = OFFER_.REMIND.filter(function (d) { return idx >= d && !o.sent['d' + d]; });
+  if (!due.length) return;
+  due.forEach(function (d) { o.sent['d' + d] = new Date().toISOString(); });
+  const links = offerLinks_(K, st);
+  billSave_(K, st);
+  offerEmail_(K, st, 'd' + due[due.length - 1], links);
+}
+
+function offerPaid_(K, st, planName, order, paid, now) {
+  const p = planOf_(planName);
+  let m = ym_(now), d = Number(athens_(now, 'd'));
+  if (d > 28) { m = nextYm_(m); d = 1; }       // 29–31: η μέρα του γίνεται η 1η (κερδίζει 1–3 μέρες)
+  st.plan = p.name; st.amount = planCents_(p); st.start = m; st.tx = paid.tx;
+  if (d > 1) st.day = d; else delete st.day;
+  st.trial = { start: st.offer.trial_start, paid_at: new Date().toISOString(), chosen: st.offer.chosen };
+  delete st.offer;
+  st.months[m] = { st: 'pending', order: order };
+  const payLine = markPaid_(K, st, m, paid.tx);
+  billLog_(K, m, st.amount, 'πληρωμή μετά τη δωρεάν εβδομάδα', 'πληρώθηκε · μέρα χρέωσης ' + billDay_(st), paid.tx, st.months[m].pay);
+  const cfg = offerRepo_(K, st);
+  billNotify_(K, 'Ξεκινάμε! Λάβαμε την πληρωμή', 'Ευχαριστούμε! Λάβαμε την πληρωμή (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ) και ξεκινάμε. ' +
+    'Ετοιμάζουμε τώρα το πρόγραμμα της πρώτης περιόδου (' + perRange_(st, m) + ') και σας το στέλνουμε για ΟΚ μέσα σε 1–2 μέρες. ' +
+    nextChargeText_(st, m) + '\n\n' + payLine);
+  systemNotify_('Πλήρωσε μετά τη δωρεάν εβδομάδα: ' + K, (st.code ? st.code + ' · ' : '') + clientName_(K) + ' (' + K + '): ' + st.plan + ', περίοδος ' +
+    perRange_(st, m) + ', χρέωση ' + chargeDayText_(st) + '. Η παραγωγή της 1ης περιόδου ξεκινά στον επόμενο κύκλο (RUNBOOK §2).' + cfg);
+}
+
+// clients/<K>/config.json στο publisher-work: billing { type: paid, day, start } και package (για την παραγωγή). '' αν όλα καλά.
+function offerRepo_(K, st) {
+  try {
+    if (!prop_('GITHUB_TOKEN', '')) return '\n\n(Χωρίς GITHUB_TOKEN: ενημέρωσε το config.json με το χέρι.)';
+    const path = 'clients/' + K + '/config.json', cfg = ghJson_(path);
+    if (!cfg) return '\n\n(Δεν βρέθηκε ' + path + ': ενημέρωσέ το με το χέρι.)';
+    cfg.billing = { type: 'paid', day: billDay_(st), start: perStart_(st, st.start) };
+    cfg.package = st.plan;
+    ghPutJson_(path, cfg, 'Πληρωμή ' + K + ': ' + st.plan + ', μέρα ' + billDay_(st));
+    try { CacheService.getScriptCache().remove(ADM_.CLIENTS_KEY); } catch (e) { /* μένει 5′ */ }
+    return '';
+  } catch (e) { return '\n\n(config.json: ' + e.message + ' — ενημέρωσέ το με το χέρι.)'; }
+}
+
 // ------------------------------------------------------------------ αιτήματα από το outbox
 function billingRequest_(K, req, res) {
   if (req.type === 'billing_start') {
+    if (req.trial && !req.start) { offerStart_(K, req, res); return; }
     const amount = Math.round(Number(req.amount_eur) * 100);
     if (!(amount >= 100 && amount <= 200000)) throw new Error('billing_start: άκυρο ποσό (amount_eur, με ΦΠΑ)');
-    if (!/^\d{4}-\d{2}$/.test(String(req.start || ''))) throw new Error('billing_start: λείπει ο πρώτος μήνας (start: "2027-02")');
+    // start: "ΕΕΕΕ-ΜΜ" (από την 1η) ή "ΕΕΕΕ-ΜΜ-ΗΗ" (η μέρα του πελάτη· 29–31 → 1η του επόμενου μήνα).
+    let day = 1;
+    const sd = /^(\d{4}-\d{2})-(\d{2})$/.exec(String(req.start || ''));
+    if (sd) { day = Number(sd[2]); req.start = sd[1]; if (day > 28) { req.start = nextYm_(req.start); day = 1; } }
+    if (!/^\d{4}-\d{2}$/.test(String(req.start || '')) || day < 1) throw new Error('billing_start: λείπει ο πρώτος μήνας (start: "2027-02" ή "2027-02-14")');
     if (!req.plan) throw new Error('billing_start: λείπει το πακέτο');
     const free = req.free_month == null ? null : String(req.free_month);
     if (free !== null && (!/^\d{4}-\d{2}$/.test(free) || free >= req.start)) throw new Error('billing_start: ο δωρεάν μήνας (free_month) πρέπει να είναι πριν από τον start');
@@ -603,6 +803,7 @@ function billingRequest_(K, req, res) {
     Object.keys((old && old.months) || {}).forEach(function (m) { if (old.months[m].st === 'paid') months[m] = old.months[m]; });
     if (months[req.start]) throw new Error('billing_start: ο μήνας ' + req.start + ' έχει ήδη πληρωθεί');
     const st = { plan: String(req.plan), amount: amount, start: req.start, stop_after: null, tx: (old && old.tx) || null, months: months };
+    if (day > 1) st.day = day;
     if (req.code && /^OK-\d{4,}$/.test(String(req.code))) st.code = String(req.code);
     else if (old && old.code) st.code = old.code;
     if (free) st.free_month = free;
@@ -616,20 +817,20 @@ function billingRequest_(K, req, res) {
     if (req.trial) {
       notify_(K, 'Πώς σας φάνηκε η δωρεάν εβδομάδα; Συνεχίζουμε;',
         'Ελπίζουμε να σας άρεσαν οι δημοσιεύσεις της δωρεάν εβδομάδας!\n\n' +
-        'Αν θέλετε να συνεχίσουμε, πληρώνετε τον ' + monthLabel_(req.start) + ' και ξεκινάμε την 1η του μήνα.\n\n' + plan +
-        nextChargeText_(st, req.start) + card + 'Η συνδρομή σταματά όποτε θέλετε, με ένα email έως τις 15 του μήνα.\n\n' +
+        'Αν θέλετε να συνεχίσουμε, πληρώνετε ' + perFor_(st, req.start) + ' και ξεκινάμε την 1η του μήνα.\n\n' + plan +
+        nextChargeText_(st, req.start) + card + 'Η συνδρομή σταματά όποτε θέλετε, με ένα email ' + stopRule_(st) + '.\n\n' +
         'Θέλετε άλλο πακέτο; Απαντήστε σε αυτό το email. Αν δεν συνεχίσουμε, δεν χρειάζεται να κάνετε τίποτα: ' +
         'αφαιρούμε την πρόσβασή μας και σβήνουμε τα στοιχεία σας μέσα σε 30 ημέρες.');
     } else if (free) {
-      notify_(K, 'Καλώς ήρθατε: πληρωμή για τον ' + monthLabel_(req.start),
+      notify_(K, 'Καλώς ήρθατε: πληρωμή για ' + perFor_(st, req.start),
         'Καλώς ήρθατε στο okpublisher!\n\n' +
-        'Ο ' + monthNom_(free) + ' είναι δώρο μας. Για να ξεκινήσει, πληρώνετε τώρα τον ' + monthLabel_(req.start) + ' (όροι, Α.4).\n\n' + plan +
-        'Μόλις γίνει η πληρωμή, ξεκινάμε να ετοιμάζουμε τον ' + monthLabel_(free) + '. ' + nextChargeText_(st, req.start) + card +
-        'Μετά τον ' + monthLabel_(req.start) + ' η συνδρομή σταματά όποτε θέλετε, με ένα email έως τις 15 του μήνα.');
+        'Ο ' + monthNom_(free) + ' είναι δώρο μας. Για να ξεκινήσει, πληρώνετε τώρα ' + perFor_(st, req.start) + ' (όροι, Α.4).\n\n' + plan +
+        'Μόλις γίνει η πληρωμή, ξεκινάμε να ετοιμάζουμε ' + perFor_(st, free) + '. ' + nextChargeText_(st, req.start) + card +
+        'Μετά ' + perFor_(st, req.start) + ' η συνδρομή σταματά όποτε θέλετε, με ένα email ' + stopRule_(st) + '.');
     } else {
-      billNotify_(K, 'Πληρωμή συνδρομής για τον ' + monthLabel_(req.start),
+      billNotify_(K, 'Πληρωμή συνδρομής για ' + perFor_(st, req.start),
         'Ευχαριστούμε που συνεχίζουμε μαζί!\n\n' + plan + nextChargeText_(st, req.start) + card +
-        'Η συνδρομή σταματά όποτε θέλετε, με ένα email έως τις 15 του μήνα.');
+        'Η συνδρομή σταματά όποτε θέλετε, με ένα email ' + stopRule_(st) + '.');
     }
     res.order_code = st.months[req.start].order;
     res.link = link;
@@ -690,7 +891,9 @@ function reportBilling_(problems) {
 function billingClient_(K, now) {
   const st = billState_(K);
   if (!st) return;
-  if (st.change && ym_(now) >= st.change.from) applyPlanChange_(K, st);   // αλλαγή πακέτου: πριν από κάθε χρέωση του μήνα
+  if (st.offer) { offerClient_(K, st, now); return; }                      // μετά τη δωρεάν εβδομάδα: «Συνεχίζουμε;»
+  if (!st.start) return;
+  if (st.change && periodOf_(st, now) >= st.change.from) applyPlanChange_(K, st);   // αλλαγή πακέτου: πριν από κάθε χρέωση της περιόδου
   // Χωρίς όλα τα κλειδιά δεν γίνεται τίποτα (και δεν μένει καμία χρέωση «στη μέση»).
   vivaNeed_(['VIVA_CLIENT_ID', 'VIVA_CLIENT_SECRET', 'VIVA_MERCHANT_ID', 'VIVA_API_KEY']);
   st.months = st.months || {};
@@ -710,7 +913,7 @@ function billingClient_(K, now) {
         st.tx = p0.tx;
         markPaid_(K, st, m, p0.tx);
         billLog_(K, m, st.amount, 'πληρωμή ακυρωμένου συνδέσμου', 'πληρώθηκε', p0.tx, rec.pay);
-        systemNotify_('Πληρώθηκε ακυρωμένος σύνδεσμος: ' + K, 'Ο ' + K + ' πλήρωσε τον ' + monthLabel_(m) + ' (' + rec.pay + ', €' + euros_(st.amount) +
+        systemNotify_('Πληρώθηκε ακυρωμένος σύνδεσμος: ' + K, 'Ο ' + K + ' πλήρωσε ' + perFor_(st, m) + ' (' + rec.pay + ', €' + euros_(st.amount) +
           ') με σύνδεσμο που είχε ακυρωθεί (πέρασε σε «Δωρεάν»). Αποφάσισε: επιστροφή από τη Viva ή κανονική συνδρομή από το διαχειριστικό.');
         return;
       }
@@ -727,9 +930,9 @@ function billingClient_(K, now) {
       if (billPaused_(K) && !months.some(function (x) { return x !== m && st.months[x].st === 'pending'; })) {
         P_().deleteProperty('BILLING_PAUSED_' + K);
         billLog_(K, m, 0, 'επανεκκίνηση', 'οι δημοσιεύσεις συνεχίζονται', '');
-        billNotify_(K, 'Η πληρωμή έγινε: οι δημοσιεύσεις συνεχίζονται', 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ). Οι δημοσιεύσεις σας συνεχίζονται κανονικά. Ευχαριστούμε!\n\n' + payLine);
+        billNotify_(K, 'Η πληρωμή έγινε: οι δημοσιεύσεις συνεχίζονται', 'Λάβαμε την πληρωμή για ' + perFor_(st, m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ). Οι δημοσιεύσεις σας συνεχίζονται κανονικά. Ευχαριστούμε!\n\n' + payLine);
       } else {
-        billNotify_(K, 'Λάβαμε την πληρωμή για τον ' + monthLabel_(m), 'Λάβαμε την πληρωμή της συνδρομής σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ). ' +
+        billNotify_(K, 'Λάβαμε την πληρωμή για ' + perFor_(st, m), 'Λάβαμε την πληρωμή της συνδρομής σας για ' + perFor_(st, m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ). ' +
           (st.free_month && m === st.start ? 'Ο ' + monthNom_(st.free_month) + ' είναι δώρο μας: ξεκινάμε να τον ετοιμάζουμε. ' : '') +
           nextChargeText_(st, m) + 'Ευχαριστούμε!\n\n' + payLine);
       }
@@ -737,9 +940,9 @@ function billingClient_(K, now) {
     }
   });
 
-  const day = Number(athens_(now, 'd')), hour = Number(athens_(now, 'HH'));
+  const hour = Number(athens_(now, 'HH'));
   if (hour < BILL_.ACT_HOUR) return;
-  const m = ym_(now);
+  const m = periodOf_(st, now), day = periodDay_(st, now, m);   // day: πόσο μέσα στην περίοδο (1 = η μέρα χρέωσης)
   if (m < st.start || (st.stop_after && m > st.stop_after)) return;
 
   // 2. Νέος μήνας: αυτόματη χρέωση (μόνο αν δεν χρωστάει προηγούμενο μήνα).
@@ -753,7 +956,7 @@ function billingClient_(K, now) {
       if (c.ok) {
         const payLine = markPaid_(K, st, m, c.tx);
         billLog_(K, m, st.amount, 'αυτόματη χρέωση', 'πληρώθηκε', c.tx, rec.pay);
-        billNotify_(K, 'Χρεώθηκε η συνδρομή για τον ' + monthLabel_(m), 'Η συνδρομή σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ) χρεώθηκε στην κάρτα σας. Ευχαριστούμε!\n\n' + payLine);
+        billNotify_(K, 'Χρεώθηκε η συνδρομή για ' + perFor_(st, m), 'Η συνδρομή σας για ' + perFor_(st, m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ) χρεώθηκε στην κάρτα σας. Ευχαριστούμε!\n\n' + payLine);
         return;
       }
       rec.st = 'pending'; rec.charge_error = c.error;
@@ -761,16 +964,16 @@ function billingClient_(K, now) {
       billLog_(K, m, st.amount, 'αυτόματη χρέωση', 'δεν πέρασε: ' + c.error, '');
       const link = freshLink_(K, st, m);
       billSave_(K, st);
-      billNotify_(K, 'Η χρέωση για τον ' + monthLabel_(m) + ' δεν πέρασε',
-        'Η αυτόματη χρέωση της συνδρομής σας για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ) δεν έγινε δεκτή από την κάρτα.\n\n' +
+      billNotify_(K, 'Η χρέωση για ' + perFor_(st, m) + ' δεν πέρασε',
+        'Η αυτόματη χρέωση της συνδρομής σας για ' + perFor_(st, m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ) δεν έγινε δεκτή από την κάρτα.\n\n' +
         'Μπορείτε να πληρώσετε εδώ, και με άλλη κάρτα: ' + link + '\n\n' +
-        'Αν η πληρωμή δεν γίνει έως τις ' + (BILL_.PAUSE_DAY - 1) + ' του μήνα, οι δημοσιεύσεις σταματούν προσωρινά μέχρι να γίνει.');
+        'Αν η πληρωμή δεν γίνει ' + perBy_(st, m, BILL_.PAUSE_DAY - 1) + ', οι δημοσιεύσεις σταματούν προσωρινά μέχρι να γίνει.');
       return;
     }
     st.months[m] = rec = { st: 'pending' };
     const link0 = freshLink_(K, st, m);
     billSave_(K, st);
-    billNotify_(K, 'Πληρωμή συνδρομής για τον ' + monthLabel_(m), 'Η συνδρομή σας για τον ' + monthLabel_(m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ). Πληρωμή με κάρτα μέσω Viva: ' + link0);
+    billNotify_(K, 'Πληρωμή συνδρομής για ' + perFor_(st, m), 'Η συνδρομή σας για ' + perFor_(st, m) + ' (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ). Πληρωμή με κάρτα μέσω Viva: ' + link0);
     return;
   }
   if (rec.st === 'charging') throw new Error('Η χρέωση του ' + m + ' είχε ξεκινήσει και δεν ολοκληρώθηκε. Δεν ξαναδοκιμάζεται: έλεγξε τη Viva και διόρθωσε το BILLING_' + K + '.');
@@ -784,7 +987,7 @@ function billingClient_(K, now) {
     billSave_(K, st);
     billLog_(K, m, st.amount, 'παύση', 'απλήρωτη συνδρομή', '');
     billNotify_(K, 'Οι δημοσιεύσεις σταμάτησαν προσωρινά',
-      'Η συνδρομή σας για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ) δεν έχει πληρωθεί, γι\' αυτό οι δημοσιεύσεις σταμάτησαν προσωρινά.\n\n' +
+      'Η συνδρομή σας για ' + perFor_(st, m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ) δεν έχει πληρωθεί, γι\' αυτό οι δημοσιεύσεις σταμάτησαν προσωρινά.\n\n' +
       'Μόλις γίνει η πληρωμή, ξαναρχίζουν αυτόματα: ' + link);
     return;
   }
@@ -793,10 +996,10 @@ function billingClient_(K, now) {
     const link = freshLink_(K, st, m);
     billSave_(K, st);
     billLog_(K, m, st.amount, 'υπενθύμιση', 'στάλθηκε', '');
-    billNotify_(K, 'Υπενθύμιση πληρωμής για τον ' + monthLabel_(m),
-      'Η συνδρομή σας για τον ' + monthLabel_(m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ) δεν έχει πληρωθεί ακόμα.\n\n' +
+    billNotify_(K, 'Υπενθύμιση πληρωμής για ' + perFor_(st, m),
+      'Η συνδρομή σας για ' + perFor_(st, m) + ' (€' + euros_(st.amount) + ' με ΦΠΑ) δεν έχει πληρωθεί ακόμα.\n\n' +
       'Πληρωμή με κάρτα μέσω Viva: ' + link + '\n\n' +
-      'Αν δεν γίνει έως τις ' + (BILL_.PAUSE_DAY - 1) + ' του μήνα, οι δημοσιεύσεις σταματούν προσωρινά μέχρι να γίνει.');
+      'Αν δεν γίνει ' + perBy_(st, m, BILL_.PAUSE_DAY - 1) + ', οι δημοσιεύσεις σταματούν προσωρινά μέχρι να γίνει.');
   }
 }
 

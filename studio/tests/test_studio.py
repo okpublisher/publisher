@@ -232,6 +232,15 @@ class ReadyReelsPlaceTest(unittest.TestCase):
         self.assertEqual(r['next_month'], [])
         self.assertIn('extra', r['replaces'].values())
 
+    def test_period_instead_of_month(self):
+        import ready_reels
+        r = ready_reels.place('2027-01-22:2027-02-21', {0, 2, 4, 6}, ['2027-01-25'],
+                              ['a.mp4', '2027-02-10 b.mp4', '2027-02-25 c.mp4'], 'fill_reel_slots_then_posts_then_next_month')
+        self.assertEqual(r['assign'].get('2027-01-25'), 'a.mp4', 'πρώτα στη θέση του δικού μας reel μέσα στην περίοδο')
+        self.assertEqual(r['assign'].get('2027-02-10'), '2027-02-10 b.mp4', 'κλειδωμένη ημερομηνία μέσα στην περίοδο (άλλος μήνας)')
+        self.assertIn('2027-02-25 c.mp4', r['next_month'], 'μετά το τέλος της περιόδου → επόμενη')
+        self.assertTrue(all('2027-01-22' <= d <= '2027-02-21' for d in r['assign']))
+
     def test_locked_dates(self):
         names = ['2027-01-07 μάθημα.mp4', '2027-01-07 δεύτερο.mp4', '2027-02-03 φεβ.mp4', 'x.mp4']
         r = self.rr.place('2027-01', self.post, self.our, names, 'fill_reel_slots_then_posts_then_next_month')

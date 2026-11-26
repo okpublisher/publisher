@@ -137,8 +137,8 @@ function autoReply_(r, me) {
       'How we start',
       '1. Fill in the setup form: ' + setupUrl + ' (in Greek; reply to this email if you prefer English).',
       '2. Give us access to your page and create a Google Drive folder with some photos and videos (instructions on the same page).',
-      '3. We prepare your free week and send it for your OK. Free weeks run in the middle of the month (setup by the 10th).',
-      '4. If you like it, you pay for the first month by card and we start on the 1st. After that the card is charged automatically each month; stop whenever you like, with one email.');
+      '3. As soon as setup is complete, we prepare your free week and send it for your OK.',
+      '4. If you like it, you choose a plan, pay by card and we start right away. After that the card is charged automatically each month on the same day; stop whenever you like, with one click.');
     if (!p) L.push('', 'Not sure which plan fits? Reply with a few words about your business and we will suggest one.');
     if (addon) L.push('', 'For reel filming and editing (add-on) we will send you a separate quote. You provide the idea and the script.');
     L.push('', 'For anything else, just reply to this email.', '', 'okpublisher · One monthly OK. We do the rest.', FORM_.SITE);
@@ -159,8 +159,8 @@ function autoReply_(r, me) {
       'Πώς ξεκινάμε',
       '1. Συμπληρώστε τη φόρμα σεταρίσματος: ' + setupUrl,
       '2. Δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε έναν φάκελο Google Drive με μερικές φωτογραφίες και βίντεο (οδηγίες στην ίδια σελίδα).',
-      '3. Ετοιμάζουμε τη δωρεάν εβδομάδα σας και σας τη στέλνουμε για ένα ΟΚ. Οι δωρεάν εβδομάδες γίνονται στα μέσα του μήνα (σετάρισμα έως τις 10).',
-      '4. Αν σας αρέσει, πληρώνετε με κάρτα τον 1ο μήνα και ξεκινάμε την 1η. Μετά η κάρτα χρεώνεται αυτόματα κάθε μήνα· σταματάτε όποτε θέλετε, με ένα email.');
+      '3. Μόλις ολοκληρωθεί το σετάρισμα, ετοιμάζουμε τη δωρεάν εβδομάδα σας και σας τη στέλνουμε για ένα ΟΚ.',
+      '4. Αν σας αρέσει, διαλέγετε πακέτο, πληρώνετε με κάρτα και ξεκινάμε αμέσως. Μετά η κάρτα χρεώνεται αυτόματα κάθε μήνα την ίδια μέρα· σταματάτε όποτε θέλετε, με ένα κλικ.');
     if (!p) L.push('', 'Δεν είστε σίγουροι ποιο πακέτο σας ταιριάζει; Απαντήστε με λίγα λόγια για την επιχείρησή σας και σας προτείνουμε.');
     if (addon) L.push('', 'Για το γύρισμα και μοντάζ reels (πρόσθετο) σας στέλνουμε χωριστή προσφορά. Την ιδέα και το σενάριο τα δίνετε εσείς.');
     L.push('', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.', '', 'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.', FORM_.SITE);

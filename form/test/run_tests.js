@@ -109,7 +109,7 @@ test('αυτόματη απάντηση: ανάλογα με το πακέτο (
     assert.ok(a.body.indexOf(c[0] + ' · ' + c[1] + ' τον μήνα') >= 0, c[0]);
     assert.ok(a.body.indexOf(c[2]) >= 0, c[0]);
     assert.ok(/Μια δωρεάν εβδομάδα στη σελίδα σας\n3 posts και 3 stories στο Instagram και στο Facebook σας, δωρεάν: χωρίς κάρτα/.test(a.body), a.body);
-    assert.ok(/4\. Αν σας αρέσει, πληρώνετε με κάρτα τον 1ο μήνα/.test(a.body));
+    assert.ok(/4\. Αν σας αρέσει, διαλέγετε πακέτο, πληρώνετε με κάρτα και ξεκινάμε αμέσως/.test(a.body) && !/την 1η|μέσα του μήνα/.test(a.body));
     assert.ok(a.body.indexOf('https://okpublisher.gr/setup.html') >= 0);
     assert.ok(!/Δεν είστε σίγουροι/.test(a.body));
   });
