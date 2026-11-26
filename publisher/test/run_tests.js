@@ -1609,7 +1609,11 @@ function admEnv(extraProps, opts) {
     extraFetch: function (url, o, resp) {
       if (url.indexOf(ADM_GH) === 0) {
         const path = decodeURIComponent(url.slice(ADM_GH.length).replace(/\?.*$/, ''));
-        if (o && o.method === 'put') { gh[path] = JSON.parse(Buffer.from(JSON.parse(o.payload).content, 'base64').toString('utf8')); return resp(201, {}); }
+        if (o && o.method === 'put') {
+          const txt = Buffer.from(JSON.parse(o.payload).content, 'base64').toString('utf8');
+          try { gh[path] = JSON.parse(txt); } catch (e) { gh[path] = txt; }   // και μη-JSON αρχεία (π.χ. λογότυπο)
+          return resp(201, {});
+        }
         return path in gh ? resp(200, gh[path]) : resp(404, { message: 'Not Found' });
       }
       if (url.indexOf('https://docs.google.com/spreadsheets/d/LEADSSHEETID0123456789abcdef/export?format=csv&gid=') === 0) {
@@ -2116,6 +2120,7 @@ function siteEnv(extra) {
     web: Object.assign({
       'https://www.fournos-test.gr/': [200, SITE_HTML],
       'https://www.fournos-test.gr/css/site.css': [200, SITE_CSS, 'text/css'],
+      'https://www.fournos-test.gr/img/logo.svg': [200, '<svg xmlns="http://www.w3.org/2000/svg"/>', 'image/svg+xml'],
     }, extra || {}),
   };
   return admEnv({}, opts);
@@ -2140,6 +2145,9 @@ test('ιστοσελίδα: χρώματα, γραμματοσειρές, λογ
   assert.ok(!j.fonts.some(function (f) { return /system-ui|serif/.test(f.family); }));
   assert.deepStrictEqual(JSON.parse(JSON.stringify(j.logo_candidates)), ['https://www.fournos-test.gr/img/logo.svg']);
   assert.strictEqual(j.generator, 'WordPress 6.4');
+  assert.strictEqual(j.logo_file, 'site_logo.svg');
+  const lg = env.calls.filter(function (c) { return c.method === 'put' && decodeURIComponent(c.url).indexOf('/contents/setups/OK-0002/site_logo.svg') > 0; });
+  assert.strictEqual(Buffer.from(JSON.parse(lg[0].payload).content, 'base64').toString('utf8'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   assert.ok(/Ζεστό ψωμί/.test(j.text) && /Από το 1965/.test(j.text) && !/var x/.test(j.text));
   const d = api(env, { act: 'data', token: env.loginAs('system@example.com') }).data;
   const s = d.setups.filter(function (x) { return x.code === 'OK-0002'; })[0];

@@ -8,7 +8,8 @@
  *   - χρώματα με συχνότητα (hex/rgb, χωριστά τα «ουδέτερα» γκρι/λευκά/μαύρα), theme-color, μεταβλητές CSS (--primary: …),
  *   - γραμματοσειρές (font-family, @font-face, Google Fonts),
  *   - τίτλο, περιγραφή, εικόνες που μοιάζουν με λογότυπο, og:image, εικονίδια, πλατφόρμα (WordPress, Wix, …),
- *   - το κείμενο της σελίδας (για το ύφος).
+ *   - το κείμενο της σελίδας (για το ύφος),
+ *   - το πρώτο λογότυπο της σελίδας (εικόνα έως 3 MB) → setups/<OK-…>/site_logo.<ext> (αν ο πελάτης δεν ανεβάσει δικό του).
  *   → publisher-work setups/<OK-…>/site.json (ιδιωτικό· ο Claude το διαβάζει όταν στήνει τον πελάτη, RUNBOOK §1.1)
  *   → Script Property SITE_SCAN { "<OK-…>": { url, at, ok, colors[5], fonts[3], err, tries } } (σύνοψη για το διαχειριστικό).
  * Μόνο ανάγνωση δημόσιων σελίδων (http/https· όχι IP, localhost ή .local), όρια μεγέθους, έως 2 σελίδες ανά κύκλο,
@@ -22,6 +23,8 @@ const SITE_ = {
   TRIES: 3,
   KEEP: 30,             // εγγραφές στο SITE_SCAN (όριο 9 KB ανά Script Property)
   MAX_AGE_DAYS: 60,
+  MAX_LOGO: 3 * 1024 * 1024,
+  LOGO_TYPES: { 'image/svg+xml': 'svg', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' },
   TEXT: 6000,
   UA: 'Mozilla/5.0 (compatible; okpublisher-brand-check; +https://okpublisher.gr)',
   // Γενικές λέξεις CSS και γραμματοσειρές συστήματος (όχι επιλογή brand). Η Roboto/Arial κ.λπ. μετράνε μόνο όταν είναι πρώτες.
@@ -47,6 +50,7 @@ function siteScanCycle_() {
     const rec = { url: url, at: new Date().toISOString(), tries: prev && prev.url === url ? (prev.tries || 0) + 1 : 1 };
     try {
       const r = siteScan_(url);
+      try { r.logo_file = siteLogo_(code, r.logo_candidates); } catch (e) { r.errors.push('λογότυπο: ' + e.message); }
       ghPutJson_('setups/' + code + '/site.json', Object.assign({ code: code, business: s.business, scanned_at: rec.at }, r), 'Ιστοσελίδα ' + code);
       rec.ok = true;
       rec.colors = r.colors.filter(function (c) { return !c.neutral; }).slice(0, 5).map(function (c) { return c.hex; });
@@ -165,6 +169,20 @@ function siteScan_(url) {
   out.text = siteDecode_(html.replace(/<(script|style|noscript|svg|template)\b[\s\S]*?<\/\1>/gi, ' ').replace(/<br\s*\/?>|<\/(p|div|h\d|li|section)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')).replace(/[ \t\u00a0]+/g, ' ').replace(/\s*\n\s*/g, '\n').replace(/\n{2,}/g, '\n').trim().slice(0, SITE_.TEXT);
   return out;
+}
+
+// Το πρώτο λογότυπο της σελίδας που κατεβαίνει (svg/png/jpg/webp/gif, έως 3 MB) → setups/<code>/site_logo.<ext>.
+function siteLogo_(code, cands) {
+  for (let i = 0; i < Math.min((cands || []).length, 3); i++) {
+    const r = UrlFetchApp.fetch(cands[i], { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': SITE_.UA } });
+    const h = r.getAllHeaders() || {}, type = String(h['Content-Type'] || h['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const ext = SITE_.LOGO_TYPES[type], bytes = r.getResponseCode() < 300 ? r.getContent() : [];
+    if (!ext || !bytes.length || bytes.length > SITE_.MAX_LOGO) continue;
+    const name = 'site_logo.' + ext;
+    ghPutB64_('setups/' + code + '/' + name, Utilities.base64Encode(bytes), 'Λογότυπο από ιστοσελίδα ' + code);
+    return name;
+  }
+  return '';
 }
 
 // Χρώμα → #RRGGBB (κεφαλαία). Διαφανή (alpha < 0,5) → ''.

@@ -527,7 +527,10 @@ function ghJson_(path) {
 }
 
 function ghPutJson_(path, obj, message) {
-  const content = Utilities.base64Encode(JSON.stringify(obj, null, 1), Utilities.Charset.UTF_8);
+  ghPutB64_(path, Utilities.base64Encode(JSON.stringify(obj, null, 1), Utilities.Charset.UTF_8), message);
+}
+// Οποιοδήποτε αρχείο (base64) στο publisher-work· αν υπάρχει ήδη, ενημέρωση με το sha του.
+function ghPutB64_(path, content, message) {
   let r = gh_('put', path, { message: message, content: content, branch: 'main' });
   if (r.getResponseCode() === 422 || r.getResponseCode() === 409) {
     // υπάρχει ήδη (π.χ. ξαναγράφεται αποτέλεσμα): ενημέρωση με το sha του
