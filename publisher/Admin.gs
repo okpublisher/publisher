@@ -37,6 +37,7 @@ const ADM_ = {
   LOGIN_TTL_S: 900,
   MAX_SESSIONS: 40,
   CLIENTS_CACHE_S: 300,
+  CLIENTS_KEY: 'adm:clients:2',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
   ROLES: ['admin', 'sales'],
   ROLE_NAMES: { admin: 'Διαχειριστής', sales: 'Πωλητής' },
@@ -297,7 +298,7 @@ function admSheet_(name) {
 function admClients_() {
   const cache = CacheService.getScriptCache();
   let gh = null;
-  try { gh = JSON.parse(cache.get('adm:clients') || 'null'); } catch (e) { gh = null; }
+  try { gh = JSON.parse(cache.get(ADM_.CLIENTS_KEY) || 'null'); } catch (e) { gh = null; }
   const live = clients_(), all = approvalClients_();
   if (!gh) {
     gh = {};
@@ -319,19 +320,23 @@ function admClients_() {
         pkg_change: pc && pc.status === 'scheduled' ? { plan: String(pc.plan || ''), from: String(pc.from || '') } : null,
         has_config: !!cfg,
         no_approval: !!(cfg && cfg.approval === 'none'),
+        days: cfg ? { posts: admDays_(cfg.post_days), stories: admDays_(cfg.story_days), post_time: cfg.times === 'auto' ? '' : String(cfg.post_time || ''),
+          story_time: cfg.times === 'auto' ? '' : String(cfg.story_time || ''), auto: cfg.times === 'auto' } : null,
       };
     });
-    try { cache.put('adm:clients', JSON.stringify(gh), ADM_.CLIENTS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
+    try { cache.put(ADM_.CLIENTS_KEY, JSON.stringify(gh), ADM_.CLIENTS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
   }
   return Object.keys(gh).sort().map(function (K) {
     const g = gh[K], nm = clientName_(K);
     return { key: K, code: g.code, name: nm !== K ? nm : (g.name || K), package: g.package, group: g.group, note: g.note,
       accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null, pkg_change: g.pkg_change || null,
-      has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(), no_approval: !!g.no_approval,
+      has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(), no_approval: !!g.no_approval, days: g.days || null,
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
       paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
   });
 }
+
+function admDays_(a) { return Array.isArray(a) ? a.map(String).slice(0, 7) : []; }
 
 // Σύνοψη πληρωμών ενός πελάτη (χωρίς κωδικούς Viva).
 function admBilling_(K) {
@@ -478,7 +483,7 @@ function admClientCfg_(K) {
 }
 function admSaveCfg_(K, cfg, what, me) {
   ghPutJson_('clients/' + K + '/config.json', cfg, 'Διαχειριστικό (' + me.email + '): ' + K + ' ' + what);
-  try { CacheService.getScriptCache().remove('adm:clients'); } catch (e) { /* μένει 5′ */ }
+  try { CacheService.getScriptCache().remove(ADM_.CLIENTS_KEY); } catch (e) { /* μένει 5′ */ }
 }
 function admWho_(K, cfg) { return (cfg.code ? cfg.code + ' · ' : '') + (cfg.name || clientName_(K)) + ' (' + K + ')'; }
 // Ενεργή συνδρομή: πληρωμένη κάρτα και όχι λήξη στο παρελθόν.
@@ -506,12 +511,12 @@ function admClientPlan_(token, client, plan) {
     try { pc = ghJson_('clients/' + K + '/package_change.json'); } catch (e) { pc = null; }
     if (!pc || pc.status !== 'scheduled') return 'Είναι ήδη ' + p.name + '.';
     planChangeRepo_(K, { plan: was, previous: was, from: pc.from, status: 'cancelled', cancelled: pc.plan, by: me.email });
-    try { CacheService.getScriptCache().remove('adm:clients'); } catch (e) { /* μένει 5′ */ }
+    try { CacheService.getScriptCache().remove(ADM_.CLIENTS_KEY); } catch (e) { /* μένει 5′ */ }
     return 'Η αλλαγή σε ' + pc.plan + ' ακυρώθηκε: μένει ' + p.name + '.';
   }
   const err = planChangeRepo_(K, { plan: p.name, previous: was, from: from, week: p.week, status: 'scheduled', by: me.email });
   if (err) throw new Error('Δεν γράφτηκε: ' + err.trim());
-  try { CacheService.getScriptCache().remove('adm:clients'); } catch (e) { /* μένει 5′ */ }
+  try { CacheService.getScriptCache().remove(ADM_.CLIENTS_KEY); } catch (e) { /* μένει 5′ */ }
   systemNotify_('Αλλαγή πακέτου: ' + K, admWho_(K, cfg) + ' (χωρίς συνδρομή): ' + (was || 'δικό του πρόγραμμα') + ' → ' + p.name + ' από τον ' +
     monthLabel_(from) + ' (διαχειριστικό: ' + me.email + '). Στην παραγωγή της 20ής: config.json (package, ημέρες posts/stories).');
   return p.name + ' (' + p.week + '+' + p.week + ' την εβδομάδα) από τον ' + monthLabel_(from) + ': με αυτό ετοιμάζεται το πρόγραμμα στις 20.';

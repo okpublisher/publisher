@@ -1972,6 +1972,18 @@ test('διαχειριστικό: «Χωρίς έγκριση» ↔ «με email
   assert.ok(env.mails.some(function (m) { return /Έγκριση: OK-0000/.test(m.subject); }));
 });
 
+test('διαχειριστικό: η κάρτα πελάτη έχει ημέρες/έγκριση/δωρεάν και τα βλέπει και ο πωλητής του· το cache αλλάζει όνομα με τα πεδία', function () {
+  const env = actEnv();
+  env.act({ act: 'client_approval', client: 'OKP', mode: 'none' });
+  env.act({ act: 'save_user', email: 'sales@example.com', name: 'Νίκος', role: 'sales' });
+  env.act({ act: 'assign', key: 'client:OKP', email: 'sales@example.com' });
+  const sal = env.loginAs('sales@example.com');
+  const c = api(env, { act: 'data', token: sal }).data.clients.find(function (x) { return x.key === 'OKP'; });
+  assert.ok(c, 'ο πωλητής βλέπει τον πελάτη του');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([c.no_approval, c.free, c.package, c.days.posts, c.days.stories])), [true, { until: '' }, 'Βασικό', ['Τρίτη', 'Πέμπτη'], []]);
+  assert.ok('adm:clients:2' in env.cache && !('adm:clients' in env.cache), 'νέο κλειδί cache');
+});
+
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {
   const env = admEnv();
   const r = env.ctx.admParseCsv_('﻿a,b\r\n"x\ny","z ""q"""\r\n,\n');
