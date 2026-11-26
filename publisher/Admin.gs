@@ -513,7 +513,7 @@ function admBilling_(K) {
   if (st.offer) {
     return { plan: String(st.plan || ''), amount_eur: st.amount ? st.amount / 100 : 0, start: '', stop_after: '', card: false, months: [], next: '',
       next_date: '', change: null, unpaid: [], unpaid_labels: [], day: 0,
-      offer: { trial_start: st.offer.trial_start, chosen: st.offer.chosen || '', day: offerDay_(st, now), until: addDays_(st.offer.trial_start, OFFER_.LAST_DAY - 1),
+      offer: { kind: st.offer.kind || 'trial', trial_start: st.offer.trial_start, chosen: st.offer.chosen || '', day: offerDay_(st, now), until: addDays_(st.offer.trial_start, OFFER_.LAST_DAY - 1),
         closed: st.offer.closed || '', cancelled: !!st.offer.cancelled } };
   }
   if (!st.start) return null;
@@ -620,7 +620,7 @@ function adminApi_(p) {
       case 'assign': admAssign_(t, p.key, p.email); return out({ ok: true });
       case 'client_plan': return out({ ok: true, message: admClientPlan_(t, p.client, p.plan) });
       case 'client_free': return out({ ok: true, message: admClientFree_(t, p.client, p.until) });
-      case 'client_charge': return out({ ok: true, message: admClientCharge_(t, p.client, p.plan, p.start) });
+      case 'client_charge': return out({ ok: true, message: admClientCharge_(t, p.client, p.plan) });
       case 'client_stop': return out({ ok: true, message: admClientStop_(t, p.client) });
       case 'client_approval': return out({ ok: true, message: admClientApproval_(t, p.client, p.mode) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
@@ -719,27 +719,27 @@ function admClientFree_(token, client, until) {
   return (until ? 'Δωρεάν έως και τον ' + monthLabel_(until) + '. Στις ' + BILL_.FREE_REMIND_DAY + ' του μήνα έρχεται υπενθύμιση.' : 'Δωρεάν χωρίς λήξη.') + extra;
 }
 
-function admClientCharge_(token, client, plan, start) {
+// «Χρέωση»: email στον πελάτη με σύνδεσμο πληρωμής (υπενθυμίσεις 4η/8η μέρα, λήγει μετά τη 14η). Η συνδρομή ξεκινά τη μέρα
+// που θα πληρώσει: εκείνη γίνεται «η μέρα του» (χρέωση κάθε μήνα), η 1η περίοδος παράγεται αμέσως (Billing.gs, offer).
+// Το config γίνεται «paid» με την πληρωμή (ως τότε, αν ήταν δωρεάν, μένει δωρεάν).
+function admClientCharge_(token, client, plan) {
   const me = admSession_(token);
   admNeedAdmin_(me);
   const p = planOf_(plan);
   if (!p) throw new Error('Διάλεξε πακέτο.');
-  start = String(start || '');
-  if (!/^\d{4}-\d{2}$/.test(start) || start < ym_(new Date())) throw new Error('Άκυρος πρώτος μήνας.');
   const c = admClientCfg_(client), K = c.K, cfg = c.cfg, st = billState_(K);
   if (admPaying_(st) && !st.stop_after) throw new Error('Ο πελάτης έχει ήδη συνδρομή: για άλλο πακέτο, «Πακέτο».');
   if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Ο πελάτης δεν έχει email (NOTIFY_TO_' + K + ').');
-  const wasFree = cfg.billing && cfg.billing.type === 'free' && (!cfg.billing.until || cfg.billing.until >= start)
-    ? (cfg.billing.until ? ' Ακυρώθηκαν οι δωρεάν μήνες ' + monthLabel_(start) + '–' + monthLabel_(cfg.billing.until) + '.' : ' Δεν είναι πια δωρεάν.') : '';
   const res = {};
-  billingRequest_(K, { type: 'billing_start', plan: p.name, amount_eur: planCents_(p) / 100, start: start, code: cfg.code || '' }, res);
-  cfg.billing = { type: 'paid', since: start };
-  let note = '';
-  try { admSaveCfg_(K, cfg, 'συνδρομή ' + p.name + ' από ' + start, me); } catch (e) { note = ' (config.json: ' + e.message + ')'; }
-  if (String(cfg.package || '') !== p.name) planChangeRepo_(K, { plan: p.name, previous: String(cfg.package || ''), from: start, week: p.week, status: 'scheduled', by: me.email });
-  systemNotify_('Χρέωση: ' + admWho_(K, cfg), 'Στάλθηκε σύνδεσμος πληρωμής (' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ) για τον ' + monthLabel_(start) +
-    ' (διαχειριστικό: ' + me.email + '). Το πρόγραμμα του ' + monthLabel_(start) + ' ετοιμάζεται μόνο αφού φανεί «πληρώθηκε».' + wasFree + note);
-  return 'Στάλθηκε σύνδεσμος πληρωμής στο email του πελάτη: ' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ, για τον ' + monthLabel_(start) + '.' + wasFree + note;
+  billingRequest_(K, { type: 'billing_start', open: true, plan: p.name, code: cfg.code || '' }, res);
+  const free = cfg.billing && cfg.billing.type === 'free'
+    ? ' Είναι δωρεάν' + (cfg.billing.until ? ' έως ' + monthLabel_(cfg.billing.until) : '') + ': με την πληρωμή τα δωρεάν σταματούν και ξεκινά η συνδρομή.' : '';
+  const until = dm_(addDays_(athens_(new Date(), 'yyyy-MM-dd'), OFFER_.LAST_DAY - 1), true);
+  systemNotify_('Χρέωση: ' + admWho_(K, cfg), 'Στάλθηκε σύνδεσμος πληρωμής (' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ, διαχειριστικό: ' + me.email +
+    '). Η συνδρομή ξεκινά τη μέρα της πληρωμής (χρέωση κάθε μήνα εκείνη τη μέρα) και η παραγωγή της 1ης περιόδου γίνεται αμέσως. ' +
+    'Υπενθυμίσεις την 4η και την 8η μέρα· ο σύνδεσμος λήγει ' + until + '.' + free);
+  return 'Στάλθηκε email με σύνδεσμο πληρωμής: ' + p.name + ', €' + euros_(planCents_(p)) + ' με ΦΠΑ. Ξεκινά τη μέρα που θα πληρώσει ' +
+    '(εκείνη γίνεται η μέρα χρέωσης κάθε μήνα) και τότε γίνεται αμέσως η παραγωγή. Υπενθυμίσεις 4η και 8η μέρα, λήγει ' + until + '.' + free;
 }
 
 function admClientStop_(token, client) {
