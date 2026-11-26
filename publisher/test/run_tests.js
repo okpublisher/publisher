@@ -1052,10 +1052,22 @@ test('πληρωμές: επιβεβαίωση χωρίς «επόμενη χρ�
 });
 
 const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
+
+test('web app: την πρώτη φορά που ανοίγει γράφει τη διεύθυνσή του (/exec) στο WEBAPP_URL· όχι /dev ή κενό', function () {
+  const env = billEnv('2027-02-10T10:00:00+02:00');
+  env.ctx.ScriptApp.getService = function () { return { getUrl: function () { return 'https://script.google.com/macros/s/AKfyDEV/dev'; } }; };
+  env.ctx.doGet({ parameter: {} });
+  assert.strictEqual(env.props.WEBAPP_URL, undefined);
+  env.ctx.ScriptApp.getService = function () { return { getUrl: function () { return EXEC; } }; };
+  env.ctx.doGet({ parameter: {} });
+  assert.strictEqual(env.props.WEBAPP_URL, EXEC);
+  env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-03' });
+  assert.ok(env.mails[0].body.indexOf('Διακοπή συνδρομής: ' + EXEC + '?a=stop&c=ORE&k=') >= 0, 'το email παίρνει τη διεύθυνση');
+});
 function stopKey(env) { return env.props.BILLING_KEY_ORE; }
 
 test('διακοπή: κουμπί «Διακοπή συνδρομής» στα email πληρωμής (κείμενο + html), όχι στο email της δωρεάν εβδομάδας', function () {
-  const env = billEnv('2027-01-28T12:00:00+02:00', { UPLOAD_URL: EXEC });
+  const env = billEnv('2027-01-28T12:00:00+02:00', { WEBAPP_URL: EXEC });
   env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
   const m = env.mails[0];
   const url = EXEC + '?a=stop&c=ORE&k=' + stopKey(env);

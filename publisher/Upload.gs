@@ -75,9 +75,19 @@ function doPost(e) {
 // Άνοιγμα της διεύθυνσης σε browser: απλός έλεγχος ότι η εφαρμογή ιστού δουλεύει.
 function doGet(e) {
   const q = (e && e.parameter) || {};
+  rememberWebappUrl_();
   if (q.a === 'stop') return billingCancelPage_(q);   // «Διακοπή συνδρομής» (Billing.gs)
   const K = uploadClient_(q.c, q.key);
   return uploadOut_(K ? { ok: true, client: K } : { error: 'Λάθος κλειδί', service: 'okpublisher' });
+}
+
+// Η εφαρμογή ιστού γράφει μόνη της τη διεύθυνσή της (/exec) στο WEBAPP_URL, την πρώτη φορά που ανοίγει (το workflow
+// την ανοίγει σε κάθε ανέβασμα). Από εκεί τη χρησιμοποιούν τα email (π.χ. «Διακοπή συνδρομής»), που φεύγουν από triggers.
+function rememberWebappUrl_() {
+  try {
+    const u = String(ScriptApp.getService().getUrl() || '').replace(/\?.*$/, '');
+    if (/^https:\/\/script\.google\.com\/.+\/exec$/.test(u) && prop_('WEBAPP_URL', '') !== u) P_().setProperty('WEBAPP_URL', u);
+  } catch (e) { /* χωρίς διεύθυνση: τα email γράφουν «απαντήστε σε αυτό το email» */ }
 }
 
 // Στέλνει σε κάθε πελάτη (NOTIFY_TO_<K>) τον δικό του σύνδεσμο για τη συντόμευση.

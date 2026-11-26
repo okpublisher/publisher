@@ -164,9 +164,9 @@ function billKey_(K) {
   return k;
 }
 
-// Η διεύθυνση /exec του web app (ίδια με τη συντόμευση «Στείλε στο ΥΛΙΚΟ»)· '' αν δεν υπάρχει.
+// Η διεύθυνση /exec της εφαρμογής ιστού (WEBAPP_URL, γράφεται μόνη της· βλ. Upload.gs)· '' αν δεν υπάρχει.
 function webappUrl_() {
-  let u = String(prop_('UPLOAD_URL', '') || '').trim();
+  let u = String(prop_('WEBAPP_URL', '') || prop_('UPLOAD_URL', '') || '').trim();
   if (!u) { try { u = String(ScriptApp.getService().getUrl() || ''); } catch (e) { u = ''; } }
   u = u.replace(/\?.*$/, '');
   return /^https:\/\/script\.google\.com\/.+\/exec$/.test(u) ? u : '';
