@@ -1958,6 +1958,20 @@ test('διαχειριστικό: «Χρέωση» κατά λάθος σε δω
   assert.ok(env2.mails.some(function (m) { return /Πληρώθηκε ακυρωμένος σύνδεσμος: OKP/.test(m.subject); }));
 });
 
+test('διαχειριστικό: «Χωρίς έγκριση» ↔ «με email» στο config.json (approval: none)· φαίνεται στα δεδομένα', function () {
+  const env = actEnv();
+  const r = env.act({ act: 'client_approval', client: 'OKP', mode: 'none' });
+  assert.ok(/Χωρίς έγκριση: το πρόγραμμα μπαίνει κατευθείαν στην ουρά/.test(r.message), r.message || r.error);
+  assert.strictEqual(env.gh('clients/OKP/config.json').approval, 'none');
+  assert.strictEqual(env.gh('clients/OKP/config.json').code, 'OK-0000', 'τα υπόλοιπα πεδία μένουν');
+  assert.strictEqual(env.act({ act: 'data' }).data.clients.find(function (c) { return c.key === 'OKP'; }).no_approval, true);
+  assert.ok(/ήδη χωρίς έγκριση/.test(env.act({ act: 'client_approval', client: 'OKP', mode: 'none' }).message));
+  env.act({ act: 'client_approval', client: 'OKP', mode: 'email' });
+  assert.ok(!('approval' in env.gh('clients/OKP/config.json')));
+  assert.ok(/Διάλεξε/.test(env.act({ act: 'client_approval', client: 'OKP', mode: 'x' }).error));
+  assert.ok(env.mails.some(function (m) { return /Έγκριση: OK-0000/.test(m.subject); }));
+});
+
 test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γραμμής', function () {
   const env = admEnv();
   const r = env.ctx.admParseCsv_('﻿a,b\r\n"x\ny","z ""q"""\r\n,\n');

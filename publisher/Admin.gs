@@ -28,6 +28,8 @@
  *     Απλήρωτος σύνδεσμος πληρωμής (π.χ. «Χρέωση» κατά λάθος) → ακυρώνεται: καμία υπενθύμιση/παύση, email στον πελάτη.
  *   - Χρέωση (πακέτο + πρώτος μήνας) → billing_start: σύνδεσμος πληρωμής στο email του πελάτη· config.json billing { type: paid }.
  *   - Διακοπή συνδρομής → όπως το κουμπί του πελάτη (όροι Α.8), με email στον πελάτη.
+ *   - Έγκριση: «με email» (κανονικά) ή «χωρίς έγκριση» → config.json approval: "none" (η παραγωγή βάζει το πρόγραμμα
+ *     κατευθείαν στην ουρά και στέλνει μόνο ενημερωτικό email· βλ. RUNBOOK §2.13). Για το okpublisher και δικά μας projects.
  *   Το config.json γράφεται με το GITHUB_TOKEN (μόνο τα πεδία billing)· κάθε ενέργεια → email στο okpublisher.
  */
 const ADM_ = {
@@ -316,6 +318,7 @@ function admClients_() {
         free: cfg && cfg.billing && cfg.billing.type === 'free' ? { until: /^\d{4}-\d{2}$/.test(String(cfg.billing.until || '')) ? String(cfg.billing.until) : '' } : null,
         pkg_change: pc && pc.status === 'scheduled' ? { plan: String(pc.plan || ''), from: String(pc.from || '') } : null,
         has_config: !!cfg,
+        no_approval: !!(cfg && cfg.approval === 'none'),
       };
     });
     try { cache.put('adm:clients', JSON.stringify(gh), ADM_.CLIENTS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
@@ -324,7 +327,7 @@ function admClients_() {
     const g = gh[K], nm = clientName_(K);
     return { key: K, code: g.code, name: nm !== K ? nm : (g.name || K), package: g.package, group: g.group, note: g.note,
       accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null, pkg_change: g.pkg_change || null,
-      has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(),
+      has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(), no_approval: !!g.no_approval,
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
       paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
   });
@@ -435,6 +438,7 @@ function adminApi_(p) {
       case 'client_free': return out({ ok: true, message: admClientFree_(t, p.client, p.until) });
       case 'client_charge': return out({ ok: true, message: admClientCharge_(t, p.client, p.plan, p.start) });
       case 'client_stop': return out({ ok: true, message: admClientStop_(t, p.client) });
+      case 'client_approval': return out({ ok: true, message: admClientApproval_(t, p.client, p.mode) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
     }
   } catch (e) {
@@ -563,4 +567,19 @@ function admClientStop_(token, client) {
   billingStop_(K, st, after, false, 'διαχειριστικό: ' + me.email);
   systemNotify_('Διακοπή συνδρομής: ' + K, admWho_(K, c.cfg) + ': διακοπή από το διαχειριστικό (' + me.email + '). Τελευταίος μήνας: ' + monthLabel_(after) + '.');
   return 'Η συνδρομή σταματά μετά τον ' + monthLabel_(after) + '. Ο πελάτης πήρε email.';
+}
+
+// Έγκριση: 'email' (κανονικά, ΟΚ στο email του μήνα) ή 'none' (χωρίς έγκριση· μόνο ενημερωτικό email). Ισχύει από την επόμενη παραγωγή.
+function admClientApproval_(token, client, mode) {
+  const me = admSession_(token);
+  admNeedAdmin_(me);
+  if (mode !== 'none' && mode !== 'email') throw new Error('Διάλεξε «με email» ή «χωρίς έγκριση».');
+  const c = admClientCfg_(client), K = c.K, cfg = c.cfg;
+  if ((cfg.approval === 'none') === (mode === 'none')) return mode === 'none' ? 'Είναι ήδη χωρίς έγκριση.' : 'Έχει ήδη έγκριση με email.';
+  if (mode === 'none') cfg.approval = 'none'; else delete cfg.approval;
+  admSaveCfg_(K, cfg, mode === 'none' ? 'χωρίς έγκριση' : 'έγκριση με email', me);
+  systemNotify_('Έγκριση: ' + admWho_(K, cfg), (mode === 'none' ? 'Χωρίς έγκριση: το πρόγραμμα μπαίνει κατευθείαν στην ουρά, με ενημερωτικό email.'
+    : 'Με έγκριση: το πρόγραμμα περιμένει «ΟΚ» στο email του μήνα.') + ' Από την επόμενη παραγωγή (διαχειριστικό: ' + me.email + ').');
+  return (mode === 'none' ? 'Χωρίς έγκριση: το πρόγραμμα μπαίνει κατευθείαν στην ουρά και έρχεται μόνο ενημερωτικό email.'
+    : 'Με έγκριση: το πρόγραμμα περιμένει «ΟΚ» στο email του μήνα.') + ' Από την επόμενη παραγωγή.';
 }
