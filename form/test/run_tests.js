@@ -133,7 +133,7 @@ test('αυτόματη απάντηση: χωρίς πακέτο → όλα τα
 
 test('αυτόματη απάντηση: μία ανά email κάθε 6 ώρες (όχι πολλά email στον ίδιο)', function () {
   const e = makeEnv();
-  e.post(BASE); e.post(Object.assign({}, BASE, { email: 'LEAD@example.com' })); e.post(BASE);
+  e.post(BASE); e.post(Object.assign({}, BASE, { email: 'LEAD@example.com' })); e.post(Object.assign({}, BASE, { message: 'Ξανά' }));
   assert.strictEqual(replies(e).length, 1);
   assert.strictEqual(owner(e).length, 3, 'ο λογαριασμός ενημερώνεται για κάθε αίτηση');
   assert.ok(/Αυτόματη απάντηση: όχι/.test(owner(e)[2].body));
@@ -175,8 +175,8 @@ test('όρια μήκους και χαρακτήρες ελέγχου', functio
 
 test('το πολύ 30 αιτήματα την ώρα', function () {
   const e = makeEnv();
-  for (let i = 0; i < 30; i++) assert.strictEqual(e.post(BASE).ok, true);
-  assert.deepStrictEqual(e.post(BASE), { ok: false, error: 'busy' });
+  for (let i = 0; i < 30; i++) assert.strictEqual(e.post(Object.assign({}, BASE, { message: 'm' + i })).ok, true);
+  assert.deepStrictEqual(e.post(Object.assign({}, BASE, { message: 'm30' })), { ok: false, error: 'busy' });
   assert.strictEqual(e.sheets['Ενδιαφέροντα'].rows.length, 30);
 });
 
@@ -310,7 +310,7 @@ test('δωρεάν εβδομάδα: μία ανά ΑΦΜ — ο ίδιος ΑΦ
 test('δωρεάν εβδομάδα: χωρίς ΑΦΜ (παλιά σελίδα) → «ναι»', function () {
   const e = makeEnv();
   const d = Object.assign({}, SETUP); delete d.bill_afm;
-  e.post(d); e.post(d);
+  e.post(d); e.post(Object.assign({}, d, { email: 'other@example.com' }));
   const sh = e.sheets['Σεταρίσματα'];
   assert.deepStrictEqual(sh.rows.map(function (r) { return r[col(sh, 'Δωρεάν εβδομάδα')]; }), ['ναι', 'ναι']);
 });
@@ -320,6 +320,35 @@ test('σετάρισμα χωρίς «Τι κάνει» → απόρριψη', f
   const d = Object.assign({}, SETUP); delete d.about;
   assert.strictEqual(e.post(d).ok, false);
   assert.strictEqual(e.mails.length, 0);
+});
+
+test('διπλό πάτημα: η ίδια αίτηση δύο φορές → μία γραμμή, ένα email σε εμάς, μία απάντηση', function () {
+  const e = makeEnv();
+  assert.deepStrictEqual(e.post(BASE), { ok: true });
+  assert.deepStrictEqual(e.post(BASE), { ok: true }, 'η σελίδα βλέπει «ok» (no-cors)');
+  assert.strictEqual(e.sheets['Ενδιαφέροντα'].rows.length, 1);
+  assert.strictEqual(owner(e).length, 1);
+  assert.strictEqual(replies(e).length, 1);
+  e.post(Object.assign({}, BASE, { message: 'Ξέχασα κάτι' }));       // διαφορετικό μήνυμα → κανονικά
+  assert.strictEqual(e.sheets['Ενδιαφέροντα'].rows.length, 2);
+  assert.strictEqual(owner(e).length, 2);
+});
+
+test('διπλό πάτημα στο σετάρισμα → μία γραμμή, χωρίς ψεύτικο «όχι» στη δωρεάν εβδομάδα', function () {
+  const e = makeEnv();
+  e.post(SETUP); e.post(SETUP);
+  const sh = e.sheets['Σεταρίσματα'];
+  assert.strictEqual(sh.rows.length, 1);
+  assert.strictEqual(sh.rows[0][col(sh, 'Δωρεάν εβδομάδα')], 'ναι');
+  assert.strictEqual(e.mails.length, 1);
+});
+
+test('διπλό πάτημα: ξανά μετά από 10 λεπτά → γράφεται', function () {
+  const e = makeEnv();
+  e.post(BASE);
+  Object.keys(e.cache).filter(function (k) { return /^d:/.test(k); }).forEach(function (k) { delete e.cache[k]; });   // έληξε
+  e.post(BASE);
+  assert.strictEqual(e.sheets['Ενδιαφέροντα'].rows.length, 2);
 });
 
 test('doGet: η απάντηση που ελέγχει το deploy', function () {

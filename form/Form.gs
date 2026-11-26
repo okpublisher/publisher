@@ -4,7 +4,8 @@
  * Το site στέλνει POST (JSON) σε αυτό το web app. Κάθε αίτημα:
  *   - γράφεται σε μια γραμμή του Sheet στο οποίο ανήκει το script (καρτέλα «Ενδιαφέροντα»),
  *   - στέλνεται ως email στον λογαριασμό που τρέχει το script (okpublisher.gr) — σε κανέναν άλλον.
- * Προστασία: κρυφό πεδίο (website) για bots, όρια μήκους, το πολύ 30 αιτήματα την ώρα.
+ * Προστασία: κρυφό πεδίο (website) για bots, όρια μήκους, το πολύ 30 αιτήματα την ώρα,
+ *   η ίδια ακριβώς αποστολή ξανά μέσα σε 10 λεπτά (διπλό πάτημα) αγνοείται σιωπηλά (από 26/11/2026).
  * Αυτόματη απάντηση στον ενδιαφερόμενο (από 26/11/2026): ανάλογα με το πακέτο που διάλεξε (ή όλα, αν δεν ξέρει),
  *   ελληνικά ή αγγλικά (πεδίο lang), με τη δωρεάν εβδομάδα (όροι v6 Α.4) και τα επόμενα βήματα. Μία ανά email κάθε 6 ώρες.
  * Σετάρισμα: στήλη «Δωρεάν εβδομάδα» = ναι / όχι (μία ανά ΑΦΜ).
@@ -38,6 +39,7 @@ const FORM_ = {
     { el: 'Μεσαίο', en: 'Standard', price: 250, week: 4, month: 17 },
     { el: 'Καθημερινό', en: 'Daily', price: 400, week: 7, month: 30 }],
   REPLY_EVERY_S: 21600,   // το πολύ μία αυτόματη απάντηση ανά email κάθε 6 ώρες
+  DUP_S: 600,             // η ίδια ακριβώς αποστολή ξανά μέσα σε 10 λεπτά (διπλό πάτημα) αγνοείται
   SITE: 'https://okpublisher.gr',
   TERMS_RE: /^v\d+-\d{4}-\d{2}-\d{2}$/,   // έκδοση όρων που αποδέχτηκε ο πελάτης (setup.html)
   SETUP: [  // [πεδίο, επικεφαλίδα, μέγιστο μήκος]
@@ -60,6 +62,7 @@ function doPost(e) {
   const r = {};
   Object.keys(FORM_.LEN).forEach(function (k) { r[k] = String(d[k] == null ? '' : d[k]).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, FORM_.LEN[k]); });
   if (!r.name || !r.business || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)) return out_({ ok: false, error: 'missing fields' });
+  if (dup_('i', r)) return out_({ ok: true });                    // διπλό πάτημα: σιωπηλά τίποτα
   const cache = CacheService.getScriptCache();
   const n = Number(cache.get('n') || 0);
   if (n >= FORM_.MAX_PER_HOUR) return out_({ ok: false, error: 'busy' });
@@ -157,6 +160,23 @@ function autoReply_(r, me) {
   return true;
 }
 
+// Διπλό πάτημα: true αν η ίδια ακριβώς αποστολή ήρθε ήδη τα τελευταία DUP_S δευτερόλεπτα.
+// Έλεγχος με κλείδωμα: δύο αιτήματα που φτάνουν μαζί δεν περνούν και τα δύο.
+function dup_(kind, obj) {
+  const s = JSON.stringify(obj);
+  let h = 2166136261;   // FNV-1a 32 bit (αρκεί: συγκρίνουμε μόνο αποστολές των τελευταίων 10 λεπτών)
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  const key = 'd:' + kind + ':' + h.toString(36) + ':' + s.length;
+  const lock = LockService.getScriptLock();
+  lock.tryLock(10000);
+  try {
+    const cache = CacheService.getScriptCache();
+    if (cache.get(key)) return true;
+    cache.put(key, '1', FORM_.DUP_S);
+    return false;
+  } finally { lock.releaseLock(); }
+}
+
 function clean_(v, n) { return String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n); }
 function safe_(v) { return /^[=+\-@]/.test(v) ? "'" + v : v; }
 
@@ -167,6 +187,7 @@ function setup_(d) {
   if (!r.business || !r.name || !r.about || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)) return out_({ ok: false, error: 'missing fields' });
   const terms = clean_(d.terms, 40);
   if (!FORM_.TERMS_RE.test(terms)) return out_({ ok: false, error: 'terms not accepted' });
+  if (dup_('s', d)) return out_({ ok: true });                    // διπλό πάτημα (αλλιώς η 2η γραμμή θα έβγαζε «όχι» στη δωρεάν εβδομάδα)
   const cache = CacheService.getScriptCache();
   const n = Number(cache.get('n') || 0);
   if (n >= FORM_.MAX_PER_HOUR) return out_({ ok: false, error: 'busy' });
