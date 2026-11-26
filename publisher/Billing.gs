@@ -37,6 +37,11 @@
  * Αίτημα test_client_remove (από 26/11/2026): μόνο για δοκιμαστικό πελάτη (TEST_CLIENTS, όχι CLIENTS) → σβήνει τις
  *   ρυθμίσεις του (*_<K>, και τη συνδρομή του), τον βγάζει από το TEST_CLIENTS και σβήνει τις γραμμές του στις «Πληρωμές».
  *   Τίποτα στο Drive ή στη Viva.
+ * Δωρεάν πελάτες (από 26/11/2026): "billing": { "type": "free", "until": "2027-03" } στο clients/<K>/config.json (until =
+ *   τελευταίος δωρεάν μήνας· χωρίς until = χωρίς λήξη, π.χ. ORE, OKP). Δεν έχουν συνδρομή, άρα κανένας σύνδεσμος/χρέωση.
+ *   Μία φορά τη μέρα (από τις 09:00): στις 15 του τελευταίου δωρεάν μήνα email στο okpublisher «λήγει» (για να αποφασίσει
+ *   ο Πέτρος πριν από την παραγωγή της 20ής) και, αν περάσει χωρίς συνδρομή, ένα «έληξε». Μετατροπή σε πληρωμή = billing_start.
+ * Στη σελίδα πληρωμής της Viva φαίνεται «OK Publisher» (dynamicDescriptor· αν η Viva το αρνηθεί, η παραγγελία γίνεται χωρίς αυτό).
  * Ρυθμίσεις (Script Properties, τα κλειδιά τα βάζει μόνο ο διαχειριστής):
  *   VIVA_ENV            demo (προεπιλογή) ή live
  *   VIVA_CLIENT_ID / VIVA_CLIENT_SECRET   Smart Checkout credentials (Settings → API Access)
@@ -62,6 +67,8 @@ const BILL_ = {
   CHANGE_LAST_DAY: 19,  // αλλαγή πακέτου έως τις 19 → από τον επόμενο μήνα (η παραγωγή του γίνεται στις 20)
   HEAD: ['Χρόνος', 'Πελάτης', 'Μήνας', 'Ποσό €', 'Ενέργεια', 'Αποτέλεσμα', 'Κωδικός', 'Κωδικός πληρωμής', 'Κωδικός πελάτη', 'Όνομα πελάτη', 'Πακέτο'],
   PAY_PREFIX: 'PAY-',
+  DESCRIPTOR: 'OK Publisher',   // όνομα στη σελίδα πληρωμής της Viva και στην κίνηση της κάρτας
+  FREE_REMIND_DAY: 15,
   MONTHS_NOM: ['Ιανουάριος', 'Φεβρουάριος', 'Μάρτιος', 'Απρίλιος', 'Μάιος', 'Ιούνιος', 'Ιούλιος', 'Αύγουστος', 'Σεπτέμβριος', 'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος'],
   MONTHS: ['Ιανουάριο', 'Φεβρουάριο', 'Μάρτιο', 'Απρίλιο', 'Μάιο', 'Ιούνιο', 'Ιούλιο', 'Αύγουστο', 'Σεπτέμβριο', 'Οκτώβριο', 'Νοέμβριο', 'Δεκέμβριο'],
 };
@@ -118,8 +125,17 @@ function vivaCreateOrder_(K, st, month) {
   };
   const src = String(prop_('VIVA_SOURCE_CODE', '')).trim();
   if (src) body.sourceCode = src;
-  const r = UrlFetchApp.fetch(vivaHosts_().api + '/checkout/v2/orders', { method: 'post', muteHttpExceptions: true,
-    contentType: 'application/json', payload: JSON.stringify(body), headers: { Authorization: 'Bearer ' + vivaToken_() } });
+  body.dynamicDescriptor = BILL_.DESCRIPTOR;
+  const send = function () {
+    return UrlFetchApp.fetch(vivaHosts_().api + '/checkout/v2/orders', { method: 'post', muteHttpExceptions: true,
+      contentType: 'application/json', payload: JSON.stringify(body), headers: { Authorization: 'Bearer ' + vivaToken_() } });
+  };
+  let r = send();
+  if (r.getResponseCode() >= 400) {                  // αν η Viva δεν δεχτεί το όνομα: ξανά χωρίς αυτό (ο σύνδεσμος είναι πιο σημαντικός)
+    console.log('Viva παραγγελία ' + r.getResponseCode() + ' με dynamicDescriptor· ξανά χωρίς: ' + r.getContentText().slice(0, 200));
+    delete body.dynamicDescriptor;
+    r = send();
+  }
   const j = vivaJson_(r, 'παραγγελία');
   if (!j.orderCode) throw new Error('Viva παραγγελία: χωρίς orderCode');
   return String(j.orderCode);
@@ -441,6 +457,37 @@ function testClientRemove_(K, res) {
     ' γραμμές στις «Πληρωμές». Το Drive και η Viva δεν άλλαξαν.');
 }
 
+// Δωρεάν πελάτες με λήξη: μία φορά τη μέρα, από τις 09:00. Χωρίς GITHUB_TOKEN τίποτα.
+function freeCycle_(now) {
+  if (Number(athens_(now, 'HH')) < BILL_.ACT_HOUR || !prop_('GITHUB_TOKEN', '')) return;
+  const today = athens_(now, 'yyyy-MM-dd');
+  if (prop_('FREE_CHECK_DAY', '') === today) return;
+  P_().setProperty('FREE_CHECK_DAY', today);
+  const cur = ym_(now), day = Number(athens_(now, 'd'));
+  ghList_('clients').filter(function (f) { return f.type === 'dir' && /^[A-Z0-9]{2,12}$/.test(f.name); }).forEach(function (f) {
+    const K = f.name;
+    let cfg = null;
+    try { cfg = ghJson_('clients/' + K + '/config.json'); } catch (e) { cfg = null; }
+    const b = cfg && cfg.billing;
+    if (!b || b.type !== 'free' || !/^\d{4}-\d{2}$/.test(String(b.until || ''))) return;
+    const who = (cfg.code ? cfg.code + ' · ' : '') + (cfg.name || clientName_(K)) + ' (' + K + ')';
+    const st = billState_(K), paying = !!(st && st.tx && !(st.stop_after && st.stop_after < cur));
+    if (cur === b.until && day >= BILL_.FREE_REMIND_DAY && !paying && cprop_(K, 'FREE_REMINDED', '') !== b.until) {
+      P_().setProperty('FREE_REMINDED_' + K, b.until);
+      systemNotify_('Δωρεάν έως ' + monthLabel_(b.until) + ': ' + who + ' — αποφάσισε πριν τις 20',
+        'Ο πελάτης ' + who + ' είναι δωρεάν ως και τον ' + monthLabel_(b.until) + (cfg.package ? ' (πακέτο ' + cfg.package + ')' : '') + '.\n\n' +
+        'Στις 20 ετοιμάζεται το πρόγραμμα του ' + monthLabel_(nextYm_(b.until)) + '. Πες στο Claude (Project okpublisher):\n' +
+        '• «χρέωσέ τον» (και πακέτο) → του στέλνουμε σύνδεσμο πληρωμής για τον ' + monthLabel_(nextYm_(b.until)) + ', ή\n' +
+        '• «δωρεάν έως …» → παράταση, ή\n• τίποτα → μετά τον ' + monthLabel_(b.until) + ' δεν ετοιμάζεται νέο πρόγραμμα.');
+    }
+    if (cur > b.until && !paying && cprop_(K, 'FREE_ENDED', '') !== b.until) {
+      P_().setProperty('FREE_ENDED_' + K, b.until);
+      systemNotify_('Δωρεάν: έληξε για ' + who, 'Ο δωρεάν χρόνος του ' + who + ' τελείωσε με τον ' + monthLabel_(b.until) + ' και δεν υπάρχει συνδρομή. ' +
+        'Νέο πρόγραμμα δεν ετοιμάζεται. Για συνέχεια: «χρέωσέ τον» ή «δωρεάν έως …» στο Claude.');
+    }
+  });
+}
+
 function nextYm_(ym) { const p = String(ym).split('-').map(Number); return p[1] === 12 ? (p[0] + 1) + '-01' : p[0] + '-' + ('0' + (p[1] + 1)).slice(-2); }
 // «Η επόμενη χρέωση…» μόνο αν θα υπάρξει (όχι μετά από λύση).
 function nextChargeText_(st, m) {
@@ -590,6 +637,7 @@ function billingCycle() {
     billingClients_().forEach(function (K) {
       try { billingClient_(K, new Date()); } catch (e) { problems.push(K + ': ' + e.message); }
     });
+    try { freeCycle_(new Date()); } catch (e) { console.log('Δωρεάν πελάτες: ' + e.message); }
     if (problems.length) reportBilling_(problems);
   } finally {
     lock.releaseLock();

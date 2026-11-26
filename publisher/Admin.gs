@@ -301,6 +301,7 @@ function admClients_() {
         active: !cfg || cfg.active !== false, note: cfg && cfg.status ? String(cfg.status).slice(0, 400) : '',
         accounts: cfg && cfg.accounts ? { instagram: String(cfg.accounts.instagram || ''), facebook: String(cfg.accounts.facebook_page || '') } : {},
         approval: pk ? { month: String(pk.month || ''), status: String(pk.status || ''), round: pk.round || '', label: String(pk.label || '') } : null,
+        free: cfg && cfg.billing && cfg.billing.type === 'free' ? { until: /^\d{4}-\d{2}$/.test(String(cfg.billing.until || '')) ? String(cfg.billing.until) : '' } : null,
       };
     });
     try { cache.put('adm:clients', JSON.stringify(gh), ADM_.CLIENTS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }
@@ -308,7 +309,7 @@ function admClients_() {
   return Object.keys(gh).sort().map(function (K) {
     const g = gh[K], nm = clientName_(K);
     return { key: K, code: g.code, name: nm !== K ? nm : (g.name || K), package: g.package, group: g.group, note: g.note,
-      accounts: g.accounts, approval: g.approval, active: g.active,
+      accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null,
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
       paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
   });

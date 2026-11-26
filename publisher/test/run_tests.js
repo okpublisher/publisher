@@ -1436,6 +1436,57 @@ test('δοκιμαστικός πελάτης: test_client_remove σβήνει �
   assert.throws(function () { env.ctx.doRequest_('TST', { type: 'test_client_remove' }, {}); }, /μόνο για δοκιμαστικό/, 'δεύτερη φορά: δεν υπάρχει πια');
 });
 
+// ------------------------------------------------------------------ δωρεάν πελάτες + όνομα στη Viva
+test('Viva: «OK Publisher» στη σελίδα πληρωμής (dynamicDescriptor)· αν η Viva το αρνηθεί → ξανά χωρίς, ο σύνδεσμος βγαίνει', function () {
+  let env = billEnv('2027-01-28T12:00:00+02:00');
+  env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  assert.strictEqual(env.viva.orders[0].dynamicDescriptor, 'OK Publisher');
+  env = billEnv('2027-01-28T12:00:00+02:00');
+  const orig = env.ctx.UrlFetchApp.fetch;
+  let refused = 0;
+  env.ctx.UrlFetchApp.fetch = function (url, o) {
+    if (/checkout\/v2\/orders/.test(url) && JSON.parse(o.payload).dynamicDescriptor) { refused++; return { getResponseCode: () => 400, getContentText: () => '{"message":"descriptor"}' }; }
+    return orig(url, o);
+  };
+  const res = env.req({ type: 'billing_start', plan: 'Βασικό', amount_eur: 186, start: '2027-02' });
+  assert.strictEqual(refused, 1);
+  assert.ok(/checkout\?ref=/.test(res.link));
+  assert.ok(!('dynamicDescriptor' in env.viva.orders[0]));
+});
+
+test('δωρεάν πελάτες: στις 15 του τελευταίου δωρεάν μήνα email «λήγει» (μία φορά), μετά «έληξε» αν δεν πληρώνει· χωρίς λήξη τίποτα', function () {
+  const env = admEnv({}, { gh: {
+    'clients': [{ name: 'ORE', type: 'dir' }, { name: 'GFT', type: 'dir' }, { name: 'PAI', type: 'dir' }],
+    'clients/ORE/config.json': { key: 'ORE', code: 'OK-0001', billing: { type: 'free' } },
+    'clients/GFT/config.json': { key: 'GFT', code: 'OK-0005', name: 'Φίλος', package: 'Μεσαίο', billing: { type: 'free', until: '2027-03' } },
+    'clients/PAI/config.json': { key: 'PAI', code: 'OK-0006', name: 'Πληρώνει', billing: { type: 'free', until: '2027-03' } },
+  } });
+  env.props.BILLING_PAI = JSON.stringify({ plan: 'Βασικό', amount: 18600, start: '2027-04', tx: 'T', months: { '2027-04': { st: 'paid' } } });
+  const sys = function () { return env.mails.filter(function (m) { return /^\[okpublisher\] Δωρεάν/.test(m.subject); }); };
+  const at = function (t) { env.nowMs = new Date(t).getTime(); env.ctx.billingCycle(); };
+  at('2027-03-14T10:00:00+02:00');
+  assert.strictEqual(sys().length, 0, 'πριν τις 15');
+  at('2027-03-15T08:00:00+02:00');
+  assert.strictEqual(sys().length, 0, 'πριν τις 09:00');
+  at('2027-03-15T10:00:00+02:00');
+  assert.strictEqual(sys().length, 1);
+  assert.ok(/Δωρεάν έως Μάρτιο 2027: OK-0005 · Φίλος \(GFT\)/.test(sys()[0].subject), sys()[0].subject);
+  assert.ok(/πακέτο Μεσαίο/.test(sys()[0].body) && /σύνδεσμο πληρωμής για τον Απρίλιο 2027/.test(sys()[0].body));
+  assert.strictEqual(sys()[0].to, 'system@example.com');
+  at('2027-03-15T11:00:00+02:00'); at('2027-03-16T10:00:00+02:00');
+  assert.strictEqual(sys().length, 1, 'μία φορά');
+  at('2027-04-02T10:00:00+02:00');
+  assert.strictEqual(sys().length, 2);
+  assert.ok(/Δωρεάν: έληξε για OK-0005 · Φίλος \(GFT\)/.test(sys()[1].subject));
+  at('2027-04-03T10:00:00+02:00');
+  assert.strictEqual(sys().length, 2);
+  assert.ok(!sys().some(function (m) { return /PAI|ORE/.test(m.subject); }), 'όποιος πληρώνει ή δεν έχει λήξη: τίποτα');
+  const tok = env.loginAs('system@example.com');
+  const d = api(env, { act: 'data', token: tok }).data;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.clients.find(function (c) { return c.key === 'GFT'; }).free)), { until: '2027-03' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.clients.find(function (c) { return c.key === 'ORE'; }).free)), { until: '' });
+});
+
 // ------------------------------------------------------------------ αλλαγή πακέτου (Billing.gs, όροι v7 Α.3)
 function planEnv(now, st) {
   const env = billEnv(now, { BILLING_ORE: JSON.stringify(st || PAID_FEB), BILLING_KEY_ORE: 'pk123', WEBAPP_URL: EXEC, GITHUB_TOKEN: 'ghtok' });
