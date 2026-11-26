@@ -215,8 +215,8 @@ function billingCancelPage_(q) {
   else if (i.state === 'none') body = '<p>Δεν βρέθηκε ενεργή συνδρομή. Για οτιδήποτε, γράψτε μας στο <a href="mailto:okpublisher.gr@gmail.com">okpublisher.gr@gmail.com</a>.</p>';
   else if (i.state === 'stopped') body = '<p>Η συνδρομή σας σταματά ήδη μετά τον <b>' + esc_(monthLabel_(i.after)) + '</b>. Δεν θα γίνει καμία άλλη χρέωση.</p>';
   else body = '<p>Συνδρομή: <b>' + esc_(i.st.plan) + '</b> · €' + euros_(i.st.amount) + ' τον μήνα (με ΦΠΑ).</p>' +
-    '<p>Αν τη διακόψετε σήμερα, οι δημοσιεύσεις συνεχίζονται έως το τέλος του <b>' + esc_(monthLabel_(i.after)) + '</b> ' +
-    'και δεν γίνεται καμία άλλη χρέωση.</p>' +
+    '<p>Αν τη διακόψετε σήμερα, οι δημοσιεύσεις συνεχίζονται ως και τον <b>' + esc_(monthLabel_(i.after)) + '</b> ' +
+    'και μετά δεν γίνεται καμία άλλη χρέωση.</p>' +
     '<p><button id="b">Διακοπή συνδρομής</button></p><p id="m" class="fine">Αν αλλάξατε γνώμη, απλώς κλείστε αυτή τη σελίδα.</p>' +
     '<script>document.getElementById("b").onclick=function(){var b=this;b.disabled=true;b.textContent="Μια στιγμή…";' +
     'google.script.run.withSuccessHandler(function(r){document.getElementById("c").innerHTML=r;})' +
@@ -246,7 +246,7 @@ function billingStopWeb(c, k) {
     systemNotify_('Διακοπή συνδρομής: ' + i.K, 'Ο πελάτης ' + i.K + ' (' + i.st.plan + ') διέκοψε τη συνδρομή με το κουμπί. ' +
       'Τελευταίος μήνας: ' + monthLabel_(i.after) + '. Μετά: αφαίρεση πρόσβασης και διαγραφή δεδομένων σε 30 ημέρες (όροι Β.11).');
     return '<p><b>Έγινε.</b> Η συνδρομή σας σταματά μετά τον <b>' + esc_(monthLabel_(i.after)) + '</b>: οι δημοσιεύσεις συνεχίζονται ' +
-      'έως το τέλος του μήνα και δεν θα γίνει καμία άλλη χρέωση. Σας στείλαμε και email επιβεβαίωσης.</p><p>Ευχαριστούμε για τη συνεργασία!</p>';
+      'ως και τον ' + esc_(monthLabel_(i.after)) + ' και δεν θα γίνει καμία άλλη χρέωση. Σας στείλαμε και email επιβεβαίωσης.</p><p>Ευχαριστούμε για τη συνεργασία!</p>';
   } finally { lock.releaseLock(); }
 }
 

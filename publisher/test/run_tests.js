@@ -1082,7 +1082,7 @@ test('διακοπή: η σελίδα δεν σταματά τίποτα μόν�
   const env = billEnv('2027-02-10T10:00:00+02:00', { UPLOAD_URL: EXEC, BILLING_ORE: JSON.stringify(PAID_FEB), BILLING_KEY_ORE: 'k123456789012345678901234' });
   const page = env.ctx.doGet({ parameter: { a: 'stop', c: 'ore', k: 'k123456789012345678901234' } });
   assert.ok(/Συνδρομή: <b>Βασικό<\/b> · €186,00/.test(page.html), page.html);
-  assert.ok(/έως το τέλος του <b>Φεβρουάριο 2027<\/b>/.test(page.html), 'έως τις 15 → μετά τον τρέχοντα μήνα');
+  assert.ok(/συνεχίζονται ως και τον <b>Φεβρουάριο 2027<\/b>/.test(page.html), 'έως τις 15 → μετά τον τρέχοντα μήνα');
   assert.ok(/<button id="b">Διακοπή συνδρομής<\/button>/.test(page.html) && /billingStopWeb\("ore","k123456789012345678901234"\)/.test(page.html));
   assert.strictEqual(page.title, 'Διακοπή συνδρομής · okpublisher');
   assert.strictEqual(env.state().stop_after, null, 'το άνοιγμα δεν αλλάζει τίποτα');
