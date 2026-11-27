@@ -74,7 +74,9 @@
      «Οι άκρες δεν έχουν ένα χρώμα» ή «Μικρό λογότυπο» → αίτημα `notify` στον πελάτη για καλύτερο αρχείο.
      Στο μήνυμα θύμισε τους περιορισμούς που λέει και η σελίδα σεταρίσματος: όχι EPS (PDF ή PNG), έως 10 MB ανά αρχείο,
      καλύτερα PNG με διάφανο φόντο, PDF ή SVG.
-3. Commit & push στο publisher-work (`logos/`, `config.json`, `rules.md`).
+3. **Μουσική** (από 28/11/2026): στήλη «Μουσική στα stories» → `config.music.stories` (Ναι → `true`, Όχι ή κενό → `false`)·
+   «Μουσική στα reels» → `moods` / `none` (βλ. 6).
+4. Commit & push στο publisher-work (`logos/`, `config.json`, `rules.md`).
 
 ### 1.2 Δωρεάν εβδομάδα: αμέσως μετά το σετάρισμα (από 26/11/2026, όροι v8 Α.4)
 **Όχι για πελάτες agency (§1.4).** Για όλους τους άλλους, μόλις το στήσιμο είναι έτοιμο (token, φάκελος, config, brand) — όχι στα μέσα του μήνα:
@@ -116,6 +118,8 @@ Agency/freelancer = πελάτης μας με δικούς της πελάτε�
    εμάς»). **Υπερισχύει** του `rules.md` και της φόρμας σεταρίσματος: διάβασέ το σε κάθε παραγωγή. Όταν διαφέρει από το `rules.md`,
    ενημέρωσε και το `rules.md` (με ημερομηνία «σελίδα πελάτη») και το CTA/τηλέφωνα των γραφικών· `music` → `config.music.moods`
    (Χωρίς μουσική → reels χωρίς μουσική). `shop_address`: στα posts όπου ταιριάζει «Πού θα μας βρείτε» (όχι σε κάθε λεζάντα).
+   Μουσική στα stories (Ναι/Όχι, από 28/11/2026): το Apps Script γράφει απευθείας `config.music.stories` (το ίδιο και το
+   διαχειριστικό, από τον διαχειριστή ή την agency του πελάτη). Τίποτα να μεταφράσεις (βλ. 6).
 2. Το ίδιο το Apps Script αλλάζει ήδη: `name` (+ `NAME_<K>`), `notify_to` / `approver_to` / `approvers` (+ `NOTIFY_TO_<K>`,
    `APPROVERS_<K>`), `times` (`auto` ή `manual` με `post_time` / `story_time`), `ready_reels_mode`. Τίποτα να κάνεις.
 3. Πακέτο / διακοπή: όπως τα κουμπιά του email (`package_change.json`, `billing`), §2.1.
@@ -174,7 +178,9 @@ Agency/freelancer = πελάτης μας με δικούς της πελάτε�
 8. Πηγές → `privacy_check.py clean` → `studio/assets/` (+ αντίγραφο στο `batches/<ΕΕΕΕ-ΜΜ>/assets/`). Script
    `batches/<ΕΕΕΕ-ΜΜ>/build.py` (`from engine import cover, text, point, list_card, quote, cta, story_photo, story_text, render_all, POST, STORY, CREAM`)
    → `batches/<ΕΕΕΕ-ΜΜ>/<K>/`. Για κάθε reel και κάθε story-βίντεο: `music.py pick --date <ημ/νία> --mood <διάθεση> --min-dur <διάρκεια> --record <αρχείο>`
-   → `track_id` (βλ. 6). Stories με μουσική: `story_video.py`. Reels: `make_reel.py` (`none` = χωρίς μουσική). Λεζάντες: `captions.json`
+   → `track_id` (βλ. 6). Reels: `make_reel.py` (`none` = χωρίς μουσική). **Stories με μουσική μόνο αν το διάλεξε ο πελάτης**
+   (`config.music.stories`, βλ. 6): `music.py pick --kind story …` → `story_video.py`, ίδιο όνομα με το jpg και `.mp4`.
+   Posts (εικόνες, carousel): ποτέ μουσική. Λεζάντες: `captions.json`
    (`<K>|<ημ/νία>`). Πηγές (ID Drive → asset): `sources.json`.
 9. `privacy_check.py verify batches/<ΕΕΕΕ-ΜΜ>` → κοίτα ΚΑΘΕ φύλλο στο `_review/` → `mark ok|reject … --note`.
 10. `git pull` στο publisher-work → διάβασε `outbox/<ΕΕΕΕ-ΜΜ>-01-folder.result.json`. Αν δεν υπάρχει ακόμα, ξαναδοκίμασε
@@ -244,7 +250,15 @@ Agency/freelancer = πελάτης μας με δικούς της πελάτε�
 - **Σετ ανά κλάδο** στο `music_library.json` (`sets`, π.χ. `kids`), όχι ανά πελάτη. Κάθε κομμάτι: ένα σετ, μία διάθεση
   (`moods`). Μόνο Pixabay (Pixabay Content License). Ο πελάτης παίρνει σετ και διαθέσεις από το `"music"` της ομάδας του
   (`group.json`) ή του `config.json` του: `{"set": "kids", "moods": ["playful", "gentle"], "avoid_days": 10}` ή
-  `{"none": true}` (χωρίς μουσική: reels με σιωπηλό ήχο, stories μένουν εικόνες).
+  `{"none": true}` (reels χωρίς μουσική: σιωπηλός ήχος).
+- **Stories (από 28/11/2026, επιλογή του πελάτη):** `"music": {"stories": true|false}` στο `config.json` (φόρμα σεταρίσματος →
+  εσύ στο §1.1· μετά σελίδα πελάτη ή διαχειριστικό/agency → το Apps Script). Χωρίς τιμή = όχι. Ανεξάρτητα από το `none` (αυτό
+  αφορά μόνο τα reels· ύφος από τα `moods`, αλλιώς του κλάδου). `stories: true` → κάθε story: `music.py pick --kind story` →
+  `story_video.py <story.jpg> <id> <story.mp4>` (το jpg μένει). Στο PDF έγκρισης φαίνεται «με μουσική».
+- **Posts (εικόνες, carousel): ποτέ μουσική.** Το Instagram/Facebook δεν δέχονται μουσική σε φωτογραφίες μέσω API και ο
+  Πέτρος δεν θέλει μετατροπή σε βίντεο (27/11/2026).
+- `make_queue.py` **σταματά** αν βρει βίντεο σε post, ή βίντεο story χωρίς την επιλογή του πελάτη· με την επιλογή αλλά χωρίς
+  βίντεο γράφει «Προσοχή» (φτιάξ' το πριν από την έγκριση).
 - **Παραγωγή:** `music.py pick --client K --date ΕΕΕΕ-ΜΜ-ΗΗ --mood <διάθεση> --min-dur <διάρκεια βίντεο> --record <αρχείο>`
   για κάθε reel / story-βίντεο, με τη σειρά των ημερών. Γράφει στο ιδιωτικό `clients/<K>/music_log.json` (commit μαζί με
   την παρτίδα), ώστε να μην ξαναμπαίνει το ίδιο κομμάτι σε ±`avoid_days` ημέρες. Διάθεση από το θέμα: χαρούμενα θέματα →
@@ -258,7 +272,8 @@ Agency/freelancer = πελάτης μας με δικούς της πελάτε�
   `music.py add --set <σετ> --mood <διάθεση> --title … --artist … --page <σελίδα Pixabay> --url <mp3 cdn.pixabay.com>`
   (υπολογίζει διάρκεια και `best_start` από τον ήχο). Μετά `music.py check` και `"music"` στο `config.json` του πελάτη.
   Ο διαχειριστής ακούει τα κομμάτια από τις σελίδες τους πριν από την 1η παραγωγή.
-- **Επιλογή του πελάτη στο σετάρισμα** (στήλη «Μουσική στα reels») → `moods`: Ήρεμη → `calm, warm, gentle` ·
+- **Επιλογή του πελάτη στο σετάρισμα** (στήλη «Μουσική στα stories»: Ναι → `true`, Όχι ή κενό → `false`, στο
+  `config.music.stories`) και (στήλη «Μουσική στα reels») → `moods`: Ήρεμη → `calm, warm, gentle` ·
   Ζωντανή → `energetic, playful, warm` · Κομψή → `elegant, calm` · Χαρούμενη → `playful, warm` · Χωρίς μουσική →
   `"none": true` · «Αφήστε το σε εμάς» → οι διαθέσεις που ταιριάζουν στον κλάδο.
 - Τα **έτοιμα reels** του πελάτη κρατούν τον δικό τους ήχο (ευθύνη του πελάτη, όροι Α.5)· δεν περνούν από το `music.py`.

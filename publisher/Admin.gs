@@ -43,15 +43,18 @@
  *   - Έγκριση: «με email» (κανονικά) ή «χωρίς έγκριση» → config.json approval: "none" (η παραγωγή βάζει το πρόγραμμα
  *     κατευθείαν στην ουρά και στέλνει μόνο ενημερωτικό email· βλ. RUNBOOK §2.13). Για το okpublisher και δικά μας projects.
  *   Το config.json γράφεται με το GITHUB_TOKEN (μόνο τα πεδία billing)· κάθε ενέργεια → email στο okpublisher.
+ * Μουσική στα stories (από 28/11/2026): ο διαχειριστής ΚΑΙ η agency του πελάτη (για τους δικούς της πελάτες) →
+ *   config.json music { stories } (true/false· το studio το διαβάζει απευθείας, RUNBOOK §6). Από την επόμενη παραγωγή.
+ *   Ο απευθείας πελάτης το αλλάζει και μόνος του (σελίδα πελάτη) και το βλέπει στο ιστορικό του.
  */
 const ADM_ = {
   SESSION_DAYS: 30,
   LOGIN_TTL_S: 900,
   MAX_SESSIONS: 40,
   CLIENTS_CACHE_S: 300,
-  CLIENTS_KEY: 'adm:clients:3',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
+  CLIENTS_KEY: 'adm:clients:4',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
-  LEADS_KEY: 'adm:leads:5',
+  LEADS_KEY: 'adm:leads:6',
   GROUPS_KEY: 'adm:groups:1',
   GROUP_RE: /^[a-z0-9][a-z0-9-]{1,39}$/,
   REF_URL: 'https://okpublisher.gr/',
@@ -630,6 +633,7 @@ function admClients_() {
         pkg_change: pc && pc.status === 'scheduled' ? { plan: String(pc.plan || ''), from: String(pc.from || '') } : null,
         has_config: !!cfg,
         no_approval: !!(cfg && cfg.approval === 'none'), cfg_agency: cfg && cfg.agency ? String(cfg.agency) : '',
+        music: { stories: !!(cfg && cfg.music && cfg.music.stories === true) },
         days: cfg ? { posts: admDays_(cfg.post_days), stories: admDays_(cfg.story_days), post_time: cfg.times === 'auto' ? '' : String(cfg.post_time || ''),
           story_time: cfg.times === 'auto' ? '' : String(cfg.story_time || ''), auto: cfg.times === 'auto' } : null,
       };
@@ -641,7 +645,7 @@ function admClients_() {
     return { key: K, code: g.code, name: nm !== K ? nm : (g.name || K), package: g.package, group: g.group, note: g.note,
       accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null, pkg_change: g.pkg_change || null,
       has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(), no_approval: !!g.no_approval, days: g.days || null,
-      agency: agencyOf_(K), cfg_agency: g.cfg_agency || '',
+      agency: agencyOf_(K), cfg_agency: g.cfg_agency || '', music: g.music || { stories: false },
       referral: agencyOf_(K) ? null : { link: cprop_(K, 'REFCODE', '') ? REFERRAL_.SITE + '?p=' + cprop_(K, 'REFCODE', '') : '',
         credit_eur: referralCredit_(K) / 100, count: Number(cprop_(K, 'REFERRAL_COUNT', '0')) || 0, by: cprop_(K, 'REFERRAL_DONE', '') },
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
@@ -697,6 +701,7 @@ function admLeads_() {
         approvers: v(r, 'Άλλοι εγκρίνοντες'), shop_address: v(r, 'Διεύθυνση καταστήματος'),
         bill_doy: v(r, 'ΔΟΥ'), bill_address: v(r, 'Διεύθυνση τιμολόγησης'),
         reels: v(r, 'Έτοιμα reels'), music: v(r, 'Μουσική στα reels'), status: v(r, 'Κατάσταση'), terms: v(r, 'Όροι (έκδοση)'),
+        music_stories: v(r, 'Μουσική στα stories'),
         bill_name: v(r, 'Επωνυμία τιμολόγησης'), afm: v(r, 'ΑΦΜ'), bill_check: v(r, 'Έλεγχος τιμολόγησης'), trial: v(r, 'Δωρεάν εβδομάδα'),
         ref: v(r, 'Σύσταση').toLowerCase(), website: v(r, 'Ιστοσελίδα'), other: v(r, 'Άλλα').slice(0, 1500),
         help: v(r, 'Άλλα').indexOf(ADM_.HELP_TAG) === 0 };
@@ -780,6 +785,7 @@ function adminApi_(p) {
       case 'agency_charge': return out({ ok: true, message: admAgencyCharge_(t, p.email) });
       case 'agency_stop': return out({ ok: true, message: admAgencyStop_(t, p.email) });
       case 'client_log_done': return out({ ok: true, message: admClientLogDone_(t, p.client, p.id) });
+      case 'client_music': return out({ ok: true, message: admClientMusic_(t, p.client, p.stories) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
     }
   } catch (e) {
@@ -1026,4 +1032,31 @@ function admClientApproval_(token, client, mode) {
     : 'Με έγκριση: το πρόγραμμα περιμένει «ΟΚ» στο email του μήνα.') + ' Από την επόμενη παραγωγή (διαχειριστικό: ' + me.email + ').');
   return (mode === 'none' ? 'Χωρίς έγκριση: το πρόγραμμα μπαίνει κατευθείαν στην ουρά και έρχεται μόνο ενημερωτικό email.'
     : 'Με έγκριση: το πρόγραμμα περιμένει «ΟΚ» στο email του μήνα.') + ' Από την επόμενη παραγωγή.';
+}
+
+// Μουσική στα stories (από 28/11/2026): διαχειριστής, ή η agency για τους δικούς της πελάτες. «Ναι»/«Όχι» (ή true/false)
+// → config.json music { stories }. Από την επόμενη παραγωγή (ό,τι έχει εγκριθεί δεν αλλάζει). Posts: ποτέ μουσική.
+function admClientMusic_(token, client, stories) {
+  const me = admSession_(token);
+  const c = admClientCfg_(client), K = c.K, cfg = c.cfg;
+  if (me.role !== 'admin') {
+    const a = me.role === 'agency' ? agencyList_().filter(function (x) { return x.email === me.email; })[0] : null;
+    if (!a || agencyOf_(K) !== a.key) throw new Error('Μόνο για διαχειριστές ή για την agency του πελάτη.');
+  }
+  const yn = function (v) {
+    const x = String(v == null ? '' : v).trim().toLowerCase();
+    if (['ναι', 'yes', 'true'].indexOf(x) >= 0) return true;
+    if (['όχι', 'οχι', 'no', 'false'].indexOf(x) >= 0) return false;
+    throw new Error('Διάλεξε «Ναι» ή «Όχι».');
+  };
+  const st = yn(stories), m = cfg.music || {};
+  if (m.stories === st) return 'Δεν άλλαξε τίποτα.';
+  cfg.music = Object.assign({}, m, { stories: st });
+  const t = 'Μουσική στα stories: ' + (st ? 'ναι' : 'όχι');
+  admSaveCfg_(K, cfg, 'μουσική στα stories: ' + (st ? 'ναι' : 'όχι'), me);
+  if (!agencyOf_(K)) {
+    try { cliLogAdd_(K, 'change', 'Αλλαγή μουσικής', [t], 'okpublisher'); } catch (e) { /* μόνο το ιστορικό */ }
+  }
+  systemNotify_('Μουσική: ' + admWho_(K, cfg), t + '. Από την επόμενη παραγωγή (διαχειριστικό: ' + me.email + ').');
+  return t + '. Από το επόμενο πρόγραμμα.';
 }

@@ -4,9 +4,10 @@
     python3 make_queue.py <φάκελος παρτίδας> <φάκελος repo> [--client K]   (ή OKP_CLIENT=K)
 
 Τρέχει ΜΟΝΟ μετά την έγκριση του πελάτη. Δομή παρτίδας (<K> = κλειδί πελάτη· σε παλιές παρτίδες ένα alias, π.χ. LS):
-  <παρτίδα>/<K>/<ΕΕΕΕ-ΜΜ-ΗΗ>_post_01.jpg …    εικόνες post (2+ = carousel)
+  <παρτίδα>/<K>/<ΕΕΕΕ-ΜΜ-ΗΗ>_post_01.jpg …    εικόνες post (2+ = carousel)· ποτέ .mp4 δίπλα τους (posts χωρίς μουσική)
   <παρτίδα>/<K>/<ΕΕΕΕ-ΜΜ-ΗΗ>_reel.mp4           reel (στη θέση του post της ημέρας) + προαιρετικά _reel_cover.jpg
-  <παρτίδα>/<K>/<ΕΕΕΕ-ΜΜ-ΗΗ>_story_01.jpg       story (+ προαιρετικά ίδιο όνομα .mp4 με μουσική από story_video.py)
+  <παρτίδα>/<K>/<ΕΕΕΕ-ΜΜ-ΗΗ>_story_01.jpg       story (+ ίδιο όνομα .mp4 με μουσική από story_video.py, μόνο αν ο πελάτης έχει
+                                                "music": {"stories": true}· αλλιώς σταματάει)
   <παρτίδα>/captions.json                       '<K>|<ημ/νία>' = λεζάντα post/reel
                                                 '<K>|<ημ/νία>|reel' = {"story": false} αν το reel > 60″
   <παρτίδα>/privacy_manifest.json               από privacy_check.py verify + mark
@@ -51,6 +52,7 @@ def build(batch, repo, cl, now=None):
     ACC = cl.batch_dir_name(batch)          # <K>/ ή, σε παλιές παρτίδες, το alias (π.χ. LS) — κρατά τα ίδια ID
     POST_DAYS, POST_TIME, STORY_TIME = cl.post_weekdays, cl.post_time, cl.story_time
     banned = cl.banned_phrases
+    music_stories = cl.music_stories   # επιλογή του πελάτη (RUNBOOK §6)
     cap = lambda d, suffix='': cl.caption(caps, ACC, d, suffix)
     src = f'{batch}/{ACC}'
     files = sorted(glob.glob(f'{src}/*.jpg') + glob.glob(f'{src}/*.mp4'))
@@ -89,6 +91,9 @@ def build(batch, repo, cl, now=None):
         elif posts:
             check_caption(cap(d), f'{ACC}|{d}', banned)
             assert len(posts) <= 10, f'{d}: carousel με {len(posts)} εικόνες (όριο 10)'
+            pv = [p[:-4] + '.mp4' for p in posts if os.path.exists(p[:-4] + '.mp4')]
+            if pv:   # απόφαση Πέτρου 27/11/2026: τα posts μένουν εικόνες, ποτέ βίντεο με μουσική
+                sys.exit(f'ΣΤΑΜΑΤΗΣΑ: {d}: βίντεο σε post ({os.path.basename(pv[0])}). Τα posts μένουν εικόνες, χωρίς μουσική.')
             copies += [(p, dst) for p in posts]
             items.append({'id': f'{ACC}-{d}-post', 'account': ACC, 'type': 'CAROUSEL' if len(posts) > 1 else 'IMAGE',
                           'publish_at': at(d, POST_TIME), 'images': [url(p) for p in posts], 'caption': cap(d)})
@@ -98,7 +103,11 @@ def build(batch, repo, cl, now=None):
             copies.append((s, dst))
             mp4 = s[:-4] + '.mp4'
             if os.path.exists(mp4):
+                if not music_stories:
+                    sys.exit(f'ΣΤΑΜΑΤΗΣΑ: {os.path.basename(mp4)}: story με μουσική, ενώ ο πελάτης θέλει τα stories χωρίς μουσική.')
                 copies.append((mp4, dst)); it['video'] = url(mp4)
+            elif music_stories:
+                print(f'Προσοχή: {os.path.basename(s)}: story χωρίς μουσική, ενώ ο πελάτης θέλει μουσική στα stories (story_video.py)')
             items.append(it)
     # Αν η έγκριση ήρθε αργά: ό,τι έχει ήδη περάσει (ή είναι σε < 20′) ΔΕΝ μπαίνει, ούτε τα αρχεία του.
     soon = (now or datetime.now(ATH)) + timedelta(minutes=20)

@@ -2,7 +2,7 @@
 """Μουσική για reels και stories: σετ ανά κλάδο, αυτόματη επιλογή χωρίς επαναλήψεις, αποκλεισμός κομματιών με σίγαση.
 
     python3 music.py list [--set kids]
-    python3 music.py pick --client K --date ΕΕΕΕ-ΜΜ-ΗΗ [--mood playful] [--min-dur 20] [--record <αρχείο>]
+    python3 music.py pick --client K --date ΕΕΕΕ-ΜΜ-ΗΗ [--kind reel|story] [--mood playful] [--min-dur 20] [--record <αρχείο>]
     python3 music.py where <track_id>
     python3 music.py block <track_id> --reason "σίγαση στο Instagram (Rights Manager)"
     python3 music.py add --set <σετ> --mood <διάθεση> --title <τίτλος> --artist <καλλιτέχνης> --page <σελίδα> --url <mp3> [--content-id]
@@ -11,7 +11,9 @@
 - Βιβλιοθήκη: music_library.json (ή MUSIC_LIBRARY). Μόνο Pixabay (Pixabay Content License: εμπορική χρήση, χωρίς
   αναφορά δημιουργού). Μόνο links· ποτέ mp3 στο repo (cache εκτός repo, MUSIC_CACHE).
 - Κάθε κομμάτι ανήκει σε ένα σετ (κλάδο, π.χ. kids) και έχει μία διάθεση (mood). Ο πελάτης παίρνει σετ και διαθέσεις
-  από το "music" της ομάδας του (group.json) ή του config.json του. "none": true = χωρίς μουσική.
+  από το "music" της ομάδας του (group.json) ή του config.json του. "none": true = reels χωρίς μουσική.
+  Stories (από 28/11/2026): μουσική μόνο αν τη διάλεξε ο πελάτης ("stories": true)· --kind story αλλιώς δίνει «none» (μένουν
+  εικόνες). Posts (εικόνες, carousel): ποτέ μουσική.
 - pick: κομμάτι του σετ, στη διάθεση που ζητήθηκε (αλλιώς στις διαθέσεις του πελάτη, με τη σειρά τους), όχι αποκλεισμένο,
   αρκετά μεγάλο, και όχι ίδιο με όσα μπήκαν ±avoid_days ημέρες. Από αυτά: το λιγότερο χρησιμοποιημένο του πελάτη,
   και με ισοπαλία όσα ΔΕΝ είναι γραμμένα στο Content ID ("youtube_content_id": true = μεγαλύτερος κίνδυνος διεκδίκησης).
@@ -90,13 +92,21 @@ def _days(a, b):
     return abs((date.fromisoformat(a) - date.fromisoformat(b)).days)
 
 
-def pick(cl, day, mood=None, min_dur=0.0, lib=None, log=None):
-    """Επιστρέφει (κομμάτι ή None για «χωρίς μουσική», σημειώσεις). Δεν γράφει τίποτα."""
+KINDS = ('reel', 'story')
+
+
+def pick(cl, day, mood=None, min_dur=0.0, lib=None, log=None, kind='reel'):
+    """Επιστρέφει (κομμάτι ή None για «χωρίς μουσική», σημειώσεις). Δεν γράφει τίποτα.
+    kind: reel («none» του πελάτη = χωρίς μουσική) · story: μόνο αν ο πελάτης το διάλεξε (music.stories)."""
     date.fromisoformat(day)
+    if kind not in KINDS:
+        raise SystemExit(f'Άγνωστο είδος «{kind}» (επιτρέπονται: {", ".join(KINDS)}).')
     lib = lib or load_library()
     log = read_log(cl) if log is None else log
     cfg = cl.music
-    if cfg.get('none'):
+    if kind == 'story' and not cl.music_stories:
+        return None, ['ο πελάτης θέλει τα stories χωρίς μουσική']
+    if kind == 'reel' and cfg.get('none'):
         return None, ['ο πελάτης θέλει χωρίς μουσική']
     s = cfg.get('set')
     if not s:
@@ -185,6 +195,7 @@ def main(argv=None):
     p = sub.add_parser('list'); p.add_argument('--set')
     p = sub.add_parser('pick'); p.add_argument('--client'); p.add_argument('--date', required=True)
     p.add_argument('--mood'); p.add_argument('--min-dur', type=float, default=0.0); p.add_argument('--record')
+    p.add_argument('--kind', choices=KINDS, default='reel', help='reel (προεπιλογή) · story (μόνο αν τα διάλεξε ο πελάτης)')
     p = sub.add_parser('where'); p.add_argument('track')
     p = sub.add_parser('block'); p.add_argument('track'); p.add_argument('--reason', required=True)
     p = sub.add_parser('add')
@@ -202,9 +213,9 @@ def main(argv=None):
                       + (f"  ⛔ {t['blocked']}" if t.get('blocked') else ''))
     elif a.cmd == 'pick':
         cl = client_mod.load(a.client)
-        t, notes = pick(cl, a.date, a.mood, a.min_dur, lib)
+        t, notes = pick(cl, a.date, a.mood, a.min_dur, lib, kind=a.kind)
         tid = t['id'] if t else 'none'
-        if a.record:
+        if a.record and (t or a.kind == 'reel'):   # story χωρίς μουσική = μένει εικόνα: τίποτα στο log
             record(cl, a.date, tid, a.record, t and t['mood'])
         for n in notes:
             print('σημείωση: ' + n, file=sys.stderr)

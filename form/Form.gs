@@ -30,6 +30,8 @@
  *   κρυφό πεδίο για bots), με https:// μπροστά αν λείπει. Από εκεί το κύριο script βγάζει χρώματα/γραμματοσειρές (Site.gs).
  * Στήλη «Διεύθυνση καταστήματος» (από 27/11/2026, Σεταρίσματα, στο τέλος): πεδίο shop_address (οδός, αριθμός, ΤΚ, πόλη)·
  *   το παλιό «Διεύθυνση/περιοχή» μένει για την περιοχή (hashtags).
+ * Στήλη «Μουσική στα stories» (από 28/11/2026, Σεταρίσματα, στο τέλος): πεδίο music_stories = «Ναι» / «Όχι» (κενό = παλιά
+ *   σελίδα). Στο σετάρισμα → config.json "music": { stories } (RUNBOOK §6). Posts: ποτέ μουσική.
  * Προσυμπληρωμένη φόρμα σεταρίσματος (από 27/11/2026): ο σύνδεσμος της αυτόματης απάντησης έχει στο τέλος #d=<base64url JSON>
  *   { b: επιχείρηση, n: όνομα, e: email, p: πακέτο, s: Instagram/Facebook } (prefill_)· το setup.html τα βάζει στη φόρμα.
  *   Μετά το # δεν φεύγει ποτέ προς server (ούτε GitHub ούτε Google). Ίδια μορφή με το Admin.gs (admPrefill_).
@@ -83,6 +85,9 @@ const FORM_ = {
     ['bill_name', 'Επωνυμία τιμολόγησης', 200], ['bill_afm', 'ΑΦΜ', 30], ['bill_doy', 'ΔΟΥ', 80], ['bill_address', 'Διεύθυνση τιμολόγησης', 200]],
   EXTRA: [  // νεότερα πεδία· στήλες στο τέλος (μετά τον «Έλεγχο τιμολόγησης»), για να μη μετακινηθούν οι παλιές
     ['music', 'Μουσική στα reels', 60]],
+  // Μουσική στα stories (από 28/11/2026): «Ναι» / «Όχι» (κενό = παλιά σελίδα χωρίς την ερώτηση).
+  // Στήλη στο τέλος, μετά τη «Διεύθυνση καταστήματος».
+  YESNO: [['music_stories', 'Μουσική στα stories']],
 };
 
 function doPost(e) {
@@ -291,9 +296,12 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση', 'Ιστοσελίδα', 'Διεύθυνση καταστήματος']);
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση', 'Ιστοσελίδα', 'Διεύθυνση καταστήματος'],
+    FORM_.YESNO.map(function (f) { return f[1]; }));
   const x = {};
   FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
+  const yn = {};
+  FORM_.YESNO.forEach(function (f) { yn[f[0]] = yesNo_(d[f[0]]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
   let trial = 'ναι', code = '';
@@ -305,7 +313,8 @@ function setup_(d) {
     trial = trialCheck_(sh, head.indexOf('ΑΦΜ') + 1, b.bill_afm);
     code = clientCode_(sh, head.indexOf('ΑΦΜ') + 1, head.indexOf('Κωδικός πελάτη') + 1, b.bill_afm);
     sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
-      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref, safe_(web), safe_(shop)]));
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref, safe_(web), safe_(shop)],
+      FORM_.YESNO.map(function (f) { return yn[f[0]]; })));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   const help = r.message.indexOf(FORM_.HELP_TAG) === 0;
@@ -316,6 +325,7 @@ function setup_(d) {
       body: (help ? '⚠ Θέλει να κάνετε μαζί το σετάρισμα με απομακρυσμένη σύνδεση (χωρίς χρέωση): κανόνισε μέρα, ώρα και πρόγραμμα με «Απάντηση» σε αυτό το email.\n\n' : '') +
         'Κωδικός πελάτη: ' + code + '\n' +
         FORM_.SETUP.concat(FORM_.EXTRA).map(function (f) { return f[1] + ': ' + (r[f[0]] || x[f[0]] || '—'); }).join('\n') +
+        FORM_.YESNO.map(function (f) { return '\n' + f[1] + ': ' + (yn[f[0]] || '—'); }).join('') +
         '\nΌροι: αποδοχή στη φόρμα, έκδοση ' + terms +
         '\n\nΤιμολόγηση:\n' + FORM_.BILL.map(function (f) { return f[1] + ': ' + (b[f[0]] || '—'); }).join('\n') +
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +
@@ -327,6 +337,14 @@ function setup_(d) {
     });
   }
   return out_({ ok: true });
+}
+
+// «Ναι» / «Όχι» από τη φόρμα (και yes/no, true/false)· οτιδήποτε άλλο → κενό.
+function yesNo_(v) {
+  v = String(v == null ? '' : v).trim().toLowerCase();
+  if (['ναι', 'yes', 'true', '1'].indexOf(v) >= 0) return 'Ναι';
+  if (['όχι', 'οχι', 'no', 'false', '0'].indexOf(v) >= 0) return 'Όχι';
+  return '';
 }
 
 // Μία δωρεάν εβδομάδα ανά ΑΦΜ (όροι Α.4): 'ναι', ή «όχι: …» αν ο ίδιος ΑΦΜ υπάρχει ήδη στα «Σεταρίσματα».

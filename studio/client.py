@@ -154,6 +154,14 @@ class Client:
         m['moods'] = list(m.get('moods') or [])
         return m
 
+    @property
+    def music_stories(self):
+        """Μουσική στα stories (από 28/11/2026, επιλογή του πελάτη: φόρμα σεταρίσματος, σελίδα πελάτη, διαχειριστικό/agency):
+        "music": {"stories": true} → κάθε story γίνεται βίντεο με μουσική (story_video.py). false ή χωρίς τιμή → εικόνα.
+        Ανεξάρτητο από το "none" (αυτό αφορά μόνο τα reels). Posts: ποτέ μουσική (το Instagram δεν δέχεται μουσική σε
+        φωτογραφίες μέσω API· απόφαση Πέτρου 27/11/2026: όχι μετατροπή σε βίντεο)."""
+        return self.music.get('stories') is True
+
     # ------------------------------------------------------------ κείμενα
     @property
     def phones(self):

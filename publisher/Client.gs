@@ -17,6 +17,8 @@
  *   - ώρες (auto ή δικές του) → config.times / post_time / story_time · έτοιμα reels → config.ready_reels_mode
  *   - τηλέφωνα, περιοχή, διεύθυνση καταστήματος, ιστοσελίδα, κριτικές, τι κάνει, τι δεν γράφουμε, μουσική → config.profile
  *     (η παραγωγή το διαβάζει και υπερισχύει του rules.md· RUNBOOK §1.5). Ισχύουν από το επόμενο πρόγραμμα.
+ *   - μουσική στα stories (από 28/11/2026, Ναι/Όχι) → config.music.stories (true/false· το διαβάζει απευθείας το studio,
+ *     RUNBOOK §6). Χωρίς τιμή στο config: της φόρμας σεταρίσματος, αλλιώς «Όχι».
  *   - πακέτο → planChangeSet_ (ίδιοι κανόνες με το κουμπί του email), μόνο με ενεργή πληρωμένη συνδρομή
  *   - διακοπή συνδρομής → billingStop_ (όροι Α.8)
  * Αιτήματα (θέλουν τον διαχειριστή): νέα σελίδα Facebook/Instagram (πρόσβαση + νέο token), στοιχεία τιμολόγησης, άλλο.
@@ -45,6 +47,8 @@ const CLI_ = {
   PROFILE: [['phones', 'Τηλέφωνα στα posts', 120], ['area', 'Περιοχή', 200], ['shop_address', 'Διεύθυνση καταστήματος', 200],
     ['website', 'Ιστοσελίδα', 200], ['reviews', 'Κριτικές Google', 300], ['about', 'Τι κάνει η επιχείρηση', 3000],
     ['avoid', 'Τι ΔΕΝ γράφουμε', 3000], ['music', 'Μουσική στα reels', 40]],
+  // Ναι/Όχι → config.music.<κλειδί> (true/false): [πεδίο, ετικέτα, κλειδί]
+  MUSIC_YN: [['music_stories', 'Μουσική στα stories', 'stories']],
   MAX_APPROVERS: 5,
   WELCOME_FROM: '27/11/2026 19:00:00',   // σεταρίσματα πριν από εδώ δεν παίρνουν email καλωσορίσματος (ώρα Ελλάδας, όπως στο Sheet)
   WELCOME_MAX: 300,
@@ -164,6 +168,11 @@ function cliSetup_(code) {
   if (!code) return {};
   try { return admLeads_().setups.filter(function (s) { return s.code === code; })[0] || {}; } catch (e) { return {}; }
 }
+// Μουσική στα stories: του config (true/false), αλλιώς της φόρμας σεταρίσματος («Ναι»/«Όχι»), αλλιώς «Όχι».
+function cliYesNo_(cfgVal, setupVal) {
+  if (cfgVal === true || cfgVal === false) return cfgVal ? 'Ναι' : 'Όχι';
+  return /^ναι$/i.test(String(setupVal || '').trim()) ? 'Ναι' : 'Όχι';
+}
 function cliMusic_(v) {
   v = String(v || '').trim();
   const hit = CLI_.MUSIC.filter(function (m) { return m.toLowerCase() === v.toLowerCase(); })[0];
@@ -182,6 +191,7 @@ function cliProfile_(K, cfg, s) {
     phones: v('phones', s.phones), area: v('area', s.address), shop_address: v('shop_address', s.shop_address),
     website: v('website', s.website), reviews: v('reviews', s.reviews), about: v('about', s.about), avoid: v('avoid', s.rules),
     music: cliMusic_(v('music', s.music)),
+    music_stories: cliYesNo_((cfg.music || {}).stories, s.music_stories),
     times: cfg.times === 'auto' || (!cfg.times && !cfg.post_time) ? 'auto' : 'custom',
     post_time: CLI_.TIME_RE.test(String(cfg.post_time || '')) ? String(cfg.post_time) : '',
     story_time: CLI_.TIME_RE.test(String(cfg.story_time || '')) ? String(cfg.story_time) : '',
@@ -308,6 +318,12 @@ function cliSave_(token, K, f) {
     if ('reviews' in f && nu.reviews && !/^https:\/\/\S+$/.test(nu.reviews)) throw new Error('Ο σύνδεσμος για τις κριτικές πρέπει να ξεκινά με https://');
     if ('about' in f && nu.about.length < 3) throw new Error('Γράψτε λίγα λόγια για το τι κάνει η επιχείρηση.');
     if ('music' in f) nu.music = cliMusic_(f.music);
+    CLI_.MUSIC_YN.forEach(function (m) {
+      if (!(m[0] in f)) return;
+      const y = String(f[m[0]] || '').trim();
+      if (y !== 'Ναι' && y !== 'Όχι') throw new Error('Διαλέξτε «Ναι» ή «Όχι» στο «' + m[1] + '».');
+      nu[m[0]] = y;
+    });
     if ('times' in f) {
       nu.times = f.times === 'custom' ? 'custom' : 'auto';
       if (nu.times === 'custom') {
@@ -322,6 +338,7 @@ function cliSave_(token, K, f) {
     // Τι άλλαξε (με ετικέτες για τα email και το ιστορικό).
     const L = { name: 'Όνομα', email: 'Email εγκρίσεων', approvers: 'Άλλα email εγκρίσεων', times: 'Ώρες', reels: 'Έτοιμα reels' };
     CLI_.PROFILE.forEach(function (p) { L[p[0]] = p[1]; });
+    CLI_.MUSIC_YN.forEach(function (m) { L[m[0]] = m[1]; });
     const show = function (k, o) {
       if (k === 'approvers') return o.approvers.join(', ') || '—';
       if (k === 'times') return o.times === 'auto' ? 'αυτόματες' : 'posts ' + o.post_time + ', stories ' + o.story_time;
@@ -350,6 +367,11 @@ function cliSave_(token, K, f) {
       if (nu.times === 'custom') { cfg.post_time = nu.post_time; cfg.story_time = nu.story_time; }
     }
     if (changed.indexOf('reels') >= 0) cfg.ready_reels_mode = nu.reels;
+    CLI_.MUSIC_YN.forEach(function (m) {
+      if (changed.indexOf(m[0]) < 0) return;
+      cfg.music = Object.assign({}, cfg.music || {});
+      cfg.music[m[2]] = nu[m[0]] === 'Ναι';
+    });
     ghPutJson_('clients/' + K + '/config.json', cfg, 'Σελίδα πελάτη: ' + K + ' ' + changed.join(', '));
     try { CacheService.getScriptCache().remove(ADM_.CLIENTS_KEY); } catch (e) { /* μένει 5′ */ }
     if (changed.indexOf('name') >= 0) P_().setProperty('NAME_' + K, nu.name);

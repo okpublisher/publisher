@@ -2063,7 +2063,8 @@ test('διαχειριστικό: η κάρτα πελάτη έχει ημέρε
   const c = api(env, { act: 'data', token: sal }).data.clients.find(function (x) { return x.key === 'OKP'; });
   assert.ok(c, 'ο πωλητής βλέπει τον πελάτη του');
   assert.deepStrictEqual(JSON.parse(JSON.stringify([c.no_approval, c.free, c.package, c.days.posts, c.days.stories])), [true, { until: '' }, 'Βασικό', ['Τρίτη', 'Πέμπτη'], []]);
-  assert.ok('adm:clients:3' in env.cache && !('adm:clients:2' in env.cache), 'νέο κλειδί cache');
+  assert.ok('adm:clients:4' in env.cache && !('adm:clients:3' in env.cache), 'νέο κλειδί cache');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.music)), { stories: false }, 'μουσική στα stories: χωρίς επιλογή = όχι');
 });
 
 // ------------------------------------------------------------------ agencies (Agency.gs, από 27/11/2026)
@@ -2103,6 +2104,22 @@ test('agency: νέος χρήστης «agency» με σύνδεσμο, έκπτ
   assert.deepStrictEqual(env.users()['studio@agency.example'].discs.map(function (x) { return x.d; }), [20, 25], 'ακύρωση της μελλοντικής αλλαγής');
   const src = require('fs').readFileSync(require('path').join(DIR, 'Agency.gs'), 'utf8');
   assert.ok(!/^function [a-zA-Z0-9]*[^_]\(/m.test(src), 'όλες οι συναρτήσεις του Agency.gs τελειώνουν σε _');
+});
+
+test('agency: μουσική στα stories για τους δικούς της πελάτες (από το διαχειριστικό)· όχι σε ξένους', function () {
+  const env = agencyEnv();
+  env.act({ act: 'client_agency', client: 'OKP', email: 'studio@agency.example' });
+  const ag = env.loginAs('studio@agency.example');
+  const d = api(env, { act: 'data', token: ag }).data;
+  assert.deepStrictEqual(d.clients.map(function (x) { return x.key; }), ['OKP'], 'βλέπει μόνο τον πελάτη της');
+  const before = env.mails.length;
+  const r = api(env, { act: 'client_music', token: ag, client: 'OKP', stories: 'Ναι' });
+  assert.ok(r.ok && /stories: ναι/.test(r.message), JSON.stringify(r));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(env.gh('clients/OKP/config.json').music)), { stories: true });
+  assert.ok(!env.mails.slice(before).some(function (m) { return m.to === 'okp-client@example.com'; }), 'τίποτα στον τελικό πελάτη');
+  assert.ok(!env.props.CLIENT_LOG_OKP, 'πελάτης agency: όχι ιστορικό σελίδας πελάτη');
+  assert.ok(/agency του πελάτη/.test(api(env, { act: 'client_music', token: ag, client: 'ORE', stories: 'Ναι' }).error), 'όχι σε ξένο πελάτη');
+  assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: 'client_plan', token: ag, client: 'OKP', plan: 'Μεσαίο' }).error), 'οι άλλες ενέργειες μένουν μόνο για admin');
 });
 
 test('agency: πελάτης → agency (email μόνο στην agency, χωρίς δική του χρέωση) → «Χρέωση» → πληρωμή → μέρα agency → αναλογικά → μηνιαία χρέωση με ανάλυση', function () {
@@ -2777,8 +2794,8 @@ const CLI_SETUPS_CSV = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Ema
   '20/11/2026 4:00:00 μ.μ.,Learning ORE,Λ,center@example.com,deputy@example.com,Βασικό,2310 000000,fb.com/ls,@ls,Ωραιόκαστρο,Θεραπείες παιδιών,Όχι τιμές,https://g.page/r/x,αυτόματες,σετ,Κέντρο ΙΚΕ,094014298,Α Θεσ,Οδός 1,Ήρεμη,OK-0001,https://ls.gr,Βασ. Γεωργίου 11\r\n';
 function capi(env, o) { return JSON.parse(env.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ a: 'client' }, o)) }, parameter: {} }).text); }
 function cliMail(env, email) { return env.mails.filter(function (x) { return x.to === email && /λογαριασμό σας στο okpublisher/.test(x.subject); }).pop(); }
-function cliEnv(extra) {
-  const env = admEnv(Object.assign({ FOLDER_ORE: 'https://drive.google.com/drive/folders/FOLDERid123456' }, extra || {}), { setupsCsv: CLI_SETUPS_CSV });
+function cliEnv(extra, csv) {
+  const env = admEnv(Object.assign({ FOLDER_ORE: 'https://drive.google.com/drive/folders/FOLDERid123456' }, extra || {}), { setupsCsv: csv || CLI_SETUPS_CSV });
   env.clientLogin = function (email) {
     env.cache = {};
     capi(env, { act: 'login', email: email });
@@ -2865,6 +2882,48 @@ test('σελίδα πελάτη: αλλαγές εφαρμόζονται αμέ�
   capi(env, { act: 'save', token: tok2, fields: { approvers: '' } });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(capi(env, { act: 'data', token: tok2 }).data.client.profile.approvers)), [], 'αφαίρεση εγκρινόντων: δεν ξαναγυρνούν από τη φόρμα');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(env.ghStore['clients/ORE/config.json'].approvers)), ['new@example.com']);
+});
+
+test('μουσική στα stories: σελίδα πελάτη (αρχικά από τη φόρμα) → config.music· διαχειριστής· πωλητής όχι· posts ποτέ', function () {
+  const csv = CLI_SETUPS_CSV.replace('Διεύθυνση καταστήματος\r\n', 'Διεύθυνση καταστήματος,Μουσική στα stories\r\n')
+    .replace('Βασ. Γεωργίου 11\r\n', 'Βασ. Γεωργίου 11,Ναι\r\n');
+  const env = cliEnv({}, csv);
+  const tok = env.clientLogin('center@example.com');
+  let p = capi(env, { act: 'data', token: tok }).data.client.profile;
+  assert.strictEqual(p.music_stories, 'Ναι', 'από τη φόρμα σεταρίσματος');
+  assert.ok(!('music_posts' in p), 'καμία επιλογή για posts');
+  assert.ok(/Ναι.*Όχι/.test(capi(env, { act: 'save', token: tok, fields: { music_stories: 'ίσως' } }).error));
+  const before = env.mails.length;
+  const r = capi(env, { act: 'save', token: tok, fields: { music_stories: 'Όχι', music_posts: 'Ναι' } });
+  assert.ok(r.ok, JSON.stringify(r));
+  let cfg = env.ghStore['clients/ORE/config.json'];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(cfg.music)), { stories: false }, 'το music_posts αγνοείται');
+  assert.ok(!cfg.profile || !('music_stories' in cfg.profile), 'όχι στο profile: απευθείας στο config.music');
+  const m = env.mails.slice(before);
+  assert.ok(m.some(function (x) { return x.to === 'center@example.com' && /Μουσική στα stories: Όχι/.test(x.body) && !/posts: Ναι/.test(x.body); }));
+  assert.ok(m.some(function (x) { return /Σελίδα πελάτη/.test(x.subject) && /Μουσική στα stories: Ναι → Όχι/.test(x.body); }));
+  p = capi(env, { act: 'data', token: tok }).data.client.profile;
+  assert.strictEqual(p.music_stories, 'Όχι', 'τώρα από το config (υπερισχύει της φόρμας)');
+  assert.strictEqual(capi(env, { act: 'save', token: tok, fields: { music_stories: 'Όχι' } }).message, 'Δεν άλλαξε τίποτα.');
+
+  // διαχειριστής
+  const adm = env.loginAs('system@example.com');
+  const a = api(env, { act: 'client_music', token: adm, client: 'ORE', stories: 'Ναι' });
+  assert.ok(a.ok && /^Μουσική στα stories: ναι\./.test(a.message), JSON.stringify(a));
+  cfg = env.ghStore['clients/ORE/config.json'];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(cfg.music)), { stories: true });
+  assert.strictEqual(api(env, { act: 'client_music', token: adm, client: 'ORE', stories: 'Ναι' }).message, 'Δεν άλλαξε τίποτα.');
+  assert.ok(/Ναι.*Όχι/.test(api(env, { act: 'client_music', token: adm, client: 'ORE', stories: '' }).error));
+  const c = api(env, { act: 'data', token: adm }).data.clients.find(function (x) { return x.key === 'ORE'; });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.music)), { stories: true });
+  const lg = capi(env, { act: 'data', token: tok }).data.client.log[0];
+  assert.deepStrictEqual([lg.title, lg.by], ['Αλλαγή μουσικής', 'okpublisher'], 'ο πελάτης το βλέπει στο ιστορικό του (χωρίς email διαχειριστή)');
+  assert.ok(env.mails.some(function (x) { return /^\[okpublisher\] Μουσική: OK-0001/.test(x.subject) || /Μουσική: OK-0001/.test(x.subject); }));
+  // πωλητής: όχι
+  api(env, { act: 'save_user', token: adm, email: 'sales@example.com', name: 'Ν', role: 'sales' });
+  api(env, { act: 'assign', token: adm, key: 'client:ORE', email: 'sales@example.com' });
+  const sal = env.loginAs('sales@example.com');
+  assert.ok(/Μόνο για διαχειριστές ή για την agency/.test(api(env, { act: 'client_music', token: sal, client: 'ORE', stories: 'Όχι' }).error));
 });
 
 test('σελίδα πελάτη: πακέτο (από την επόμενη περίοδο, ίδιοι κανόνες με το email) και διακοπή· δωρεάν πελάτης δεν αλλάζει πακέτο', function () {

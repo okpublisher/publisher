@@ -203,6 +203,57 @@ class MakeQueueTest(unittest.TestCase):
         q = self.mq.merge({'items': existing[1:] + new}, [dict(new[0], caption='νέα')], set(self.cl.accounts))
         self.assertEqual(len(q['items']), 2)
 
+    def set_music(self, music):
+        import client
+        cfg_p = self.tmp / 'work' / 'clients' / 'TST' / 'config.json'
+        cfg = json.loads(cfg_p.read_text(encoding='utf-8'))
+        cfg['music'] = music
+        cfg_p.write_text(json.dumps(cfg), encoding='utf-8')
+        self.cl = client.load('TST', self.tmp / 'work')
+
+    def add_files(self, *names):
+        for n in names:
+            p = self.batch / 'TST' / n
+            if n.endswith('.jpg'):
+                Image.new('RGB', (108, 135), (20, 120, 50)).save(p, 'JPEG')
+            else:
+                p.write_bytes(b'\x00\x00\x00\x18ftypmp42' + n.encode())   # αρκεί για τον έλεγχο (sha256)
+        caps = json.loads((self.batch / 'captions.json').read_text(encoding='utf-8'))
+        caps['TST|2027-01-06'] = 'Με μουσική'
+        (self.batch / 'captions.json').write_text(json.dumps(caps), encoding='utf-8')
+        self.mark_all()
+
+    def test_music_story(self):
+        """Ο πελάτης θέλει μουσική στα stories: story + .mp4 → βίντεο story· τα posts μένουν εικόνες."""
+        self.set_music({'stories': True})
+        self.add_files('2027-01-05_story_01.mp4', '2027-01-06_post_01.jpg')
+        items = self.mq.build(str(self.batch), str(self.repo), self.cl, now=datetime.fromisoformat('2027-01-01T12:00:00+02:00'))
+        by = {i['id']: i for i in items}
+        self.assertTrue(by['TST-2027-01-05-story']['video'].endswith('2027-01-05_story_01.mp4'))
+        self.assertTrue((self.repo / 'media/2027-01/TST/2027-01-05_story_01.mp4').exists())
+        self.assertEqual(by['TST-2027-01-06-post']['type'], 'IMAGE')
+
+    def test_music_refused_when_client_said_no(self):
+        """Χωρίς επιλογή (ή «όχι»): κανένα βίντεο σε story· σταματά πριν γράψει οτιδήποτε."""
+        self.add_files('2027-01-05_story_01.mp4')
+        with self.assertRaises(SystemExit) as e:
+            self.mq.build(str(self.batch), str(self.repo), self.cl, now=datetime.fromisoformat('2027-01-01T12:00:00+02:00'))
+        self.assertIn('stories χωρίς μουσική', str(e.exception))
+        self.assertFalse((self.repo / 'media').exists())
+
+    def test_never_video_on_posts(self):
+        """Posts (εικόνα ή carousel): ποτέ βίντεο με μουσική, ακόμα κι αν ο πελάτης θέλει μουσική στα stories."""
+        self.set_music({'stories': True, 'posts': True})
+        self.assertFalse(hasattr(self.cl, 'music_posts'))
+        for extra in (('2027-01-06_post_01.jpg', '2027-01-06_post_01.mp4'), ('2027-01-04_post_01.mp4',)):
+            self.add_files(*extra)
+            with self.assertRaises(SystemExit) as e:
+                self.mq.build(str(self.batch), str(self.repo), self.cl, now=datetime.fromisoformat('2027-01-01T12:00:00+02:00'))
+            self.assertIn('Τα posts μένουν εικόνες', str(e.exception))
+            for n in extra:
+                if n.endswith('.mp4'):
+                    (self.batch / 'TST' / n).unlink()
+        self.assertFalse((self.repo / 'media').exists())
 
 class ReadyReelsPlaceTest(unittest.TestCase):
     def setUp(self):
@@ -458,6 +509,28 @@ class MusicTest(unittest.TestCase):
         self.assertEqual(self.music.best_window([1.0] * 10), 0.0)
         self.assertEqual(self.music.next_id({'id_prefix': {'kids': 'ls'}, 'tracks': [{'id': 'ls_16'}, {'id': 'k1'}]}, 'kids'), 'ls_17')
         self.assertEqual(self.music.next_id({'tracks': []}, 'cafe'), 'cafe_01')
+
+    def test_stories_only_if_chosen(self):
+        """«Χωρίς μουσική» = μόνο τα reels· stories με μουσική μόνο με "stories": true· posts ποτέ."""
+        c = self.cl(group_music={'set': 'kids', 'moods': ['playful']}, music={'none': True})
+        self.assertFalse(c.music_stories)
+        self.assertIsNone(self.music.pick(c, '2027-01-05', lib=self.lib, log=[])[0])
+        t, notes = self.music.pick(c, '2027-01-05', lib=self.lib, log=[], kind='story')
+        self.assertIsNone(t); self.assertIn('stories χωρίς μουσική', notes[0])
+        c = self.cl(group_music={'set': 'kids', 'moods': ['playful']}, music={'none': True, 'stories': True})
+        self.assertTrue(c.music_stories)
+        self.assertIsNone(self.music.pick(c, '2027-01-05', lib=self.lib, log=[])[0])     # reels: ακόμα χωρίς
+        self.assertEqual(self.music.pick(c, '2027-01-05', min_dur=12, lib=self.lib, log=[], kind='story')[0]['set'], 'kids')
+        for k in ('post', 'carousel'):
+            with self.assertRaises(SystemExit):
+                self.music.pick(c, '2027-01-05', lib=self.lib, log=[], kind=k)
+        # CLI: story χωρίς επιλογή → «none» και τίποτα στο log
+        self.cl(group_music={'set': 'kids', 'moods': ['playful']})
+        env = dict(os.environ, OKP_WORK=str(self.tmp), OKP_CLIENT='TST')
+        out = subprocess.run([sys.executable, str(STUDIO / 'music.py'), 'pick', '--date', '2027-01-04', '--kind', 'story',
+                              '--record', 'x/2027-01-04_story_01.mp4'], env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), 'none')
+        self.assertFalse((Path(self.tmp) / 'clients' / 'TST' / 'music_log.json').exists())
 
     @unittest.skipUnless(FFMPEG, 'χρειάζεται ffmpeg')
     def test_reel_without_music(self):
