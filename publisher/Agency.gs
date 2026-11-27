@@ -131,7 +131,7 @@ function agencyOfferStart_(a) {
   st.months = months; st.start = null; st.stop_after = null; st.amount = q.cents; st.plan = agencyLabel_(q.n);
   st.agency.extra = []; st.agency.lines = q.lines;
   st.offer = { kind: 'charge', trial_start: athens_(new Date(), 'yyyy-MM-dd'), chosen: 'Agency', plans: ['Agency'],
-    orders: (st.offer && st.offer.orders) || {}, sent: {}, at: new Date().toISOString() };
+    orders: (st.offer && st.offer.orders) || {}, sent: {}, at: new Date().toISOString(), clients: Object.keys(st.agency.clients) };
   const links = offerLinks_(a.key, st);
   st.offer.sent.d1 = st.offer.sent.d5 = new Date().toISOString();
   billSave_(a.key, st);
@@ -171,6 +171,11 @@ function agencyPaid_(K, st, order, paid, now) {
   st.start = m; st.tx = paid.tx;
   if (d > 1) st.day = d; else delete st.day;
   st.trial = { kind: 'agency', start: st.offer.trial_start, paid_at: new Date().toISOString() };
+  // Πελάτες που μπήκαν μετά τον σύνδεσμο: η 1η περίοδός τους μπαίνει ολόκληρη στην επόμενη χρέωση.
+  const was = st.offer.clients || Object.keys(st.agency.clients), a0 = agencyByKey_(K), disc0 = a0 ? a0.disc : AGENCY_.DISC_DEFAULT;
+  Object.keys(st.agency.clients).filter(function (x) { return was.indexOf(x) < 0; }).forEach(function (x) {
+    st.agency.extra.push({ K: x, cents: agencyCents_(st.agency.clients[x].plan, disc0), note: clientName_(x) + ' (' + x + '): 1η περίοδος (μπήκε μετά τον σύνδεσμο πληρωμής)' });
+  });
   delete st.offer;
   st.months[m] = { st: 'pending', order: order };
   const payLine = markPaid_(K, st, m, paid.tx);

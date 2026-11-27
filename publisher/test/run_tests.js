@@ -2191,6 +2191,19 @@ test('agency: βλέπει μόνο τους πελάτες της και τη �
   assert.strictEqual(env.ctx.admCommissions_([{ key: 'NEW', seller: 'studio@agency.example', name: 'Νέος' }], env.ctx.admUsers_()).length, 0, 'χωρίς προμήθεια');
 });
 
+test('agency: πελάτης που μπαίνει ενώ περιμένει ο σύνδεσμος πληρωμής → η 1η περίοδός του στην επόμενη χρέωση', function () {
+  const env = agencyEnv();
+  env.act({ act: 'client_agency', client: 'OKP', email: 'studio@agency.example' });
+  env.act({ act: 'agency_charge', email: 'studio@agency.example' });
+  const r = env.act({ act: 'client_agency', client: 'NEW', email: 'studio@agency.example' });
+  assert.ok(/σύνδεσμο πληρωμής σε αναμονή με το παλιό ποσό/.test(r.message), r.message);
+  env.viva.paid[String(9000000000000000 + env.viva.n)] = 'TXA';
+  env.ctx.billingCycle();
+  const st = env.ast();
+  assert.deepStrictEqual([st.months['2026-11'].amount, st.agency.extra.map(function (x) { return [x.K, x.cents]; })], [14880, [['NEW', 24800]]]);
+  assert.deepStrictEqual(env.gh('clients/NEW/config.json').billing, { type: 'agency', agency: env.ag.ref, day: 26, start: '2026-11-26' });
+});
+
 test('agency: νέος πελάτης με "agency" στο config.json (από τον Claude) → μέσα σε μία ώρα πελάτης της agency· admin/agencies.json', function () {
   const env = agencyEnv();
   env.ghStore['clients/NEW/config.json'] = Object.assign({}, env.ghStore['clients/NEW/config.json'], { agency: env.ag.ref });
