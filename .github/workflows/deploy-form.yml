@@ -102,7 +102,9 @@ jobs:
           before=$(ver)
           if [ -z "$before" ]; then echo "::error::Δεν βρέθηκε η ανάπτυξη της φόρμας (DEPLOYMENT_ID) ή δεν έχει έκδοση."; exit 1; fi
           clasp update-deployment "$DEPLOYMENT_ID" -d "form ${GITHUB_SHA::7}" >/dev/null
-          after=$(ver)
+          # Η Google αργεί μερικές φορές να δείξει τη νέα έκδοση (27/11: @15 → @15 και άδικη επιστροφή): ξανά έως 6 × 10″.
+          after="$before"
+          for i in 1 2 3 4 5 6; do after=$(ver); [ -n "$after" ] && [ "$after" != "$before" ] && break; sleep 10; done
           echo "Έκδοση στο /exec: @$before → @$after"
           echo "version=$after" >> "$GITHUB_OUTPUT"
           ok=""
