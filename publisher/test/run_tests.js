@@ -2232,6 +2232,87 @@ test('agency: η μηνιαία αναφορά πελάτη agency χωρίς «
   assert.ok(/OK Publisher/.test(mail.text));
 });
 
+// ------------------------------------------------------------------ συστάσεις πελατών (Referral.gs, από 27/11/2026)
+function refEnv(refCode) {
+  const v = vivaFake();
+  const csv = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Κατάσταση,ΑΦΜ,Έλεγχος τιμολόγησης,Δωρεάν εβδομάδα,Κωδικός πελάτη,Σύσταση\r\n' +
+    '26/11/2026 4:00:00 μ.μ.,Φούρνος,Γιώργος,okp-client@example.com,Βασικό,Ψωμί,νέο,123456783,ΟΚ,ναι,OK-0000,' + refCode + '\r\n';
+  const env = admEnv(Object.assign({}, VIVA_PROPS, { CLIENTS: 'ORE,OKP', NOTIFY_TO_OKP: 'okp-client@example.com', NOTIFY_TO_ORE: 'center@example.com', REFCODE_ORE: 'orer2' }),
+    { viva: v, setupsCsv: csv, gh: {
+      'clients': [{ name: 'ORE', type: 'dir' }, { name: 'OKP', type: 'dir' }],
+      'clients/OKP/config.json': { key: 'OKP', code: 'OK-0000', name: 'okpublisher', package: 'Βασικό', billing: { type: 'free' } },
+    } });
+  env.tok = env.loginAs('system@example.com');
+  env.act = function (o) { return api(env, Object.assign({ token: env.tok }, o)); };
+  env.at = function (t) { env.nowMs = new Date(t).getTime(); env.tok = env.loginAs('system@example.com'); };
+  env.ore = function () { return JSON.parse(env.props.BILLING_ORE); };
+  return env;
+}
+function payOffer(env) {
+  env.act({ act: 'client_charge', client: 'OKP', plan: 'Βασικό' });
+  env.viva.paid[String(9000000000000000 + env.viva.n)] = 'TXN';
+  env.ctx.billingCycle();
+}
+
+test('σύσταση: πελάτης φέρνει νέο από τον σύνδεσμό του → €186 έκπτωση → η επόμενη χρέωσή του €0 (χωρίς κάρτα) → μετά κανονικά', function () {
+  const env = refEnv('orer2');
+  payOffer(env);
+  assert.strictEqual(env.props.REFERRAL_CREDIT_ORE, '18600');
+  assert.strictEqual(env.props.REFERRAL_DONE_OKP, 'ORE');
+  const m1 = env.mails.filter(function (m) { return m.to === 'center@example.com' && /Ευχαριστούμε για τη σύσταση/.test(m.subject); })[0];
+  assert.ok(m1 && /€186,00/.test(m1.body) && /okpublisher\.gr\/\?p=orer2/.test(m1.body) && !/Φούρνος/.test(m1.body), m1 && m1.body);
+  assert.ok(env.mails.some(function (m) { return /Σύσταση: ORE ← OKP/.test(m.subject); }));
+  // μία φορά μόνο
+  env.ctx.referralAward_('OKP', JSON.parse(env.props.BILLING_OKP));
+  assert.strictEqual(env.props.REFERRAL_CREDIT_ORE, '18600');
+  // 1/1: χωρίς χρέωση κάρτας
+  const oreCharges = function () { return env.viva.charges.filter(function (c) { return /okp ORE /.test(c.body.merchantTrns); }); };
+  env.at('2027-01-01T10:00:00+02:00'); env.ctx.billingCycle();
+  let st = env.ore();
+  assert.deepStrictEqual([st.months['2027-01'].st, st.months['2027-01'].amount, st.months['2027-01'].credit, oreCharges().length, env.props.REFERRAL_CREDIT_ORE],
+    ['paid', 0, 18600, 0, '0']);
+  assert.ok(/^PAY-/.test(st.months['2027-01'].pay));
+  assert.ok(env.mails.some(function (m) { return m.to === 'center@example.com' && /Αυτόν τον μήνα δεν χρεώνεστε/.test(m.subject); }));
+  // 1/2: κανονική χρέωση
+  env.at('2027-02-01T10:00:00+02:00'); env.ctx.billingCycle();
+  st = env.ore();
+  assert.deepStrictEqual([st.months['2027-02'].amount, oreCharges().pop().body.amount], [18600, 18600]);
+  const pay = env.mails.filter(function (m) { return m.to === 'center@example.com' && /Χρεώθηκε/.test(m.subject); }).pop();
+  assert.ok(pay && /Συστήστε μας: .*okpublisher\.gr\/\?p=orer2/.test(pay.body), pay && pay.body);
+});
+
+test('σύσταση: μεγαλύτερο πακέτο → χρεώνεται λιγότερο μία περίοδο και μετά κανονικά· σύνδεσμος πωλητή = όχι σύσταση', function () {
+  const env = refEnv('orer2');
+  const st0 = env.ore(); st0.amount = 31000; st0.plan = 'Μεσαίο'; env.props.BILLING_ORE = JSON.stringify(st0);
+  payOffer(env);
+  env.at('2027-01-01T10:00:00+02:00'); env.ctx.billingCycle();
+  let st = env.ore();
+  const oc = env.viva.charges.filter(function (c) { return /okp ORE /.test(c.body.merchantTrns); });
+  assert.deepStrictEqual([st.months['2027-01'].amount, oc.pop().body.amount, st.amount_full], [12400, 12400, 31000]);
+  const m = env.mails.filter(function (x) { return x.to === 'center@example.com' && /Χρεώθηκε/.test(x.subject); }).pop();
+  assert.ok(/€124,00/.test(m.body) && /Έκπτωση σύστασης: −€186,00 \(κανονικά €310,00\)/.test(m.body), m.body);
+  env.at('2027-02-01T10:00:00+02:00'); env.ctx.billingCycle();
+  st = env.ore();
+  assert.deepStrictEqual([st.months['2027-02'].amount, st.amount, !!st.amount_full], [31000, 31000, false]);
+  // κωδικός πωλητή: καμία έκπτωση
+  const env2 = refEnv('nik22');
+  env2.props.ADMIN_USERS = JSON.stringify({ 'nikos@example.com': { role: 'sales', name: 'Νίκος', ref: 'nik22', pcts: [] } });
+  env2.props.REFCODE_ORE = 'nik22';
+  payOffer(env2);
+  assert.ok(!env2.props.REFERRAL_CREDIT_ORE, 'όχι σύσταση');
+});
+
+test('σύσταση: το διαχειριστικό δείχνει τον σύνδεσμο, την έκπτωση σε αναμονή και από ποιον πελάτη ήρθε ένα σετάρισμα', function () {
+  const env = refEnv('orer2');
+  payOffer(env);
+  const d = env.act({ act: 'data' }).data;
+  const ore = d.clients.find(function (c) { return c.key === 'ORE'; }), okp = d.clients.find(function (c) { return c.key === 'OKP'; });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([ore.referral.link, ore.referral.credit_eur, ore.referral.count, okp.referral.by])),
+    ['https://okpublisher.gr/?p=orer2', 186, 1, 'ORE']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.setups[0].referred_by)), { key: 'ORE', name: env.ctx.clientName_('ORE') });
+  assert.deepStrictEqual([d.setups[0].src.how, d.setups[0].seller, okp.src.how], ['referral', '', 'referral'], 'σύσταση = πρώτος σύνδεσμος, χωρίς πωλητή');
+});
+
 const SELL_USERS = JSON.stringify({ 'nikos@example.com': { role: 'sales', name: 'Νίκος', ref: 'nik22', pcts: [{ from: '0000-01', pct: 15 }] },
   'maria@example.com': { role: 'sales', name: 'Μαρία', ref: 'mar33' } });
 function sellEnv() {

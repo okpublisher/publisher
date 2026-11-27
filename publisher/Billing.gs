@@ -257,6 +257,10 @@ function billNotify_(K, subject, text) {
   if (ag && st0.agency.lines && st0.agency.lines.length && !/\nΑνάλυση:/.test(text)) {
     text += '\n\nΑνάλυση:\n' + st0.agency.lines.map(function (l) { return '• ' + l; }).join('\n');
   }
+  if (st0 && st0.amount_full && st0.referral_use) text += '\n\nΈκπτωση σύστασης: −€' + euros_(st0.referral_use) + ' (κανονικά €' + euros_(st0.amount_full) + ').';
+  let rl = '';
+  try { rl = referralLine_(K); } catch (e) { rl = ''; }
+  if (rl) text += '\n\n' + rl;
   const tail = (pu ? '\n\nΑλλαγή πακέτου: ' + pu : '') +
     (u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email ' + rule + '.');
   const btn = function (href, label) {
@@ -820,6 +824,7 @@ function offerPaid_(K, st, planName, order, paid, now) {
   billNotify_(K, 'Ξεκινάμε! Λάβαμε την πληρωμή', 'Ευχαριστούμε! Λάβαμε την πληρωμή (' + st.plan + ', €' + euros_(st.amount) + ' με ΦΠΑ) και ξεκινάμε. ' +
     'Ετοιμάζουμε τώρα το πρόγραμμα της πρώτης περιόδου (' + perRange_(st, m) + ') και σας το στέλνουμε για ΟΚ μέσα σε 1–2 μέρες. ' +
     nextChargeText_(st, m) + '\n\n' + payLine);
+  try { referralAward_(K, st); } catch (e) { console.log('σύσταση ' + K + ': ' + e.message); }
   systemNotify_((trial ? 'Πλήρωσε μετά τη δωρεάν εβδομάδα: ' : 'Πλήρωσε: ') + K, (st.code ? st.code + ' · ' : '') + clientName_(K) + ' (' + K + '): ' + st.plan + ', περίοδος ' +
     perRange_(st, m) + ', χρέωση ' + chargeDayText_(st) + '. Η παραγωγή της 1ης περιόδου ξεκινά στον επόμενο κύκλο (RUNBOOK §2).' + cfg);
 }
@@ -1007,7 +1012,9 @@ function billingClient_(K, now) {
   let rec = st.months[m];
   if (!rec) {
     if (Object.keys(st.months).some(function (x) { return x < m && st.months[x].st === 'pending'; })) return;
+    if (st.amount_full) { st.amount = st.amount_full; delete st.amount_full; delete st.referral_use; }   // μετά από περίοδο με έκπτωση σύστασης
     if (st.agency && !agencyPeriod_(K, st, m)) return;   // agency: ποσό από τους πελάτες της τώρα (Agency.gs)
+    if (!st.agency && referralApply_(K, st, m)) return;  // έκπτωση σύστασης (Referral.gs): όλη η περίοδος → χωρίς χρέωση
     if (st.tx) {
       st.months[m] = rec = { st: 'charging', at: new Date().toISOString() };
       billSave_(K, st);                                   // πριν από τη χρέωση: ποτέ δεύτερη για τον ίδιο μήνα

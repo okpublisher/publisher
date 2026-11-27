@@ -353,6 +353,7 @@ function admData_(token) {
     let seller = '';
     if (m === '-') src.how = 'manual';
     else if (m) { seller = m; src.how = 'manual'; }
+    else if (auto && auto.referral) { src.how = 'referral'; src.link = clientName_(auto.referral); }   // σύσταση πελάτη: χωρίς πωλητή
     else if (auto) { seller = auto.seller; src.how = 'link'; }
     src.name = nm(seller);
     return { seller: seller, src: src };
@@ -376,7 +377,12 @@ function admData_(token) {
   catch (e) { out.groups = []; out.errors.push('Ομάδες: ' + e.message); }
   const sg = admJson_('ADMIN_SETUP_GROUP'), byCode = {};
   clients.forEach(function (c) { if (c.code) byCode[c.code] = c; });
-  out.setups = L.setups.filter(function (s) { const a = s.auto; delete s.auto; return take(s, s.code ? 'setup:' + s.code : 'lead:' + s.email, a); })
+  out.setups = L.setups.filter(function (s) {
+    const a = s.auto; delete s.auto;
+    const rb = a && a.referral ? a.referral : '';
+    if (rb) s.referred_by = { key: rb, name: clientName_(rb) };   // ήρθε από σύνδεσμο σύστασης πελάτη
+    return take(s, s.code ? 'setup:' + s.code : 'lead:' + s.email, a);
+  })
     .map(function (s) {
       if (!admin) delete s.afm;
       const cl = s.code && byCode[s.code];   // έγινε ήδη πελάτης: ισχύει η ομάδα του πελάτη
@@ -437,6 +443,8 @@ function admData_(token) {
 function admOwners_(L, users) {
   const byRef = {}, own = {}, rows = [];
   Object.keys(users).forEach(function (e) { if ((users[e].role === 'sales' || users[e].role === 'agency') && users[e].ref) byRef[users[e].ref] = e; });
+  const byCode = {};                                       // κωδικοί σύστασης πελατών (Referral.gs): κι αυτοί «πρώτος σύνδεσμος»
+  approvalClients_().forEach(function (K) { const c = cprop_(K, 'REFCODE', ''); if (c) byCode[c] = K; });
   (L.leads || []).forEach(function (l) { rows.push({ o: l, t: admTime_(l.at), k: 0, keys: l.email ? ['e:' + l.email] : [] }); });
   (L.setups || []).forEach(function (s) {
     const afm = String(s.afm || '').replace(/[^\d]/g, '');
@@ -447,6 +455,7 @@ function admOwners_(L, users) {
     let hit = null;
     r.keys.forEach(function (k) { if (!hit && own[k]) hit = own[k]; });
     if (!hit && r.o.ref && byRef[r.o.ref]) hit = { seller: byRef[r.o.ref], at: r.o.at };
+    else if (!hit && r.o.ref && byCode[r.o.ref]) hit = { seller: '', referral: byCode[r.o.ref], at: r.o.at };
     if (hit) r.keys.forEach(function (k) { if (!own[k]) own[k] = hit; });
     r.o.auto = hit;
   });
@@ -601,6 +610,8 @@ function admClients_() {
       accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null, pkg_change: g.pkg_change || null,
       has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(), no_approval: !!g.no_approval, days: g.days || null,
       agency: agencyOf_(K), cfg_agency: g.cfg_agency || '',
+      referral: agencyOf_(K) ? null : { link: cprop_(K, 'REFCODE', '') ? REFERRAL_.SITE + '?p=' + cprop_(K, 'REFCODE', '') : '',
+        credit_eur: referralCredit_(K) / 100, count: Number(cprop_(K, 'REFERRAL_COUNT', '0')) || 0, by: cprop_(K, 'REFERRAL_DONE', '') },
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
       paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
   });
