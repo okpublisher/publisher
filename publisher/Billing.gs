@@ -943,6 +943,7 @@ function billingCycle() {
     });
     try { freeCycle_(new Date()); } catch (e) { console.log('Δωρεάν πελάτες: ' + e.message); }
     try { admRefNotify_(); } catch (e) { console.log('Email πωλητών: ' + e.message); }
+    try { cliWelcome_(); } catch (e) { console.log('Email καλωσορίσματος: ' + e.message); }
     try { agencySync_(); } catch (e) { console.log('Agencies: ' + e.message); }
     try { siteScanCycle_(); } catch (e) { console.log('Ιστοσελίδες πελατών: ' + e.message); }
     if (problems.length) reportBilling_(problems);

@@ -2904,6 +2904,35 @@ test('σελίδα πελάτη: αιτήματα (σελίδα, τιμολόγ�
   assert.ok(!capi(env, { act: 'request', token: tok, kind: 'other', data: { message: '' } }).ok);
 });
 
+test('email καλωσορίσματος μετά το σετάρισμα: μία φορά, με τη σελίδα «Ο λογαριασμός μου»· όχι agency, όχι παλιά· σύνδεση πριν ενεργοποιηθεί', function () {
+  const csv = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Άλλα,Κατάσταση,ΑΦΜ,Δωρεάν εβδομάδα,Κωδικός πελάτη,Σύσταση\r\n' +
+    '27/11/2026 6:00:00 μ.μ.,Παλιό,Α,old@x.gr,Βασικό,x,,νέο,111,ναι,OK-0002,\r\n' +
+    '28/11/2026 10:00:00 π.μ.,Καφέ Γωνία,Β,gonia@x.gr,Μεσαίο,x,[Θέλει απομακρυσμένη βοήθεια] απόγευμα,νέο,222,ναι,OK-0003,nik22\r\n' +
+    '28/11/2026 11:00:00 π.μ.,Πελάτης Agency,Γ,studio@agency.example,Βασικό,x,,νέο,333,ναι,OK-0004,stu55\r\n' +
+    '28/11/2026 12:00:00 μ.μ.,Ξανά,Δ,again@x.gr,Βασικό,x,,νέο,444,όχι: ο ίδιος ΑΦΜ,OK-0005,\r\n';
+  const env = admEnv({ ADMIN_USERS: JSON.stringify({ 'nikos@example.com': { role: 'sales', name: 'Νίκος', ref: 'nik22' },
+    'studio@agency.example': { role: 'agency', name: 'Studio X', ref: 'stu55' } }) }, { setupsCsv: csv });
+  assert.strictEqual(env.ctx.cliWelcome_(), 2);
+  const W = function (to) { return env.mails.filter(function (m) { return m.to === to && /Λάβαμε το σετάρισμά σας/.test(m.subject); }); };
+  const g = W('gonia@x.gr')[0];
+  assert.ok(g && /«Καφέ Γωνία» \(κωδικός πελάτη OK-0003\)/.test(g.body), g && g.body);
+  assert.ok(/Ο λογαριασμός σας: https:\/\/okpublisher\.gr\/client\//.test(g.body) && /βλέπετε τα πάντα/.test(g.body) && /ακόμα και πακέτο/.test(g.body));
+  assert.ok(/απομακρυσμένη σύνδεση: θα σας γράψουμε/.test(g.body) && /τη δωρεάν εβδομάδα \(3 posts και 3 stories\)/.test(g.body));
+  assert.ok(/href="https:\/\/okpublisher\.gr\/client\/"/.test(g.htmlBody) && !/<script/i.test(g.htmlBody));
+  assert.ok(/το πρώτο πρόγραμμα/.test(W('again@x.gr')[0].body) && !/δωρεάν εβδομάδα/.test(W('again@x.gr')[0].body), 'χωρίς δωρεάν εβδομάδα');
+  assert.deepStrictEqual([W('old@x.gr').length, W('studio@agency.example').length], [0, 0], 'όχι παλιά, όχι agency');
+  assert.strictEqual(env.ctx.cliWelcome_(), 0, 'μία φορά');
+  assert.ok(env.ctx.billingCycle.toString().indexOf('cliWelcome_()') >= 0, 'τρέχει στον ωριαίο κύκλο');
+  env.cache = {};
+  capi(env, { act: 'login', email: 'gonia@x.gr' });
+  assert.ok(env.mails.some(function (m) { return m.to === 'gonia@x.gr' && /ενεργοποιείται σύντομα/.test(m.subject) && /Καφέ Γωνία/.test(m.body); }), 'σύνδεση πριν ενεργοποιηθεί');
+  env.cache = {};
+  const n = env.mails.length;
+  capi(env, { act: 'login', email: 'studio@agency.example' });
+  capi(env, { act: 'login', email: 'nobody@x.gr' });
+  assert.strictEqual(env.mails.length, n, 'agency / άγνωστος: τίποτα');
+});
+
 // ------------------------------------------------------------------ εκτέλεση
 let failed = 0;
 tests.forEach(function (t) {

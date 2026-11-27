@@ -22,6 +22,10 @@
  * Αιτήματα (θέλουν τον διαχειριστή): νέα σελίδα Facebook/Instagram (πρόσβαση + νέο token), στοιχεία τιμολόγησης, άλλο.
  * Ιστορικό: CLIENT_LOG_<K> = [{ id, at, kind: change|plan|stop|request, title, lines[], status: new|done }] (το πολύ 40)·
  *   το δείχνει και το διαχειριστικό («Από τον πελάτη», «Έγινε» για τα αιτήματα).
+ * Email καλωσορίσματος (από 27/11/2026, cliWelcome_ στον ωριαίο κύκλο πληρωμών): σε κάθε νέο σετάρισμα (από τη φόρμα, είτε
+ *   το συμπλήρωσε ο πελάτης είτε εμείς) → μία φορά στο email εγκρίσεων: λάβαμε, τι ακολουθεί, και η σελίδα «Ο λογαριασμός μου».
+ *   ΟΧΙ για σετάρισμα agency (σύσταση = κωδικός agency ή email agency). Ποια στάλθηκαν: CLIENT_WELCOMED = { κωδικός|email: χρόνος }.
+ *   Σύνδεση πριν ενεργοποιηθεί ο πελάτης (σετάρισμα χωρίς NOTIFY_TO ακόμα): email «ολοκληρώνουμε το σετάρισμα» αντί για κωδικό.
  * Καμία δημόσια συνάρτηση (όλες με «_») και καμία νέα άδεια Google.
  */
 const CLI_ = {
@@ -42,6 +46,8 @@ const CLI_ = {
     ['website', 'Ιστοσελίδα', 200], ['reviews', 'Κριτικές Google', 300], ['about', 'Τι κάνει η επιχείρηση', 3000],
     ['avoid', 'Τι ΔΕΝ γράφουμε', 3000], ['music', 'Μουσική στα reels', 40]],
   MAX_APPROVERS: 5,
+  WELCOME_FROM: '27/11/2026 19:00:00',   // σεταρίσματα πριν από εδώ δεν παίρνουν email καλωσορίσματος (ώρα Ελλάδας, όπως στο Sheet)
+  WELCOME_MAX: 300,
 };
 
 // ------------------------------------------------------------------ ποιοι πελάτες ανήκουν σε ένα email
@@ -97,7 +103,15 @@ function cliLogin_(email) {
   if (n >= 3 || g >= 60) return CLI_.LOGIN_MSG;              // όριο: 3 ανά email / 15′, 60 συνολικά / ώρα
   c.put(ke, String(n + 1), 900);
   c.put('cli:rl', String(g + 1), 3600);
-  if (!cliClientsOf_(e).length) return CLI_.LOGIN_MSG;      // η ίδια απάντηση: δεν φαίνεται ποια email είναι πελάτες
+  if (!cliClientsOf_(e).length) {                           // η ίδια απάντηση: δεν φαίνεται ποια email είναι πελάτες
+    const s = cliPending_(e);
+    if (s) {
+      MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Ο λογαριασμός σας στο okpublisher ενεργοποιείται σύντομα',
+        body: 'Λάβαμε το σετάρισμα για «' + s.business + '» και το ολοκληρώνουμε. Μόλις γίνει, μπαίνετε στο ' + CLI_.SITE +
+          ' με αυτό το email (' + e + ') και βλέπετε τα πάντα. Θα σας γράψουμε.\n\nΓια οτιδήποτε, απαντήστε σε αυτό το email.' });
+    }
+    return CLI_.LOGIN_MSG;
+  }
   const code = admRandom_(), pin = admPin_();
   c.put('cli:code:' + admHash_(code), e, CLI_.LOGIN_TTL_S);
   c.put('cli:pin:' + admHash_(e), JSON.stringify({ h: admHash_(e + '|' + pin), n: 0 }), CLI_.LOGIN_TTL_S);
@@ -464,6 +478,73 @@ function admClientLogDone_(token, K, id) {
     P_().setProperty('CLIENT_LOG_' + K, JSON.stringify(a));
   } finally { lock.releaseLock(); }
   return 'Σημειώθηκε ως «έγινε».';
+}
+
+// ------------------------------------------------------------------ email καλωσορίσματος μετά το σετάρισμα
+// Τα email agency και οι κωδικοί σύστασής τους (τα σεταρίσματά τους δεν παίρνουν τίποτα για το okpublisher).
+function cliAgencyKeys_() {
+  const u = admUsers_(), mails = {}, refs = {};
+  Object.keys(u).forEach(function (e) { if (u[e].role === 'agency') { mails[e] = 1; if (u[e].ref) refs[u[e].ref] = 1; } });
+  return { mails: mails, refs: refs, users: u };
+}
+// Σετάρισμα (όχι agency, όχι παλιότερο από 60 μέρες) με αυτό το email, που ο κωδικός του δεν είναι ακόμα πελάτης· null αν κανένα.
+function cliPending_(e) {
+  try {
+    const a = cliAgencyKeys_();
+    if (a.mails[e]) return null;
+    const codes = {}, from = admTime_(Utilities.formatDate(new Date(Date.now() - 60 * 86400000), 'Europe/Athens', 'd/M/yyyy HH:mm:ss'));
+    admClients_().forEach(function (c) { if (c.code) codes[c.code] = 1; });
+    return admLeads_().setups.filter(function (s) {
+      return s.email === e && !a.refs[s.ref] && !(s.code && codes[s.code]) && admTime_(s.at) >= from;
+    })[0] || null;
+  } catch (x) { return null; }
+}
+
+function cliWelcome_() {
+  const L = admLeads_(), a = cliAgencyKeys_(), floor = admTime_(CLI_.WELCOME_FROM);
+  let sent = {};
+  try { sent = JSON.parse(prop_('CLIENT_WELCOMED', '{}')) || {}; } catch (e) { sent = {}; }
+  let n = 0, changed = false;
+  L.setups.slice().reverse().forEach(function (s) {          // από το παλιότερο στο νεότερο
+    const t = admTime_(s.at), e = admEmail_(s.email), key = s.code || e;
+    if (!e || !key || t < floor || sent[key]) return;
+    if (a.refs[s.ref] || a.mails[e] || a.users[e]) { sent[key] = t; changed = true; return; }   // agency ή δικός μας χρήστης: όχι
+    try {
+      cliWelcomeMail_(s, e);
+      sent[key] = t; changed = true; n++;
+    } catch (x) { console.log('email καλωσορίσματος ' + key + ': ' + x.message); }   // ξαναδοκιμάζει την επόμενη ώρα
+  });
+  if (changed) {
+    const keep = Object.keys(sent).sort(function (x, y) { return sent[y] - sent[x]; }).slice(0, CLI_.WELCOME_MAX), out = {};
+    keep.forEach(function (k) { out[k] = sent[k]; });
+    P_().setProperty('CLIENT_WELCOMED', JSON.stringify(out));
+  }
+  return n;
+}
+
+function cliWelcomeMail_(s, e) {
+  const biz = String(s.business || '').trim() || 'την επιχείρησή σας', trial = s.trial !== '' && !/^όχι/.test(String(s.trial || ''));
+  const steps = [
+    'Αν δεν το έχετε κάνει ήδη, δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε τον φάκελο Google Drive με το πρώτο υλικό (βήματα 2–4): https://okpublisher.gr/setup.html',
+    'Ολοκληρώνουμε το σετάρισμα και σας στέλνουμε ' + (trial ? 'τη δωρεάν εβδομάδα (3 posts και 3 stories)' : 'το πρώτο πρόγραμμα') + ' για ένα «ΟΚ».'];
+  if (s.help) steps.splice(1, 0, 'Ζητήσατε να κάνουμε μαζί την πρόσβαση με απομακρυσμένη σύνδεση: θα σας γράψουμε για μέρα και ώρα.');
+  const acct = ['Εκεί βλέπετε τα πάντα: τις επόμενες και τις δημοσιευμένες αναρτήσεις σας, το πακέτο, τις πληρωμές και τον σύνδεσμο σύστασης. ' +
+    'Και αλλάζετε μόνοι σας, όποτε θέλετε: όνομα, email εγκρίσεων, τηλέφωνα, διεύθυνση, ώρες δημοσίευσης, μουσική, ακόμα και πακέτο.',
+    'Μπαίνετε με αυτό το email (' + e + '), χωρίς κωδικό πρόσβασης: σας στέλνουμε κωδικό μίας χρήσης όποτε μπαίνετε. ' +
+    'Ο λογαριασμός ενεργοποιείται μόλις ολοκληρωθεί το σετάρισμα.'];
+  const text = ['Γεια σας,', '', 'Ευχαριστούμε! Λάβαμε τη φόρμα σεταρίσματος για «' + biz + '»' + (s.code ? ' (κωδικός πελάτη ' + s.code + ')' : '') + '.', '',
+    'Τι ακολουθεί', steps.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n'), '',
+    'Ο λογαριασμός σας: ' + CLI_.SITE, acct.join('\n\n'), '', 'Για οτιδήποτε, απαντήστε σε αυτό το email.', '',
+    'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.'].join('\n');
+  const link = function (t) { return esc_(t).replace(/(https:\/\/[^\s<]+)/g, '<a href="$1">$1</a>'); };
+  const html = '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E;max-width:560px">' +
+    '<p>Γεια σας,</p><p>Ευχαριστούμε! Λάβαμε τη φόρμα σεταρίσματος για <b>' + esc_(biz) + '</b>' + (s.code ? ' (κωδικός πελάτη ' + esc_(s.code) + ')' : '') + '.</p>' +
+    '<p style="font-weight:bold;margin-bottom:4px">Τι ακολουθεί</p><ol style="margin-top:0;padding-left:20px">' + steps.map(function (x) { return '<li>' + link(x) + '</li>'; }).join('') + '</ol>' +
+    '<div style="background:#F2ECFF;border-radius:16px;padding:16px 18px;margin:18px 0"><p style="margin:0 0 8px;font-weight:bold;color:#5B21D6">Ο λογαριασμός σας στο okpublisher</p>' +
+    acct.map(function (x) { return '<p style="margin:0 0 10px">' + esc_(x) + '</p>'; }).join('') +
+    '<a href="' + CLI_.SITE + '" style="display:inline-block;padding:10px 20px;border-radius:999px;background:#5B21D6;color:#fff;text-decoration:none;font-weight:bold">Ο λογαριασμός μου</a></div>' +
+    '<p>Για οτιδήποτε, απαντήστε σε αυτό το email.</p><p style="color:#4A4C66">okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.</p></div>';
+  MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Λάβαμε το σετάρισμά σας · ο λογαριασμός σας στο okpublisher', body: text, htmlBody: html });
 }
 
 // ------------------------------------------------------------------ API για τη σελίδα του site (doPost)
