@@ -46,7 +46,7 @@ const CLI_ = {
   // [πεδίο, ετικέτα, μέγιστο μήκος] των ελεύθερων στοιχείων (config.profile)
   PROFILE: [['phones', 'Τηλέφωνα στα posts', 120], ['area', 'Περιοχή', 200], ['shop_address', 'Διεύθυνση καταστήματος', 200],
     ['website', 'Ιστοσελίδα', 200], ['reviews', 'Κριτικές Google', 300], ['about', 'Τι κάνει η επιχείρηση', 3000],
-    ['avoid', 'Τι ΔΕΝ γράφουμε', 3000], ['music', 'Μουσική στα reels', 40]],
+    ['avoid', 'Τι ΔΕΝ γράφουμε', 3000], ['music', 'Ύφος μουσικής', 40]],
   // Ναι/Όχι → config.music.<κλειδί> (true/false): [πεδίο, ετικέτα, κλειδί]
   MUSIC_YN: [['music_stories', 'Μουσική στα stories', 'stories']],
   MAX_APPROVERS: 5,
@@ -168,6 +168,14 @@ function cliSetup_(code) {
   if (!code) return {};
   try { return admLeads_().setups.filter(function (s) { return s.code === code; })[0] || {}; } catch (e) { return {}; }
 }
+// Τηλέφωνα από το CTA του config.json, για πελάτες χωρίς σετάρισμα από τη φόρμα (π.χ. ORE, στήθηκε πριν από αυτήν).
+// Μόνο ό,τι έχει ψηφία (όχι π.χ. «okpublisher.gr» του OKP).
+function cliCtaPhones_(cfg) {
+  const c = (cfg && cfg.cta) || {};
+  const L = Array.isArray(c.phones) ? c.phones.map(function (p) { return String((p && p.number) || '').trim(); }) : [];
+  if (!L.length) [c.landline, c.mobile].forEach(function (x) { if (x) L.push(String(x).trim()); });
+  return L.filter(function (x) { return /\d/.test(x); }).join(', ');
+}
 // Μουσική στα stories: του config (true/false), αλλιώς της φόρμας σεταρίσματος («Ναι»/«Όχι»), αλλιώς «Όχι».
 function cliYesNo_(cfgVal, setupVal) {
   if (cfgVal === true || cfgVal === false) return cfgVal ? 'Ναι' : 'Όχι';
@@ -188,8 +196,9 @@ function cliProfile_(K, cfg, s) {
   const nm = clientName_(K);
   return {
     name: nm !== K ? nm : String(cfg.name || s.business || K), email: main, approvers: others,
-    phones: v('phones', s.phones), area: v('area', s.address), shop_address: v('shop_address', s.shop_address),
-    website: v('website', s.website), reviews: v('reviews', s.reviews), about: v('about', s.about), avoid: v('avoid', s.rules),
+    // Σειρά: config.profile (σελίδα πελάτη) → φόρμα σεταρίσματος → ό,τι ξέρει ήδη το config.json (πελάτες πριν από τη φόρμα).
+    phones: v('phones', s.phones || cliCtaPhones_(cfg)), area: v('area', s.address), shop_address: v('shop_address', s.shop_address),
+    website: v('website', s.website || cfg.website), reviews: v('reviews', s.reviews), about: v('about', s.about), avoid: v('avoid', s.rules),
     music: cliMusic_(v('music', s.music)),
     music_stories: cliYesNo_((cfg.music || {}).stories, s.music_stories),
     times: cfg.times === 'auto' || (!cfg.times && !cfg.post_time) ? 'auto' : 'custom',
@@ -211,8 +220,8 @@ function cliData_(token, K) {
   try { cfg = cliCfg_(K); } catch (e) { out.errors.push('Στοιχεία: ' + e.message); }
   const s = cliSetup_(cfg.code);
   const c = { key: K, code: String(cfg.code || ''), profile: cliProfile_(K, cfg, s),
-    accounts: { instagram: String((cfg.accounts && cfg.accounts.instagram) || s.instagram || ''),
-      facebook: String((cfg.accounts && cfg.accounts.facebook_page) || s.facebook || '') },
+    accounts: { instagram: String((cfg.accounts && cfg.accounts.instagram) || cfg.instagram || s.instagram || ''),
+      facebook: String((cfg.accounts && cfg.accounts.facebook_page) || cfg.facebook || s.facebook || '') },
     bill: { name: String(s.bill_name || ''), afm: String(s.afm || ''), doy: String(s.bill_doy || ''), address: String(s.bill_address || '') },
     free: cfg.billing && cfg.billing.type === 'free' ? { until: String(cfg.billing.until || '') } : null,
     package: String(cfg.package || ''), paused: cprop_(K, 'PAUSED', 'false') === 'true' || billPaused_(K) };

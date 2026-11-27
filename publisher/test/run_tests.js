@@ -2851,6 +2851,24 @@ test('σελίδα πελάτη: δεδομένα (στοιχεία από το 
   assert.ok(!JSON.stringify(d).match(/tokORE|billkey123|vivasecret|ghtok/), 'ποτέ tokens/κλειδιά στη σελίδα');
 });
 
+test('σελίδα πελάτη: πελάτης χωρίς σετάρισμα από τη φόρμα (π.χ. ORE) → τηλέφωνα, ιστοσελίδα, Instagram/Facebook από το config.json', function () {
+  const env = cliEnv({}, CLI_SETUPS_CSV.split('\r\n')[0] + '\r\n');     // καμία γραμμή σεταρίσματος
+  env.ghStore['clients/ORE/config.json'] = { key: 'ORE', code: 'OK-0001', name: 'Learning ORE', package: 'Βασικό', website: 'https://ls.example',
+    cta: { type: 'phone', landline: '2310 698 793', mobile: '690 737 7841' }, instagram: '@learning.sensory.or', facebook: 'https://www.facebook.com/share/x/',
+    profile: { area: 'Ωραιόκαστρο', about: 'Κέντρο Ειδικών Θεραπειών' } };
+  const tok = env.clientLogin('center@example.com');
+  const d = capi(env, { act: 'data', token: tok }).data, c = d.client, p = c.profile;
+  assert.deepStrictEqual([p.phones, p.website, p.area, p.about, p.music, p.music_stories],
+    ['2310 698 793, 690 737 7841', 'https://ls.example', 'Ωραιόκαστρο', 'Κέντρο Ειδικών Θεραπειών', 'αφήστε το σε εμάς', 'Όχι']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.accounts)), { instagram: '@learning.sensory.or', facebook: 'https://www.facebook.com/share/x/' });
+  assert.strictEqual(capi(env, { act: 'save', token: tok, fields: { phones: '2310 698 793, 690 737 7841' } }).message, 'Δεν άλλαξε τίποτα.', 'ίδια τηλέφωνα = καμία αλλαγή');
+  capi(env, { act: 'save', token: tok, fields: { music: 'Ήρεμη' } });
+  assert.ok(env.mails.some(function (m) { return /Ύφος μουσικής: Ήρεμη/.test(m.body); }), 'ετικέτα «Ύφος μουσικής» στα email');
+  // OKP-τύπου CTA χωρίς αριθμό: όχι στα τηλέφωνα
+  assert.strictEqual(env.ctx.cliCtaPhones_({ cta: { phones: [{ label: 'Δείτε', number: 'okpublisher.gr' }] } }), '');
+  assert.strictEqual(env.ctx.cliCtaPhones_({ cta: { phones: [{ label: 'Κινητό', number: '690 000 0000' }] } }), '690 000 0000');
+});
+
 test('σελίδα πελάτη: αλλαγές εφαρμόζονται αμέσως (config.json + ρυθμίσεις)· email σε πελάτη, παλιό email και okpublisher· ιστορικό', function () {
   const env = cliEnv();
   const tok = env.clientLogin('center@example.com');
