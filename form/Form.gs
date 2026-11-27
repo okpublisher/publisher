@@ -31,7 +31,8 @@
  * Προσυμπληρωμένη φόρμα σεταρίσματος (από 27/11/2026): ο σύνδεσμος της αυτόματης απάντησης έχει στο τέλος #d=<base64url JSON>
  *   { b: επιχείρηση, n: όνομα, e: email, p: πακέτο, s: Instagram/Facebook } (prefill_)· το setup.html τα βάζει στη φόρμα.
  *   Μετά το # δεν φεύγει ποτέ προς server (ούτε GitHub ούτε Google). Ίδια μορφή με το Admin.gs (admPrefill_).
- * Βοήθεια με AnyDesk (από 27/11/2026): η αυτόματη απάντηση το προσφέρει (χωρίς χρέωση)· στη φόρμα σεταρίσματος τετραγωνάκι →
+ * Βοήθεια με απομακρυσμένη σύνδεση (από 27/11/2026· ποτέ όνομα προγράμματος στα κείμενα: το βλέπουμε με τον καθένα): η αυτόματη
+ *   απάντηση την προσφέρει (χωρίς χρέωση)· στη φόρμα σεταρίσματος τετραγωνάκι →
  *   το setup.html βάζει μπροστά στο «Άλλα» το HELP_TAG → γραμμή πρώτη στο email σεταρίσματος και στο θέμα (ΚΑΜΙΑ νέα στήλη).
  *
  * Ο κώδικας ζει στο repo okpublisher/publisher (form/) και ανεβαίνει μόνος του με το workflow «Deploy φόρμας»:
@@ -63,7 +64,7 @@ const FORM_ = {
   REPLY_EVERY_S: 21600,   // το πολύ μία αυτόματη απάντηση ανά email κάθε 6 ώρες
   DUP_S: 600,             // η ίδια ακριβώς αποστολή ξανά μέσα σε 10 λεπτά (διπλό πάτημα) αγνοείται
   SITE: 'https://okpublisher.gr',
-  HELP_TAG: '[Θέλει βοήθεια με AnyDesk]',   // το βάζει το setup.html μπροστά στο «Άλλα» (ίδιο κείμενο εκεί)
+  HELP_TAG: '[Θέλει απομακρυσμένη βοήθεια]',   // το βάζει το setup.html μπροστά στο «Άλλα» (ίδιο κείμενο εκεί)
   TERMS_RE: /^v\d+-\d{4}-\d{2}-\d{2}$/,   // έκδοση όρων που αποδέχτηκε ο πελάτης (setup.html)
   SETUP: [  // [πεδίο, επικεφαλίδα, μέγιστο μήκος]
     ['business', 'Επιχείρηση', 160], ['name', 'Υπεύθυνος', 120], ['email', 'Email εγκρίσεων', 160], ['approvers', 'Άλλοι εγκρίνοντες', 400],
@@ -155,7 +156,7 @@ function autoReply_(r, me) {
       'How we start',
       '1. Fill in the setup form: ' + setupUrl + ' (in Greek; reply to this email if you prefer English).',
       '2. Give us access to your page and create a Google Drive folder with some photos and videos (instructions on the same page).',
-      '   Giving access is easier from a computer. If you like, we can do it together over AnyDesk, free of charge: just reply to this email.',
+      '   Giving access is easier from a computer. If you like, we can do it together with remote access to your computer, free of charge: just reply to this email.',
       '3. As soon as setup is complete, we prepare your free week and send it for your OK.',
       '4. If you like it, you choose a plan, pay by card and we start right away. After that the card is charged automatically each month on the same day; stop whenever you like, with one click.');
     if (!p) L.push('', 'Not sure which plan fits? Reply with a few words about your business and we will suggest one.');
@@ -178,7 +179,7 @@ function autoReply_(r, me) {
       'Πώς ξεκινάμε',
       '1. Συμπληρώστε τη φόρμα σεταρίσματος: ' + setupUrl,
       '2. Δώστε μας πρόσβαση στη σελίδα σας και φτιάξτε έναν φάκελο Google Drive με μερικές φωτογραφίες και βίντεο (οδηγίες στην ίδια σελίδα).',
-      '   Η πρόσβαση γίνεται πιο εύκολα από υπολογιστή. Αν θέλετε, το κάνουμε μαζί με μια σύνδεση AnyDesk, χωρίς χρέωση: απαντήστε σε αυτό το email.',
+      '   Η πρόσβαση γίνεται πιο εύκολα από υπολογιστή. Αν θέλετε, το κάνουμε μαζί με απομακρυσμένη σύνδεση στον υπολογιστή σας, χωρίς χρέωση: απαντήστε σε αυτό το email.',
       '3. Μόλις ολοκληρωθεί το σετάρισμα, ετοιμάζουμε τη δωρεάν εβδομάδα σας και σας τη στέλνουμε για ένα ΟΚ.',
       '4. Αν σας αρέσει, διαλέγετε πακέτο, πληρώνετε με κάρτα και ξεκινάμε αμέσως. Μετά η κάρτα χρεώνεται αυτόματα κάθε μήνα την ίδια μέρα· σταματάτε όποτε θέλετε, με ένα κλικ.');
     if (!p) L.push('', 'Δεν είστε σίγουροι ποιο πακέτο σας ταιριάζει; Απαντήστε με λίγα λόγια για την επιχείρησή σας και σας προτείνουμε.');
@@ -302,8 +303,8 @@ function setup_(d) {
   if (me) {
     mail_(FORM_.CC_SETUP, me, {
       to: me, replyTo: r.email, name: 'okpublisher.gr',
-      subject: '[okpublisher.gr] Σετάρισμα ' + code + ': ' + r.business + ' (' + (r.plan.split(' ')[0] || '—') + ')' + (help ? ' · θέλει AnyDesk' : ''),
-      body: (help ? '⚠ Θέλει να κάνετε μαζί το σετάρισμα με AnyDesk (χωρίς χρέωση): κανόνισε μέρα και ώρα με «Απάντηση» σε αυτό το email.\n\n' : '') +
+      subject: '[okpublisher.gr] Σετάρισμα ' + code + ': ' + r.business + ' (' + (r.plan.split(' ')[0] || '—') + ')' + (help ? ' · θέλει απομακρυσμένη βοήθεια' : ''),
+      body: (help ? '⚠ Θέλει να κάνετε μαζί το σετάρισμα με απομακρυσμένη σύνδεση (χωρίς χρέωση): κανόνισε μέρα, ώρα και πρόγραμμα με «Απάντηση» σε αυτό το email.\n\n' : '') +
         'Κωδικός πελάτη: ' + code + '\n' +
         FORM_.SETUP.concat(FORM_.EXTRA).map(function (f) { return f[1] + ': ' + (r[f[0]] || x[f[0]] || '—'); }).join('\n') +
         '\nΌροι: αποδοχή στη φόρμα, έκδοση ' + terms +

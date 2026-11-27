@@ -453,22 +453,23 @@ test('αυτόματη απάντηση: σύνδεσμος σεταρίσματ
   assert.deepStrictEqual(prefillOf(replies(e2)[0].body), { b: 'Φούρνος Δοκιμή', n: 'Δοκιμή', e: 'lead@example.com' }, 'χωρίς πακέτο/σελίδα: μόνο ό,τι υπάρχει');
 });
 
-test('AnyDesk: η αυτόματη απάντηση το προσφέρει (ελληνικά/αγγλικά)· τετραγωνάκι στο σετάρισμα → πρώτη γραμμή και θέμα του email', function () {
+test('απομακρυσμένη βοήθεια: η αυτόματη απάντηση την προσφέρει (ελληνικά/αγγλικά, χωρίς όνομα προγράμματος)· τετραγωνάκι στο σετάρισμα → πρώτη γραμμή και θέμα', function () {
   const e = makeEnv();
   e.post(BASE);
-  assert.ok(/πιο εύκολα από υπολογιστή\. Αν θέλετε, το κάνουμε μαζί με μια σύνδεση AnyDesk, χωρίς χρέωση/.test(replies(e)[0].body));
+  assert.ok(/πιο εύκολα από υπολογιστή\. Αν θέλετε, το κάνουμε μαζί με απομακρυσμένη σύνδεση στον υπολογιστή σας, χωρίς χρέωση/.test(replies(e)[0].body));
+  assert.ok(!/AnyDesk/i.test(replies(e)[0].body));
   const e2 = makeEnv();
   e2.post(Object.assign({}, BASE, { lang: 'en' }));
-  assert.ok(/together over AnyDesk, free of charge/.test(replies(e2)[0].body));
+  assert.ok(/together with remote access to your computer, free of charge/.test(replies(e2)[0].body) && !/AnyDesk/i.test(replies(e2)[0].body));
   const e3 = makeEnv();
-  e3.post(Object.assign({}, SETUP, { message: '[Θέλει βοήθεια με AnyDesk] Απογεύματα' }));
+  e3.post(Object.assign({}, SETUP, { message: '[Θέλει απομακρυσμένη βοήθεια] Απογεύματα' }));
   const m = owner(e3).filter(function (x) { return /Σετάρισμα/.test(x.subject); })[0];
-  assert.ok(/ · θέλει AnyDesk$/.test(m.subject), m.subject);
-  assert.ok(/^⚠ Θέλει να κάνετε μαζί το σετάρισμα με AnyDesk/.test(m.body));
-  assert.ok(/Άλλα: \[Θέλει βοήθεια με AnyDesk\] Απογεύματα/.test(m.body));
+  assert.ok(/ · θέλει απομακρυσμένη βοήθεια$/.test(m.subject), m.subject);
+  assert.ok(/^⚠ Θέλει να κάνετε μαζί το σετάρισμα με απομακρυσμένη σύνδεση/.test(m.body));
+  assert.ok(/Άλλα: \[Θέλει απομακρυσμένη βοήθεια\] Απογεύματα/.test(m.body));
   e3.post(Object.assign({}, SETUP, { business: 'Χωρίς βοήθεια', bill_afm: '094014298', message: 'Τίποτα' }));
   const m2 = owner(e3).filter(function (x) { return /Χωρίς βοήθεια/.test(x.subject); })[0];
-  assert.ok(!/AnyDesk/.test(m2.subject + m2.body));
+  assert.ok(!/απομακρυσμένη/.test(m2.subject + m2.body));
 });
 
 test('doGet: η απάντηση που ελέγχει το deploy', function () {
