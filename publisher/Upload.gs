@@ -51,6 +51,7 @@ function doPost(e) {
   let p = {};
   try { p = JSON.parse((e.postData && e.postData.contents) || '{}'); } catch (x) { p = {}; }
   if (p && p.a === 'admin') return adminApi_(p);          // διαχειριστικό: σελίδα okpublisher.gr/admin (Admin.gs)
+  if (p && p.a === 'client') return clientApi_(p);        // σελίδα πελάτη: okpublisher.gr/client (Client.gs)
   const q = (e && e.parameter) || {};
   const K = uploadClient_(q.c || p.c, q.key || p.key || '');
   if (!K) return uploadOut_({ error: 'Λάθος κλειδί' });

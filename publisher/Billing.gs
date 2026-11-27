@@ -261,6 +261,7 @@ function billNotify_(K, subject, text) {
   let rl = '';
   try { rl = referralLine_(K); } catch (e) { rl = ''; }
   if (rl) text += '\n\n' + rl;
+  if (!ag) text += '\n\nΟ λογαριασμός σας (στοιχεία, πακέτο, δημοσιεύσεις, πληρωμές): ' + CLI_.SITE;
   const tail = (pu ? '\n\nΑλλαγή πακέτου: ' + pu : '') +
     (u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email ' + rule + '.');
   const btn = function (href, label) {
@@ -287,6 +288,10 @@ function stopAfterFor_(st, now) {
 function cancelInfo_(c, k) {
   const K = String(c || '').toUpperCase();
   if (!/^[A-Z0-9]{2,12}$/.test(K) || !k || cprop_(K, 'BILLING_KEY', '') !== String(k)) return { state: 'bad' };
+  return cancelStateOf_(K);
+}
+// Χωρίς έλεγχο κλειδιού (τον έχει κάνει ήδη ο καλών: σύνδεσμος email ή σελίδα πελάτη με συνεδρία, Client.gs).
+function cancelStateOf_(K) {
   const st = billState_(K);
   const paid = st && Object.keys(st.months || {}).some(function (m) { return st.months[m].st === 'paid'; });
   if (!st || !paid) return { state: 'none', K: K };
@@ -358,6 +363,10 @@ function planChangeFrom_(st, now) {
 function planInfo_(c, k) {
   const K = String(c || '').toUpperCase();
   if (!/^[A-Z0-9]{2,12}$/.test(K) || !k || cprop_(K, 'BILLING_KEY', '') !== String(k)) return { state: 'bad' };
+  return planStateOf_(K);
+}
+// Χωρίς έλεγχο κλειδιού (βλ. cancelStateOf_).
+function planStateOf_(K) {
   const st = billState_(K), months = (st && st.months) || {};
   if (!st || !st.tx || !Object.keys(months).some(function (m) { return months[m].st === 'paid'; })) return { state: 'none', K: K };
   if (Object.keys(months).some(function (m) { return months[m].st !== 'paid'; })) return { state: 'unpaid', K: K, st: st };

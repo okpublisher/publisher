@@ -51,7 +51,7 @@ const ADM_ = {
   CLIENTS_CACHE_S: 300,
   CLIENTS_KEY: 'adm:clients:3',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
-  LEADS_KEY: 'adm:leads:4',
+  LEADS_KEY: 'adm:leads:5',
   GROUPS_KEY: 'adm:groups:1',
   GROUP_RE: /^[a-z0-9][a-z0-9-]{1,39}$/,
   REF_URL: 'https://okpublisher.gr/',
@@ -398,7 +398,7 @@ function admData_(token) {
     return take(s, s.code ? 'setup:' + s.code : 'lead:' + s.email, a);
   })
     .map(function (s) {
-      if (!admin) delete s.afm;
+      if (!admin) { delete s.afm; delete s.bill_doy; delete s.bill_address; }
       const cl = s.code && byCode[s.code];   // έγινε ήδη πελάτης: ισχύει η ομάδα του πελάτη
       s.group = cl ? String(cl.group || '') : String((s.code && sg[s.code]) || '');
       if (cl) s.client = cl.key;
@@ -645,7 +645,8 @@ function admClients_() {
       referral: agencyOf_(K) ? null : { link: cprop_(K, 'REFCODE', '') ? REFERRAL_.SITE + '?p=' + cprop_(K, 'REFCODE', '') : '',
         credit_eur: referralCredit_(K) / 100, count: Number(cprop_(K, 'REFERRAL_COUNT', '0')) || 0, by: cprop_(K, 'REFERRAL_DONE', '') },
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
-      paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
+      paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K),
+      client_log: cliLog_(K).slice(0, 15) };
   });
 }
 
@@ -691,7 +692,10 @@ function admLeads_() {
     setups: admCsv_(cfg.leads_sheet, cfg.setups_gid).map(function (r) {
       return { at: v(r, 'Χρόνος'), code: v(r, 'Κωδικός πελάτη'), business: v(r, 'Επιχείρηση'), name: v(r, 'Υπεύθυνος'),
         email: v(r, 'Email εγκρίσεων').toLowerCase(), plan: v(r, 'Πακέτο'), phones: v(r, 'Τηλέφωνα (posts)'), facebook: v(r, 'Facebook'),
-        instagram: v(r, 'Instagram'), address: v(r, 'Διεύθυνση/περιοχή'), about: v(r, 'Τι κάνει').slice(0, 1500), times: v(r, 'Ώρες'),
+        instagram: v(r, 'Instagram'), address: v(r, 'Διεύθυνση/περιοχή'), about: v(r, 'Τι κάνει').slice(0, 3000), times: v(r, 'Ώρες'),
+        times_custom: v(r, 'Δικές του ώρες'), rules: v(r, 'Τι ΔΕΝ γράφουμε').slice(0, 3000), reviews: v(r, 'Κριτικές Google'),
+        approvers: v(r, 'Άλλοι εγκρίνοντες'), shop_address: v(r, 'Διεύθυνση καταστήματος'),
+        bill_doy: v(r, 'ΔΟΥ'), bill_address: v(r, 'Διεύθυνση τιμολόγησης'),
         reels: v(r, 'Έτοιμα reels'), music: v(r, 'Μουσική στα reels'), status: v(r, 'Κατάσταση'), terms: v(r, 'Όροι (έκδοση)'),
         bill_name: v(r, 'Επωνυμία τιμολόγησης'), afm: v(r, 'ΑΦΜ'), bill_check: v(r, 'Έλεγχος τιμολόγησης'), trial: v(r, 'Δωρεάν εβδομάδα'),
         ref: v(r, 'Σύσταση').toLowerCase(), website: v(r, 'Ιστοσελίδα'), other: v(r, 'Άλλα').slice(0, 1500),
@@ -775,6 +779,7 @@ function adminApi_(p) {
       case 'client_agency': return out({ ok: true, message: admClientAgency_(t, p.client, p.email) });
       case 'agency_charge': return out({ ok: true, message: admAgencyCharge_(t, p.email) });
       case 'agency_stop': return out({ ok: true, message: admAgencyStop_(t, p.email) });
+      case 'client_log_done': return out({ ok: true, message: admClientLogDone_(t, p.client, p.id) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
     }
   } catch (e) {

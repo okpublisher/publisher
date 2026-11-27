@@ -2772,6 +2772,138 @@ test('CSV: κενές γραμμές, \\r\\n, BOM, κελί με αλλαγή γ
   assert.deepStrictEqual(JSON.parse(JSON.stringify(r)), [['a', 'b'], ['x\ny', 'z "q"'], ['', '']]);
 });
 
+// ------------------------------------------------------------------ σελίδα πελάτη (Client.gs)
+const CLI_SETUPS_CSV = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Άλλοι εγκρίνοντες,Πακέτο,Τηλέφωνα (posts),Facebook,Instagram,Διεύθυνση/περιοχή,Τι κάνει,Τι ΔΕΝ γράφουμε,Κριτικές Google,Ώρες,Κατάσταση,Επωνυμία τιμολόγησης,ΑΦΜ,ΔΟΥ,Διεύθυνση τιμολόγησης,Μουσική στα reels,Κωδικός πελάτη,Ιστοσελίδα,Διεύθυνση καταστήματος\r\n' +
+  '20/11/2026 4:00:00 μ.μ.,Learning ORE,Λ,center@example.com,deputy@example.com,Βασικό,2310 000000,fb.com/ls,@ls,Ωραιόκαστρο,Θεραπείες παιδιών,Όχι τιμές,https://g.page/r/x,αυτόματες,σετ,Κέντρο ΙΚΕ,094014298,Α Θεσ,Οδός 1,Ήρεμη,OK-0001,https://ls.gr,Βασ. Γεωργίου 11\r\n';
+function capi(env, o) { return JSON.parse(env.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ a: 'client' }, o)) }, parameter: {} }).text); }
+function cliMail(env, email) { return env.mails.filter(function (x) { return x.to === email && /λογαριασμό σας στο okpublisher/.test(x.subject); }).pop(); }
+function cliEnv(extra) {
+  const env = admEnv(Object.assign({ FOLDER_ORE: 'https://drive.google.com/drive/folders/FOLDERid123456' }, extra || {}), { setupsCsv: CLI_SETUPS_CSV });
+  env.clientLogin = function (email) {
+    env.cache = {};
+    capi(env, { act: 'login', email: email });
+    const m = cliMail(env, email);
+    return m ? capi(env, { act: 'pin', email: email, pin: /Κωδικός (\d{6})/.exec(m.subject)[1] }).token : null;
+  };
+  return env;
+}
+
+test('σελίδα πελάτη: σύνδεση μόνο με το email εγκρίσεων (κωδικός ή σύνδεσμος)· ίδια απάντηση για όλους· όχι πελάτες agency', function () {
+  const env = cliEnv();
+  const r = capi(env, { act: 'login', email: 'stranger@example.com' });
+  assert.ok(r.ok && /Αν το email είναι email πελάτη μας/.test(r.message));
+  assert.strictEqual(env.mails.length, 0, 'κανένα email σε άγνωστο');
+  capi(env, { act: 'login', email: 'Center@Example.com' });
+  const m = cliMail(env, 'center@example.com');
+  assert.ok(m && /^Κωδικός \d{6} για τον λογαριασμό σας στο okpublisher$/.test(m.subject));
+  const code = /okpublisher\.gr\/client\/#t=([a-f0-9]+)/.exec(m.body)[1];
+  const tok = capi(env, { act: 'link', code: code }).token;
+  assert.ok(/^[a-f0-9]{64}$/.test(tok));
+  assert.ok(!capi(env, { act: 'link', code: code }).ok, 'ο σύνδεσμος μία φορά');
+  const d = capi(env, { act: 'data', token: tok });
+  assert.ok(d.ok && d.data.client.key === 'ORE', JSON.stringify(d).slice(0, 300));
+  assert.strictEqual(capi(env, { act: 'data', token: tok, client: 'TST' }).data.client.key, 'ORE', 'ξένος πελάτης στα δεδομένα → ο δικός του');
+  assert.ok(capi(env, { act: 'save', token: tok, client: 'TST', fields: { name: 'Χ' } }).login, 'ξένος πελάτης σε αλλαγή → ξανά σύνδεση');
+  assert.ok(capi(env, { act: 'data', token: 'f'.repeat(64) }).login);
+  env.props.AGENCY_ORE = 'ag1';
+  assert.ok(capi(env, { act: 'data', token: tok }).login, 'πελάτης agency: καμία πρόσβαση');
+  env.cache = {}; const before = env.mails.length;
+  capi(env, { act: 'login', email: 'center@example.com' });
+  assert.strictEqual(env.mails.length, before, 'πελάτης agency: κανένα email σύνδεσης');
+  delete env.props.AGENCY_ORE;
+  capi(env, { act: 'logout', token: tok });
+  assert.ok(capi(env, { act: 'data', token: tok }).login, 'έξοδος');
+});
+
+test('σελίδα πελάτη: δεδομένα (στοιχεία από το σετάρισμα, συνδρομή, αναρτήσεις, πληρωμές, φάκελος, σύσταση)', function () {
+  const env = cliEnv();
+  const d = capi(env, { act: 'data', token: env.clientLogin('center@example.com') }).data, c = d.client;
+  assert.deepStrictEqual(d.clients.map(function (x) { return x.key; }), ['ORE']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([c.profile.name, c.profile.email, c.profile.approvers, c.profile.phones, c.profile.area, c.profile.shop_address,
+    c.profile.website, c.profile.reviews, c.profile.about, c.profile.avoid, c.profile.music, c.profile.times, c.profile.reels])),
+    ['Learning & Sensory Ωραιόκαστρο', 'center@example.com', ['deputy@example.com'], '2310 000000', 'Ωραιόκαστρο', 'Βασ. Γεωργίου 11',
+     'https://ls.gr', 'https://g.page/r/x', 'Θεραπείες παιδιών', 'Όχι τιμές', 'Ήρεμη', 'auto', 'fill_reel_slots_then_posts_then_next_month']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.bill)), { name: 'Κέντρο ΙΚΕ', afm: '094014298', doy: 'Α Θεσ', address: 'Οδός 1' });
+  assert.strictEqual(c.billing.plan, 'Βασικό');
+  assert.deepStrictEqual([c.plan_change.state, c.stop.state], ['active', 'active']);
+  assert.strictEqual(c.folder, 'https://drive.google.com/drive/folders/FOLDERid123456');
+  assert.ok(/^https:\/\/okpublisher\.gr\/\?p=[a-z0-9]{5}$/.test(c.referral.link));
+  assert.deepStrictEqual(c.upcoming.map(function (p) { return p.type; }), ['IMAGE']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.payments.map(function (p) { return [p.pay, p.amount]; }))), [['PAY-0001', 186]]);
+  assert.deepStrictEqual(d.plans.map(function (p) { return p.name + ' ' + p.eur; }), ['Βασικό 186,00', 'Μεσαίο 310,00', 'Καθημερινό 496,00']);
+  assert.ok(!JSON.stringify(d).match(/tokORE|billkey123|vivasecret|ghtok/), 'ποτέ tokens/κλειδιά στη σελίδα');
+});
+
+test('σελίδα πελάτη: αλλαγές εφαρμόζονται αμέσως (config.json + ρυθμίσεις)· email σε πελάτη, παλιό email και okpublisher· ιστορικό', function () {
+  const env = cliEnv();
+  const tok = env.clientLogin('center@example.com');
+  assert.ok(/ΩΩ:ΛΛ/.test(capi(env, { act: 'save', token: tok, fields: { times: 'custom', post_time: '25:00', story_time: '10:00' } }).error));
+  assert.ok(/email/.test(capi(env, { act: 'save', token: tok, fields: { email: 'όχι' } }).error));
+  assert.ok(/ιστοσελίδα/.test(capi(env, { act: 'save', token: tok, fields: { website: 'όχι site' } }).error));
+  assert.strictEqual(capi(env, { act: 'save', token: tok, fields: { phones: '2310 000000' } }).message, 'Δεν άλλαξε τίποτα.');
+  const before = env.mails.length;
+  const r = capi(env, { act: 'save', token: tok, fields: { name: 'Learning & Sensory', email: 'new@example.com', approvers: 'deputy@example.com, x2@example.com',
+    phones: '2310 111111', shop_address: 'Νέα οδός 5', website: 'learning.gr', times: 'custom', post_time: '19:00', story_time: '10:30', reels: 'all_in_month', music: 'Ζωντανή' } });
+  assert.ok(r.ok && r.relogin && /new@example\.com/.test(r.message), JSON.stringify(r));
+  const cfg = env.ghStore['clients/ORE/config.json'];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([cfg.name, cfg.notify_to, cfg.approver_to, cfg.approvers, cfg.times, cfg.post_time, cfg.story_time, cfg.ready_reels_mode])),
+    ['Learning & Sensory', 'new@example.com', 'new@example.com', ['new@example.com', 'deputy@example.com', 'x2@example.com'], 'manual', '19:00', '10:30', 'all_in_month']);
+  assert.deepStrictEqual([cfg.profile.phones, cfg.profile.shop_address, cfg.profile.website, cfg.profile.music], ['2310 111111', 'Νέα οδός 5', 'https://learning.gr', 'Ζωντανή']);
+  assert.ok(!('about' in cfg.profile), 'μόνο ό,τι άλλαξε');
+  assert.strictEqual(cfg.code, 'OK-0001', 'τα υπόλοιπα του config μένουν');
+  assert.deepStrictEqual([env.props.NAME_ORE, env.props.NOTIFY_TO_ORE, env.props.APPROVERS_ORE], ['Learning & Sensory', 'new@example.com', 'new@example.com,deputy@example.com,x2@example.com']);
+  const m = env.mails.slice(before);
+  assert.ok(m.some(function (x) { return x.to === 'new@example.com' && /Αλλάξαμε τα στοιχεία σας/.test(x.subject) && /Τηλέφωνα στα posts: 2310 111111/.test(x.body); }));
+  assert.ok(m.some(function (x) { return x.to === 'center@example.com' && /Άλλαξε το email του λογαριασμού σας/.test(x.subject); }), 'ειδοποίηση στο παλιό email');
+  assert.ok(m.some(function (x) { return /Σελίδα πελάτη: OK-0001/.test(x.subject) && /Email εγκρίσεων: center@example\.com → new@example\.com/.test(x.body); }));
+  assert.ok(capi(env, { act: 'data', token: tok }).login, 'το παλιό email δεν έχει πια πρόσβαση');
+  const d = capi(env, { act: 'data', token: env.clientLogin('new@example.com') }).data;
+  assert.strictEqual(d.client.profile.shop_address, 'Νέα οδός 5');
+  assert.deepStrictEqual([d.client.log[0].kind, d.client.log[0].status, d.client.log[0].by], ['change', 'done', 'center@example.com']);
+  assert.ok(env.ctx.approvers_('ORE', {}).indexOf('center@example.com') < 0, 'το παλιό email δεν εγκρίνει πια');
+  const tok2 = env.clientLogin('new@example.com');
+  capi(env, { act: 'save', token: tok2, fields: { approvers: '' } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(capi(env, { act: 'data', token: tok2 }).data.client.profile.approvers)), [], 'αφαίρεση εγκρινόντων: δεν ξαναγυρνούν από τη φόρμα');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(env.ghStore['clients/ORE/config.json'].approvers)), ['new@example.com']);
+});
+
+test('σελίδα πελάτη: πακέτο (από την επόμενη περίοδο, ίδιοι κανόνες με το email) και διακοπή· δωρεάν πελάτης δεν αλλάζει πακέτο', function () {
+  const env = cliEnv();
+  const tok = env.clientLogin('center@example.com');
+  let r = capi(env, { act: 'plan', token: tok, plan: 'Μεσαίο' });
+  assert.ok(r.ok && /Μεσαίο/.test(r.message), JSON.stringify(r));
+  assert.deepStrictEqual([JSON.parse(env.props.BILLING_ORE).change.plan, JSON.parse(env.props.BILLING_ORE).change.from], ['Μεσαίο', '2027-01']);
+  assert.ok(env.ghStore['clients/ORE/package_change.json'] && env.ghStore['clients/ORE/package_change.json'].status === 'scheduled');
+  assert.ok(env.mails.some(function (x) { return x.to === 'center@example.com' && /Αλλαγή πακέτου σε Μεσαίο/.test(x.subject) &&
+    /Ο λογαριασμός σας \(στοιχεία, πακέτο, δημοσιεύσεις, πληρωμές\): https:\/\/okpublisher\.gr\/client\//.test(x.body); }), 'σύνδεσμος στα email πληρωμής');
+  r = capi(env, { act: 'plan', token: tok, plan: 'Βασικό' });
+  assert.ok(/μένετε στο Βασικό/.test(r.message) && !JSON.parse(env.props.BILLING_ORE).change);
+  r = capi(env, { act: 'stop', token: tok });
+  assert.ok(r.ok && /σταματά/.test(r.message));
+  assert.ok(JSON.parse(env.props.BILLING_ORE).stop_after);
+  assert.ok(/σταματά ήδη/.test(capi(env, { act: 'stop', token: tok }).message));
+  const env2 = cliEnv({ BILLING_ORE: '' });
+  const r2 = capi(env2, { act: 'plan', token: env2.clientLogin('center@example.com'), plan: 'Μεσαίο' });
+  assert.ok(!r2.ok && /ενεργή συνδρομή/.test(r2.error));
+});
+
+test('σελίδα πελάτη: αιτήματα (σελίδα, τιμολόγηση, άλλο) → email σε okpublisher + πελάτη· «Έγινε» από το διαχειριστικό', function () {
+  const env = cliEnv();
+  const tok = env.clientLogin('center@example.com');
+  assert.ok(/ΑΦΜ/.test(capi(env, { act: 'request', token: tok, kind: 'billing', data: { name: 'Νέα ΙΚΕ', afm: '123', doy: 'Α', address: 'Οδός' } }).error));
+  assert.ok(capi(env, { act: 'request', token: tok, kind: 'billing', data: { name: 'Νέα ΙΚΕ', afm: 'EL 094014298', doy: 'Α Θεσ', address: 'Οδός 2' } }).ok);
+  assert.ok(capi(env, { act: 'request', token: tok, kind: 'page', data: { facebook: 'facebook.com/new', instagram: '@new' } }).ok);
+  assert.ok(env.mails.some(function (x) { return /Αίτημα πελάτη: OK-0001 · .* · Νέα σελίδα Facebook \/ Instagram/.test(x.subject) && /TOKEN_ORE/.test(x.body); }));
+  assert.ok(env.mails.some(function (x) { return x.to === 'center@example.com' && /Λάβαμε το αίτημά σας: Νέα στοιχεία τιμολόγησης/.test(x.subject); }));
+  const adm = env.loginAs('system@example.com');
+  let d = api(env, { act: 'data', token: adm }).data;
+  const L = d.clients.filter(function (c) { return c.key === 'ORE'; })[0].client_log;
+  assert.deepStrictEqual(L.map(function (x) { return [x.kind, x.status, x.title]; }), [['request', 'new', 'Νέα σελίδα Facebook / Instagram'], ['request', 'new', 'Νέα στοιχεία τιμολόγησης']]);
+  assert.ok(/έγινε/.test(api(env, { act: 'client_log_done', token: adm, client: 'ORE', id: L[0].id }).message));
+  assert.strictEqual(JSON.parse(env.props.CLIENT_LOG_ORE)[0].status, 'done');
+  assert.ok(!capi(env, { act: 'request', token: tok, kind: 'other', data: { message: '' } }).ok);
+});
+
 // ------------------------------------------------------------------ εκτέλεση
 let failed = 0;
 tests.forEach(function (t) {

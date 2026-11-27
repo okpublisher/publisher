@@ -28,6 +28,8 @@
  *   εγκρίνουμε, μετά παίρνει πρόσβαση). Το διαχειριστικό τη δείχνει με κουμπί «Έγκριση ως agency».
  * Στήλη «Ιστοσελίδα» (από 26/11/2026, Σεταρίσματα, στο τέλος): πεδίο site_url της φόρμας (ΟΧΙ «website»: αυτό είναι το
  *   κρυφό πεδίο για bots), με https:// μπροστά αν λείπει. Από εκεί το κύριο script βγάζει χρώματα/γραμματοσειρές (Site.gs).
+ * Στήλη «Διεύθυνση καταστήματος» (από 27/11/2026, Σεταρίσματα, στο τέλος): πεδίο shop_address (οδός, αριθμός, ΤΚ, πόλη)·
+ *   το παλιό «Διεύθυνση/περιοχή» μένει για την περιοχή (hashtags).
  * Προσυμπληρωμένη φόρμα σεταρίσματος (από 27/11/2026): ο σύνδεσμος της αυτόματης απάντησης έχει στο τέλος #d=<base64url JSON>
  *   { b: επιχείρηση, n: όνομα, e: email, p: πακέτο, s: Instagram/Facebook } (prefill_)· το setup.html τα βάζει στη φόρμα.
  *   Μετά το # δεν φεύγει ποτέ προς server (ούτε GitHub ούτε Google). Ίδια μορφή με το Admin.gs (admPrefill_).
@@ -282,13 +284,13 @@ function setup_(d) {
   const billWarn = billCheck_(b);
   // Νέες στήλες πάντα στο τέλος («Όροι», μετά τα στοιχεία τιμολόγησης): οι παλιές στήλες δεν μετακινούνται.
   const head = ['Χρόνος'].concat(FORM_.SETUP.map(function (f) { return f[1]; }), ['Κατάσταση', 'Όροι (έκδοση)'],
-    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση', 'Ιστοσελίδα']);
+    FORM_.BILL.map(function (f) { return f[1]; }), ['Έλεγχος τιμολόγησης'], FORM_.EXTRA.map(function (f) { return f[1]; }), ['Δωρεάν εβδομάδα', 'Κωδικός πελάτη', 'Σύσταση', 'Ιστοσελίδα', 'Διεύθυνση καταστήματος']);
   const x = {};
   FORM_.EXTRA.forEach(function (f) { x[f[0]] = clean_(d[f[0]], f[2]); });
   // ΑΦΜ με απόστροφο: αλλιώς το Sheet τον κάνει αριθμό και χάνει τα μηδενικά μπροστά (π.χ. 09…).
   const billCells = FORM_.BILL.map(function (f) { const v = b[f[0]]; return f[0] === 'bill_afm' && v ? "'" + v : safe_(v); });
   let trial = 'ναι', code = '';
-  const ref = ref_(d.ref), web = siteUrl_(d.site_url);
+  const ref = ref_(d.ref), web = siteUrl_(d.site_url), shop = clean_(d.shop_address, 200);
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
   try {
@@ -296,7 +298,7 @@ function setup_(d) {
     trial = trialCheck_(sh, head.indexOf('ΑΦΜ') + 1, b.bill_afm);
     code = clientCode_(sh, head.indexOf('ΑΦΜ') + 1, head.indexOf('Κωδικός πελάτη') + 1, b.bill_afm);
     sh.appendRow([new Date()].concat(FORM_.SETUP.map(function (f) { return safe_(r[f[0]]); }), ['νέο', terms], billCells, [billWarn || 'ΟΚ'],
-      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref, safe_(web)]));
+      FORM_.EXTRA.map(function (f) { return safe_(x[f[0]]); }), [trial, code, ref, safe_(web), safe_(shop)]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
   const help = r.message.indexOf(FORM_.HELP_TAG) === 0;
@@ -312,6 +314,7 @@ function setup_(d) {
         (billWarn ? '\n⚠ ' + billWarn + ': ζήτησέ τα από τον πελάτη πριν από την πρώτη πληρωμή.' : '') +
         '\n\nΔωρεάν εβδομάδα: ' + (trial === 'ναι' ? 'ναι' : '⚠ ' + trial) +
         (ref ? '\nΣύσταση πωλητή: κωδικός ' + ref + ' (ο πωλητής φαίνεται στο διαχειριστικό)' : '') +
+        '\nΔιεύθυνση καταστήματος: ' + (shop || '—') +
         '\nΙστοσελίδα: ' + (web || '—') + (web ? ' (χρώματα/γραμματοσειρές: σε ~1 ώρα στο διαχειριστικό)' : '') +
         '\n\nΕπόμενο: config του πελάτη στο publisher-work (ο Claude), πρόσβαση σελίδας/Instagram, φάκελος Drive, token.',
     });
