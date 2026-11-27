@@ -106,7 +106,7 @@ function cliLogin_(email) {
   if (!cliClientsOf_(e).length) {                           // η ίδια απάντηση: δεν φαίνεται ποια email είναι πελάτες
     const s = cliPending_(e);
     if (s) {
-      MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Ο λογαριασμός σας στο okpublisher ενεργοποιείται σύντομα',
+      mailOut_({ to: e, name: CFG.SENDER_NAME, subject: 'Ο λογαριασμός σας στο okpublisher ενεργοποιείται σύντομα',
         body: 'Λάβαμε το σετάρισμα για «' + s.business + '» και το ολοκληρώνουμε. Μόλις γίνει, μπαίνετε στο ' + CLI_.SITE +
           ' με αυτό το email (' + e + ') και βλέπετε τα πάντα. Θα σας γράψουμε.\n\nΓια οτιδήποτε, απαντήστε σε αυτό το email.' });
     }
@@ -116,7 +116,7 @@ function cliLogin_(email) {
   c.put('cli:code:' + admHash_(code), e, CLI_.LOGIN_TTL_S);
   c.put('cli:pin:' + admHash_(e), JSON.stringify({ h: admHash_(e + '|' + pin), n: 0 }), CLI_.LOGIN_TTL_S);
   const link = CLI_.SITE + '#t=' + code;
-  MailApp.sendEmail({
+  mailOut_({
     to: e, name: CFG.SENDER_NAME, subject: 'Κωδικός ' + pin + ' για τον λογαριασμό σας στο okpublisher',
     body: 'Ο κωδικός σας: ' + pin + '\n\nΓράψτε τον στη σελίδα «Ο λογαριασμός μου», ή ανοίξτε τον σύνδεσμο:\n' + link +
       '\n\nΙσχύει 15 λεπτά και μία φορά. Αν δεν το ζητήσατε εσείς, αγνοήστε αυτό το email.',
@@ -364,7 +364,7 @@ function cliSave_(token, K, f) {
       lines.map(function (l) { return '• ' + l; }).join('\n') + when + '\n\nΑν δεν το κάνατε εσείς, απαντήστε αμέσως σε αυτό το email.\n\n' + CLI_.SITE);
     if (mailChanged && cur.email) {
       try {
-        MailApp.sendEmail({ to: cur.email, name: CFG.SENDER_NAME, subject: '[' + clientName_(K) + '] Άλλαξε το email του λογαριασμού σας',
+        mailOut_({ to: cur.email, name: CFG.SENDER_NAME, subject: '[' + clientName_(K) + '] Άλλαξε το email του λογαριασμού σας',
           body: 'Το email εγκρίσεων και σύνδεσης του λογαριασμού σας στο okpublisher άλλαξε σε ' + nu.email + '.\n\n' +
             'Αν δεν το κάνατε εσείς, απαντήστε αμέσως σε αυτό το email.' });
       } catch (e) { console.error('email στο παλιό: ' + e.message); }
@@ -534,8 +534,8 @@ function cliWelcomeMail_(s, e) {
     'Ο λογαριασμός ενεργοποιείται μόλις ολοκληρωθεί το σετάρισμα.'];
   const text = ['Γεια σας,', '', 'Ευχαριστούμε! Λάβαμε τη φόρμα σεταρίσματος για «' + biz + '»' + (s.code ? ' (κωδικός πελάτη ' + s.code + ')' : '') + '.', '',
     'Τι ακολουθεί', steps.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n'), '',
-    'Ο λογαριασμός σας: ' + CLI_.SITE, acct.join('\n\n'), '', 'Για οτιδήποτε, απαντήστε σε αυτό το email.', '',
-    'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.'].join('\n');
+    'Ο λογαριασμός σας: ' + CLI_.SITE, acct.join('\n\n'), '', 'Για οτιδήποτε, απαντήστε σε αυτό το email.']
+    .concat(sig_() ? [] : ['', 'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.']).join('\n');   // με υπογραφή Gmail: εκείνη κλείνει
   const link = function (t) { return esc_(t).replace(/(https:\/\/[^\s<]+)/g, '<a href="$1">$1</a>'); };
   const html = '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E;max-width:560px">' +
     '<p>Γεια σας,</p><p>Ευχαριστούμε! Λάβαμε τη φόρμα σεταρίσματος για <b>' + esc_(biz) + '</b>' + (s.code ? ' (κωδικός πελάτη ' + esc_(s.code) + ')' : '') + '.</p>' +
@@ -543,8 +543,8 @@ function cliWelcomeMail_(s, e) {
     '<div style="background:#F2ECFF;border-radius:16px;padding:16px 18px;margin:18px 0"><p style="margin:0 0 8px;font-weight:bold;color:#5B21D6">Ο λογαριασμός σας στο okpublisher</p>' +
     acct.map(function (x) { return '<p style="margin:0 0 10px">' + esc_(x) + '</p>'; }).join('') +
     '<a href="' + CLI_.SITE + '" style="display:inline-block;padding:10px 20px;border-radius:999px;background:#5B21D6;color:#fff;text-decoration:none;font-weight:bold">Ο λογαριασμός μου</a></div>' +
-    '<p>Για οτιδήποτε, απαντήστε σε αυτό το email.</p><p style="color:#4A4C66">okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.</p></div>';
-  MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Λάβαμε το σετάρισμά σας · ο λογαριασμός σας στο okpublisher', body: text, htmlBody: html });
+    '<p>Για οτιδήποτε, απαντήστε σε αυτό το email.</p>' + (sig_() ? '' : '<p style="color:#4A4C66">okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.</p>') + '</div>';
+  mailOut_({ to: e, name: CFG.SENDER_NAME, subject: 'Λάβαμε το σετάρισμά σας · ο λογαριασμός σας στο okpublisher', body: text, htmlBody: html });
 }
 
 // ------------------------------------------------------------------ API για τη σελίδα του site (doPost)

@@ -33,6 +33,9 @@
  * Προσυμπληρωμένη φόρμα σεταρίσματος (από 27/11/2026): ο σύνδεσμος της αυτόματης απάντησης έχει στο τέλος #d=<base64url JSON>
  *   { b: επιχείρηση, n: όνομα, e: email, p: πακέτο, s: Instagram/Facebook } (prefill_)· το setup.html τα βάζει στη φόρμα.
  *   Μετά το # δεν φεύγει ποτέ προς server (ούτε GitHub ούτε Google). Ίδια μορφή με το Admin.gs (admPrefill_).
+ * Υπογραφή Gmail (από 27/11/2026): οι αυτόματες απαντήσεις κλείνουν με την ΤΡΕΧΟΥΣΑ υπογραφή του Gmail του λογαριασμού. Το κύριο
+ *   script (Signature.gs) τη γράφει κάθε ώρα στην καρτέλα «Υπογραφή» του Sheet του· εδώ τη διαβάζουμε από εκεί (ID στη «Ρυθμίσεις»
+ *   → «Sheet συστήματος»), χωρίς άδεια Gmail. Χωρίς υπογραφή (ή χωρίς ρύθμιση) → το παλιό κλείσιμο «okpublisher · …».
  * Βοήθεια με απομακρυσμένη σύνδεση (από 27/11/2026· ποτέ όνομα προγράμματος στα κείμενα: το βλέπουμε με τον καθένα): η αυτόματη
  *   απάντηση την προσφέρει (χωρίς χρέωση)· στη φόρμα σεταρίσματος τετραγωνάκι →
  *   το setup.html βάζει μπροστά στο «Άλλα» το HELP_TAG → γραμμή πρώτη στο email σεταρίσματος και στο θέμα (ΚΑΜΙΑ νέα στήλη).
@@ -57,6 +60,8 @@ const FORM_ = {
   SETTINGS_SHEET: 'Ρυθμίσεις',
   CC_SETUP: 'Αντίγραφο σεταρισμάτων',
   CC_LEAD: 'Αντίγραφο ενδιαφερόντων',
+  SIG_SHEET: 'Sheet συστήματος',   // «Ρυθμίσεις»: ID του Sheet «okpublisher» (εκεί η καρτέλα «Υπογραφή»)
+  SIG_TAB: 'Υπογραφή',
   FIRST_NO: 2,   // OK-0000 = το ίδιο το okpublisher (OKP), OK-0001 = ο πρώτος πελάτης (ORE)· τα σεταρίσματα ξεκινούν από OK-0002
   // Πακέτα για την αυτόματη απάντηση (ίδια με το site και τους όρους· τιμές χωρίς ΦΠΑ).
   PLANS: [
@@ -140,7 +145,7 @@ function autoReply_(r, me) {
   const en = r.lang === 'en', p = planOf_(r.plan);
   const addon = /\[Πρόσθετο: γύρισμα\/μοντάζ reels\]/.test(r.message);
   const first = String(r.name).split(/\s+/)[0];   // μόνο στα αγγλικά (στα ελληνικά η κλητική δεν βγαίνει σωστά αυτόματα)
-  const L = [], setupUrl = FORM_.SITE + '/setup.html' + (r.ref ? '?p=' + r.ref : '') + prefill_(r);
+  const L = [], setupUrl = FORM_.SITE + '/setup.html' + (r.ref ? '?p=' + r.ref : '') + prefill_(r), sig = sig_();
   if (en) {
     L.push('Hello ' + first + ',', '', 'Thank you for your interest in okpublisher!');
     if (p) {
@@ -163,7 +168,8 @@ function autoReply_(r, me) {
       '4. If you like it, you choose a plan, pay by card and we start right away. After that the card is charged automatically each month on the same day; stop whenever you like, with one click.');
     if (!p) L.push('', 'Not sure which plan fits? Reply with a few words about your business and we will suggest one.');
     if (addon) L.push('', 'For reel filming and editing (add-on) we will send you a separate quote. You provide the idea and the script.');
-    L.push('', 'For anything else, just reply to this email.', '', 'okpublisher · One monthly OK. We do the rest.', FORM_.SITE);
+    L.push('', 'For anything else, just reply to this email.');
+    if (!sig) L.push('', 'okpublisher · One monthly OK. We do the rest.', FORM_.SITE);
   } else {
     L.push('Γεια σας,', '', 'Ευχαριστούμε για το ενδιαφέρον σας για το okpublisher!');
     if (p) {
@@ -186,12 +192,13 @@ function autoReply_(r, me) {
       '4. Αν σας αρέσει, διαλέγετε πακέτο, πληρώνετε με κάρτα και ξεκινάμε αμέσως. Μετά η κάρτα χρεώνεται αυτόματα κάθε μήνα την ίδια μέρα· σταματάτε όποτε θέλετε, με ένα κλικ.');
     if (!p) L.push('', 'Δεν είστε σίγουροι ποιο πακέτο σας ταιριάζει; Απαντήστε με λίγα λόγια για την επιχείρησή σας και σας προτείνουμε.');
     if (addon) L.push('', 'Για το γύρισμα και μοντάζ reels (πρόσθετο) σας στέλνουμε χωριστή προσφορά. Την ιδέα και το σενάριο τα δίνετε εσείς.');
-    L.push('', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.', '', 'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.', FORM_.SITE);
+    L.push('', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.');
+    if (!sig) L.push('', 'okpublisher · Ένα ΟΚ τον μήνα. Τα υπόλοιπα τα κάνουμε εμείς.', FORM_.SITE);
   }
   const subject = en ? 'okpublisher: ' + (p ? 'the ' + p.en + ' plan' : 'our plans') + ' and next steps'
     : 'okpublisher: ' + (p ? 'το πακέτο «' + p.el + '»' : 'τα πακέτα') + ' και τα επόμενα βήματα';
   try {
-    MailApp.sendEmail({ to: r.email, subject: subject, body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined });
+    MailApp.sendEmail(withSig_({ to: r.email, subject: subject, body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined }, sig));
   } catch (e) { console.error('αυτόματη απάντηση: ' + e.message); return false; }
   cache.put(key, '1', FORM_.REPLY_EVERY_S);
   return true;
@@ -202,7 +209,7 @@ function agencyReply_(r, me) {
   const cache = CacheService.getScriptCache();
   const key = 'r:' + r.email.toLowerCase();
   if (cache.get(key)) return false;
-  const en = r.lang === 'en', first = String(r.name).split(/\s+/)[0];
+  const en = r.lang === 'en', first = String(r.name).split(/\s+/)[0], sig = sig_();
   const L = en ? ['Hello ' + first + ',', '', 'Thank you for your interest in working with okpublisher!', '',
     'What we offer agencies and freelancers:',
     '• We create and publish posts, reels and stories for your clients, from their own photos and videos.',
@@ -211,7 +218,7 @@ function agencyReply_(r, me) {
     '• One invoice a month for all your clients, with a partner discount on our plans.', '',
     'Next: we look at your request and reply within 1–2 working days. Once approved, you get access to your partner dashboard ' +
       'and your own link for adding clients.', '',
-    'Partner terms (in Greek): ' + FORM_.SITE + '/agency-terms.html', '', 'For anything else, just reply to this email.', '', 'okpublisher', FORM_.SITE]
+    'Partner terms (in Greek): ' + FORM_.SITE + '/agency-terms.html', '', 'For anything else, just reply to this email.'].concat(sig ? [] : ['', 'okpublisher', FORM_.SITE])
     : ['Γεια σας,', '', 'Ευχαριστούμε για το ενδιαφέρον σας να συνεργαστούμε!', '',
     'Τι προσφέρουμε σε agencies και freelancers:',
     '• Φτιάχνουμε και δημοσιεύουμε posts, reels και stories για τους πελάτες σας, από τις δικές τους φωτογραφίες και βίντεο.',
@@ -220,10 +227,10 @@ function agencyReply_(r, me) {
     '• Μία χρέωση τον μήνα για όλους τους πελάτες σας, με έκπτωση συνεργάτη στα πακέτα μας.', '',
     'Επόμενο: βλέπουμε την αίτησή σας και σας απαντάμε μέσα σε 1–2 εργάσιμες. Μόλις εγκριθεί, παίρνετε πρόσβαση στο δικό σας ' +
       'διαχειριστικό και δικό σας σύνδεσμο για να βάζετε πελάτες.', '',
-    'Όροι συνεργασίας: ' + FORM_.SITE + '/agency-terms.html', '', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.', '', 'okpublisher', FORM_.SITE];
+    'Όροι συνεργασίας: ' + FORM_.SITE + '/agency-terms.html', '', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.'].concat(sig ? [] : ['', 'okpublisher', FORM_.SITE]);
   try {
-    MailApp.sendEmail({ to: r.email, subject: en ? 'okpublisher: partnership for agencies and freelancers' : 'okpublisher: συνεργασία για agencies και freelancers',
-      body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined });
+    MailApp.sendEmail(withSig_({ to: r.email, subject: en ? 'okpublisher: partnership for agencies and freelancers' : 'okpublisher: συνεργασία για agencies και freelancers',
+      body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined }, sig));
   } catch (e) { console.error('αυτόματη απάντηση agency: ' + e.message); return false; }
   cache.put(key, '1', FORM_.REPLY_EVERY_S);
   return true;
@@ -357,6 +364,46 @@ function mail_(setting, me, o) {
   const cc = ccList_(setting, me);
   if (cc) o.cc = cc;
   MailApp.sendEmail(o);
+}
+
+// Τιμή μιας ρύθμισης της καρτέλας «Ρυθμίσεις» ('' αν δεν υπάρχει).
+function setting_(name) {
+  try {
+    const sh = SpreadsheetApp.getActive().getSheetByName(FORM_.SETTINGS_SHEET);
+    if (!sh || sh.getLastRow() < 2) return '';
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+    for (let i = 0; i < rows.length; i++) if (String(rows[i][0]).trim() === name) return String(rows[i][1]).trim();
+  } catch (e) { console.error('Ρυθμίσεις: ' + e.message); }
+  return '';
+}
+
+// Η τρέχουσα υπογραφή Gmail { html, text } από την καρτέλα «Υπογραφή» του Sheet συστήματος (βλ. πάνω)· null αν δεν υπάρχει.
+function sig_() {
+  const c = CacheService.getScriptCache();
+  try { const hit = c.get('sig'); if (hit) { const o = JSON.parse(hit); return o && o.html ? o : null; } } catch (e) { /* ξανά */ }
+  let o = {};
+  try {
+    const id = setting_(FORM_.SIG_SHEET);
+    if (/^[A-Za-z0-9_-]{20,}$/.test(id)) {
+      const sh = SpreadsheetApp.openById(id).getSheetByName(FORM_.SIG_TAB);
+      if (sh && sh.getLastRow() >= 2) {
+        const v = sh.getRange(1, 2, 2, 1).getValues(), html = String(v[0][0] || '').trim(), text = String(v[1][0] || '').trim();
+        if (html) o = { html: html, text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() };
+      }
+    }
+  } catch (e) { console.error('Υπογραφή: ' + e.message); }
+  try { c.put('sig', JSON.stringify(o), 600); } catch (e) { /* χωρίς cache */ }
+  return o.html ? o : null;
+}
+
+// Προσθέτει την υπογραφή: κείμενο «-- » + κείμενο υπογραφής, και HTML (το κείμενο του email με συνδέσμους + η υπογραφή).
+function withSig_(m, sig) {
+  if (!sig) return m;
+  const esc = function (t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+  m.htmlBody = '<div style="font:15px/1.6 Arial,sans-serif;color:#14162E">' +
+    esc(m.body).replace(/(https:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>') + '</div><br><div style="margin-top:14px">' + sig.html + '</div>';
+  m.body = m.body + '\n\n-- \n' + sig.text;
+  return m;
 }
 
 // Αντίγραφο (cc) από την καρτέλα «Ρυθμίσεις»: έγκυρα email, όχι ο ίδιος ο λογαριασμός, το πολύ 5. '' αν δεν υπάρχει.

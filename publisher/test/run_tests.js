@@ -2933,6 +2933,71 @@ test('email καλωσορίσματος μετά το σετάρισμα: μί�
   assert.strictEqual(env.mails.length, n, 'agency / άγνωστος: τίποτα');
 });
 
+// ------------------------------------------------------------------ υπογραφή Gmail (Signature.gs)
+const SIG_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs';
+const SIG_HTML = '<div><img src="https://okpublisher.gr/img/mark.png"><b>okpublisher</b><br>Ένα ΟΚ τον μήνα.<br><a href="https://okpublisher.gr/">okpublisher.gr</a></div>';
+function sigEnv(extra, sigHtml) {
+  const web = {}; web[SIG_URL] = [200, JSON.stringify({ sendAs: [{ sendAsEmail: 'other@example.com', signature: 'ΛΑΘΟΣ' },
+    { sendAsEmail: 'system@example.com', isPrimary: true, signature: sigHtml === undefined ? SIG_HTML : sigHtml }] }), 'application/json'];
+  return admEnv(extra || {}, { web: web });
+}
+
+test('υπογραφή Gmail: μπαίνει στα email προς πελάτες (κείμενο + HTML), από το Gmail του λογαριασμού· όχι σε πελάτη agency, όχι στα email συστήματος', function () {
+  const env = sigEnv();
+  env.ctx.notify_('ORE', 'Θέμα', 'Γεια σας,\nκείμενο https://okpublisher.gr/client/');
+  const m = env.mails.pop();
+  assert.ok(/κείμενο https:\/\/okpublisher\.gr\/client\/\n\n-- \nokpublisher\nΈνα ΟΚ τον μήνα\.\nokpublisher\.gr$/.test(m.body), m.body);
+  assert.ok(/<a href="https:\/\/okpublisher\.gr\/client\/">/.test(m.htmlBody) && m.htmlBody.indexOf(SIG_HTML) > 0 && m.htmlBody.indexOf('ΛΑΘΟΣ') < 0);
+  env.ctx.notify_('ORE', 'Με HTML', 'κείμενο', '<p>html</p>');
+  const h = env.mails.pop();
+  assert.ok(h.htmlBody.indexOf('<p>html</p><br><div style="margin-top:14px">' + SIG_HTML) === 0, h.htmlBody);
+  env.ctx.systemNotify_('Σφάλμα', 'κάτι');
+  assert.ok(env.mails.pop().body === 'κάτι', 'όχι στα email συστήματος');
+  env.props.AGENCY_ORE = 'ag1';
+  env.ctx.notify_('ORE', 'Agency', 'κείμενο');
+  const a = env.mails.pop();
+  assert.ok(a.body === 'κείμενο' && !a.htmlBody, 'πελάτης agency: χωρίς υπογραφή (κανένα okpublisher)');
+  const n = env.calls.filter(function (c) { return c.url === SIG_URL; }).length;
+  env.ctx.notify_('ORE', 'ξανά', 'x');
+  assert.strictEqual(env.calls.filter(function (c) { return c.url === SIG_URL; }).length, n, 'cache: όχι νέα κλήση στο Gmail');
+});
+
+test('υπογραφή Gmail: αλλάζει όταν αλλάξει στο Gmail· άδεια → τίποτα· Gmail εκτός → η τελευταία γνωστή· email καλωσορίσματος χωρίς διπλό κλείσιμο', function () {
+  const env = sigEnv({}, '');
+  env.ctx.notify_('ORE', 'Θέμα', 'κείμενο');
+  assert.strictEqual(env.mails.pop().body, 'κείμενο', 'χωρίς υπογραφή στο Gmail: όπως πριν');
+  const env2 = sigEnv();
+  env2.ctx.sig_();
+  env2.cache = {};
+  delete env2.opts;
+  env2.ctx.UrlFetchApp.fetch = (function (f) { return function (u, o) { if (u === SIG_URL) throw new Error('Gmail εκτός'); return f(u, o); }; })(env2.ctx.UrlFetchApp.fetch);
+  env2.ctx.notify_('ORE', 'Θέμα', 'κείμενο');
+  assert.ok(/\n-- \nokpublisher/.test(env2.mails.pop().body), 'η τελευταία γνωστή υπογραφή');
+  const csv = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Κατάσταση,ΑΦΜ,Δωρεάν εβδομάδα,Κωδικός πελάτη\r\n28/11/2026 10:00:00 π.μ.,Καφέ,Β,cafe@x.gr,Βασικό,x,νέο,1,ναι,OK-0009\r\n';
+  const web = {}; web[SIG_URL] = [200, JSON.stringify({ sendAs: [{ sendAsEmail: 'system@example.com', signature: SIG_HTML }] }), 'application/json'];
+  const env3 = admEnv({}, { setupsCsv: csv, web: web });
+  env3.ctx.cliWelcome_();
+  const w = env3.mails.filter(function (x) { return x.to === 'cafe@x.gr'; })[0];
+  assert.ok(w.body.indexOf('Ένα ΟΚ τον μήνα. Τα υπόλοιπα') < 0 && /-- \nokpublisher/.test(w.body), 'όχι διπλό κλείσιμο');
+});
+
+test('υπογραφή Gmail: στα email έγκρισης (sendMail_) με κείμενο και HTML· καρτέλα «Υπογραφή» για τη φόρμα (μόνο όταν αλλάζει)', function () {
+  const env = approvalEnv({ gh: { 'clients/ORE/config.json': ORE_CFG,
+    'clients/ORE/outbox/2027-01-01-send.json': JSON.stringify({ type: 'email', subject: 'Πρόγραμμα Ιανουαρίου', text: 'Γεια σας', html: '<p>Γεια σας</p>' }) } });
+  env.ctx.sig_ = function () { return { html: '<b>SIG</b>', text: 'SIG' }; };
+  env.ctx.approvalCycle();
+  const raw = env.sent[0].raw;
+  assert.ok(/Γεια σας\n\n-- \nSIG/.test(mimePart(raw, 'text/plain')), mimePart(raw, 'text/plain'));
+  assert.ok(/<p>Γεια σας<\/p><br><div style="margin-top:14px"><b>SIG<\/b><\/div>/.test(mimePart(raw, 'text/html')));
+  const e2 = sigEnv();
+  assert.strictEqual(e2.ctx.sigSync_(), true);
+  const tab = e2.ctx.SpreadsheetApp.getActive().getSheetByName('Υπογραφή');
+  assert.deepStrictEqual([tab.rows[0][0], tab.rows[0][1], tab.rows[1][0]], ['HTML', SIG_HTML, 'Κείμενο']);
+  assert.strictEqual(tab.rows[1][1], 'okpublisher\nΈνα ΟΚ τον μήνα.\nokpublisher.gr');
+  assert.strictEqual(e2.ctx.sigSync_(), false, 'ίδια υπογραφή: δεν ξαναγράφει');
+  assert.ok(e2.ctx.billingCycle.toString().indexOf('sigSync_()') >= 0, 'κάθε ώρα στον κύκλο πληρωμών');
+});
+
 // ------------------------------------------------------------------ εκτέλεση
 let failed = 0;
 tests.forEach(function (t) {

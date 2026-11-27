@@ -484,6 +484,33 @@ test('διεύθυνση καταστήματος (shop_address): νέα στή�
   assert.ok(!/^=/.test(String(st.rows[1][col(st, 'Διεύθυνση καταστήματος')])));
 });
 
+test('υπογραφή Gmail στις αυτόματες απαντήσεις (από την καρτέλα «Υπογραφή» του Sheet συστήματος)· χωρίς ρύθμιση → το παλιό κλείσιμο', function () {
+  const SIG = '<div><b>okpublisher</b><br>Ένα ΟΚ τον μήνα.</div>';
+  const e = makeEnv();
+  const st = e.ctx.SpreadsheetApp.getActive().insertSheet('Ρυθμίσεις');
+  st.head = ['Ρύθμιση', 'Τιμή']; st.rows.push(['Sheet συστήματος', 'MAINSHEETID0123456789abcdef']);
+  const opened = [];
+  e.ctx.SpreadsheetApp.openById = function (id) {
+    opened.push(id);
+    return { getSheetByName: function (n) { return n !== 'Υπογραφή' ? null : { getLastRow: function () { return 3; },
+      getRange: function () { return { getValues: function () { return [[SIG], ['okpublisher\nΈνα ΟΚ τον μήνα.']]; } }; } }; } };
+  };
+  e.post(BASE);
+  const a = replies(e)[0];
+  assert.deepStrictEqual(opened, ['MAINSHEETID0123456789abcdef']);
+  assert.ok(/απαντήστε σε αυτό το email\.\n\n-- \nokpublisher\nΈνα ΟΚ τον μήνα\.$/.test(a.body), a.body);
+  assert.ok(a.body.indexOf('Τα υπόλοιπα τα κάνουμε εμείς') < 0, 'όχι διπλό κλείσιμο');
+  assert.ok(a.htmlBody.indexOf(SIG) > 0 && /<a href="https:\/\/okpublisher\.gr\/setup\.html#d=/.test(a.htmlBody), a.htmlBody.slice(0, 300));
+  e.post(Object.assign({}, BASE, { email: 'ag@example.com', type: 'agency', site_url: 'studio.gr', kind: 'agency' }));
+  const g = replies(e).filter(function (m) { return m.to === 'ag@example.com'; })[0];
+  assert.ok(/-- \nokpublisher/.test(g.body) && g.htmlBody.indexOf(SIG) > 0, 'και στην απάντηση agency');
+  assert.ok(owner(e).every(function (m) { return !/-- \nokpublisher/.test(m.body); }), 'όχι στα email προς το okpublisher');
+  const e2 = makeEnv();
+  e2.post(BASE);
+  const b = replies(e2)[0];
+  assert.ok(/okpublisher · Ένα ΟΚ τον μήνα\. Τα υπόλοιπα τα κάνουμε εμείς\.\nhttps:\/\/okpublisher\.gr$/.test(b.body) && !b.htmlBody, 'χωρίς ρύθμιση: όπως πριν');
+});
+
 test('doGet: η απάντηση που ελέγχει το deploy', function () {
   const e = makeEnv();
   assert.deepStrictEqual(JSON.parse(e.ctx.doGet().getContent()), { ok: true, service: 'okpublisher form' });

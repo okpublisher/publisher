@@ -121,7 +121,7 @@ function notify_(K, subject, text, html) {
   try {
     const m = { to: to, subject: '[' + clientName_(K) + '] ' + subject, body: text, name: CFG.SENDER_NAME };
     if (html) m.htmlBody = html;
-    MailApp.sendEmail(m);
+    MailApp.sendEmail(withSig_(m, !!agencyOf_(K)));     // υπογραφή Gmail (Signature.gs)· όχι σε πελάτη agency
   } catch (e) { console.error('email failed: ' + e.message); }
 }
 

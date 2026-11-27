@@ -355,7 +355,8 @@ function sendMail_(K, o) {
     refs = ((hdr_(target, 'References') || '') + ' ' + inReplyTo).trim();
     if (!subject) subject = 'Re: ' + hdr_(msgs[0], 'Subject').replace(/^((re|απ|ΑΠ|Απ)\s*:\s*)+/i, '');
   }
-  const mime = mime_({ from: me, to: to, subject: subject, text: o.text, html: o.html, attachments: o.attachments,
+  const sg = withSig_({ text: o.text, html: o.html }, !!agencyOf_(K), ['text', 'html']);   // υπογραφή Gmail· όχι σε πελάτη agency
+  const mime = mime_({ from: me, to: to, subject: subject, text: sg.text, html: sg.html, attachments: o.attachments,
     inReplyTo: inReplyTo, references: refs });
   const bnd = 'okp_up_' + Utilities.getUuid().replace(/-/g, '');
   const meta = o.thread_id ? JSON.stringify({ threadId: o.thread_id }) : '{}';

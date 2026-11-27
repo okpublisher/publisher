@@ -142,7 +142,7 @@ function admLogin_(email) {
   c.put('adm:code:' + admHash_(code), e, ADM_.LOGIN_TTL_S);
   c.put('adm:pin:' + admHash_(e), JSON.stringify({ h: admHash_(e + '|' + pin), n: 0 }), ADM_.LOGIN_TTL_S);
   const link = ADM_.SITE + '#t=' + code;
-  MailApp.sendEmail({
+  MailApp.sendEmail(withSig_({
     to: e, name: CFG.SENDER_NAME, subject: 'Κωδικός ' + pin + ' για το διαχειριστικό okpublisher',
     body: 'Ο κωδικός σας: ' + pin + '\n\nΓράψτε τον στη σελίδα του διαχειριστικού, ή ανοίξτε τον σύνδεσμο και πατήστε «Σύνδεση»:\n' + link +
       '\n\nΙσχύει 15 λεπτά και μία φορά. Αν δεν το ζητήσατε εσείς, αγνοήστε αυτό το email.',
@@ -150,7 +150,7 @@ function admLogin_(email) {
       '<p style="font:bold 32px/1.2 Arial,sans-serif;letter-spacing:6px;color:#5B21D6;margin:18px 0">' + pin + '</p>' +
       '<p>Γράψτε τον στη σελίδα, ή <a href="' + esc_(link) + '">ανοίξτε τον σύνδεσμο</a> και πατήστε «Σύνδεση».</p>' +
       '<p style="color:#4A4C66">Ισχύει 15 λεπτά και μία φορά. Αν δεν το ζητήσατε εσείς, αγνοήστε αυτό το email.</p></div>',
-  });
+  }));
   return ADM_.LOGIN_MSG;
 }
 
@@ -252,7 +252,7 @@ function admSaveUser_(token, email, name, role, pct) {
   }
   if (isNew && role === 'agency') {
     try {
-      MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Καλώς ήρθατε στο okpublisher (agency)',
+      mailOut_({ to: e, name: CFG.SENDER_NAME, subject: 'Καλώς ήρθατε στο okpublisher (agency)',
         body: 'Καλώς ήρθατε! Το διαχειριστικό σας: ' + ADM_.SITE + '\nΓράψτε το email σας και θα σας έρθει κωδικός.\n\n' +
           'Για κάθε νέο πελάτη σας, συμπληρώστε τη φόρμα σεταρίσματος από τον σύνδεσμό σας: ' + admLink_(u[e].ref, 'setup.html') + '\n' +
           'Με το email σας στη θέση του email εγκρίσεων: όλα τα email του πελάτη (πρόγραμμα για ΟΚ, αναφορές) έρχονται μόνο σε εσάς.\n\n' +
@@ -261,7 +261,7 @@ function admSaveUser_(token, email, name, role, pct) {
   } else if (isNew) {
     const ref = u[e].ref;
     try {
-      MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Πρόσβαση στο διαχειριστικό okpublisher',
+      mailOut_({ to: e, name: CFG.SENDER_NAME, subject: 'Πρόσβαση στο διαχειριστικό okpublisher',
         body: 'Σας δόθηκε πρόσβαση στο διαχειριστικό του okpublisher (' + ADM_.ROLE_NAMES[role] + ').\n\n' + ADM_.SITE +
           '\n\nΓράψτε το email σας και θα σας έρθει κωδικός. Δεν χρειάζεται κωδικός πρόσβασης.' +
           (ref ? '\n\nΟ προσωπικός σας σύνδεσμος για πελάτες: ' + admLink_(ref) + '\nΌποιος συμπληρώσει τη φόρμα από αυτόν ' +
@@ -547,7 +547,7 @@ function admRefNotify_() {
     const m = assign[r.key], seller = m === '-' ? '' : (m || (r.o.auto && r.o.auto.seller) || '');
     if (!seller || !refRole(seller)) return;
     try {
-      MailApp.sendEmail({ to: seller, name: CFG.SENDER_NAME, subject: r.what + ' από τον σύνδεσμό σου: ' + r.o.business + (r.o.code ? ' (' + r.o.code + ')' : ''),
+      mailOut_({ to: seller, name: CFG.SENDER_NAME, subject: r.what + ' από τον σύνδεσμό σου: ' + r.o.business + (r.o.code ? ' (' + r.o.code + ')' : ''),
         body: r.what + ' για εσένα: «' + r.o.business + '»' + (r.o.plan ? ', πακέτο ' + r.o.plan : '') + '.\n\nΤα στοιχεία είναι στο διαχειριστικό: ' +
           ADM_.SITE + '\n\n— okpublisher' });
       n++;
