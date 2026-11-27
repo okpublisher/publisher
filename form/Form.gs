@@ -22,6 +22,10 @@
  * Στήλη «Σύσταση» (από 26/11/2026, και στις δύο καρτέλες, στο τέλος): ο κωδικός πωλητή του συνδέσμου (okpublisher.gr/?p=…),
  *   που η σελίδα στέλνει κρυφά (πεδίο ref). Εδώ μόνο γράφεται· ποιος πωλητής είναι το βρίσκει το διαχειριστικό (Admin.gs).
  *   Μπαίνει και στον σύνδεσμο σεταρίσματος της αυτόματης απάντησης.
+ * Αίτηση agency / freelancer (από 27/11/2026, σελίδα agencies.html, "type": "agency"): γραμμή στην ίδια καρτέλα
+ *   «Ενδιαφέροντα» (ΚΑΜΙΑ νέα στήλη) με Πακέτο = «Agency», Instagram/Facebook = η ιστοσελίδα της και μπροστά στο Μήνυμα
+ *   «[Agency/Freelancer · ~N πελάτες]». Email «Νέα αίτηση agency» στο okpublisher + δική της αυτόματη απάντηση (όχι τιμές:
+ *   εγκρίνουμε, μετά παίρνει πρόσβαση). Το διαχειριστικό τη δείχνει με κουμπί «Έγκριση ως agency».
  * Στήλη «Ιστοσελίδα» (από 26/11/2026, Σεταρίσματα, στο τέλος): πεδίο site_url της φόρμας (ΟΧΙ «website»: αυτό είναι το
  *   κρυφό πεδίο για bots), με https:// μπροστά αν λείπει. Από εκεί το κύριο script βγάζει χρώματα/γραμματοσειρές (Site.gs).
  *
@@ -76,6 +80,13 @@ function doPost(e) {
   Object.keys(FORM_.LEN).forEach(function (k) { r[k] = String(d[k] == null ? '' : d[k]).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, FORM_.LEN[k]); });
   if (!r.name || !r.business || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)) return out_({ ok: false, error: 'missing fields' });
   r.ref = ref_(d.ref);
+  const agency = d.type === 'agency';
+  if (agency) {
+    const kind = /^freelancer$/i.test(String(d.kind || '').trim()) ? 'Freelancer' : 'Agency', n = clean_(d.clients, 12);
+    r.plan = 'Agency';
+    r.social = siteUrl_(d.site_url) || r.social;
+    r.message = ('[' + kind + (n ? ' · ~' + n + ' πελάτες στα social' : '') + '] ' + r.message).trim().slice(0, FORM_.LEN.message);
+  }
   if (dup_('i', r)) return out_({ ok: true });                    // διπλό πάτημα: σιωπηλά τίποτα
   const cache = CacheService.getScriptCache();
   const n = Number(cache.get('n') || 0);
@@ -91,16 +102,17 @@ function doPost(e) {
     sh.appendRow([new Date()].concat([r.name, r.business, r.email, r.phone, r.plan, r.social, r.message, r.lang].map(safe), ['νέο', safe(r.source || '—'), news, r.ref]));
   } finally { lock.releaseLock(); }
   const me = Session.getEffectiveUser().getEmail();
-  const replied = autoReply_(r, me);
+  const replied = agency ? agencyReply_(r, me) : autoReply_(r, me);
   if (me) {
     mail_(FORM_.CC_LEAD, me, {
       to: me, replyTo: r.email, name: 'okpublisher.gr',
-      subject: '[okpublisher.gr] Νέο ενδιαφέρον: ' + r.business + (r.plan ? ' (' + r.plan + ')' : ''),
+      subject: agency ? '[okpublisher.gr] Νέα αίτηση agency: ' + r.business : '[okpublisher.gr] Νέο ενδιαφέρον: ' + r.business + (r.plan ? ' (' + r.plan + ')' : ''),
       body: ['Όνομα: ' + r.name, 'Επιχείρηση: ' + r.business, 'Email: ' + r.email, 'Τηλέφωνο: ' + (r.phone || '—'),
         'Πακέτο: ' + (r.plan || 'δεν ξέρει ακόμα'), 'Instagram/Facebook: ' + (r.social || '—'), 'Γλώσσα: ' + (r.lang || 'el'),
         'Πηγή: ' + (r.source || '—') + (r.ref ? ' · σύσταση πωλητή (κωδικός ' + r.ref + ')' : ''), 'Νέα/προσφορές με email: ' + (r.news === 'ναι' ? 'ναι (συγκατάθεση)' : 'όχι'), '', r.message || '(χωρίς μήνυμα)',
-        '', 'Αυτόματη απάντηση: ' + (replied ? 'στάλθηκε (' + (planOf_(r.plan) ? planOf_(r.plan).el : 'όλα τα πακέτα') + ')' : 'όχι (στάλθηκε ήδη τις τελευταίες 6 ώρες)'),
-        'Απάντηση: απλώς «Απάντηση» σε αυτό το email (πάει στον ενδιαφερόμενο).'].join('\n'),
+        '', 'Αυτόματη απάντηση: ' + (replied ? 'στάλθηκε (' + (agency ? 'agency' : planOf_(r.plan) ? planOf_(r.plan).el : 'όλα τα πακέτα') + ')' : 'όχι (στάλθηκε ήδη τις τελευταίες 6 ώρες)'),
+        agency ? 'Έγκριση: διαχειριστικό → Επαφές → «Έγκριση ως agency» (της φεύγει email με τον σύνδεσμό της και τους όρους).'
+          : 'Απάντηση: απλώς «Απάντηση» σε αυτό το email (πάει στον ενδιαφερόμενο).'].join('\n'),
     });
   }
   return out_({ ok: true });
@@ -170,6 +182,38 @@ function autoReply_(r, me) {
   try {
     MailApp.sendEmail({ to: r.email, subject: subject, body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined });
   } catch (e) { console.error('αυτόματη απάντηση: ' + e.message); return false; }
+  cache.put(key, '1', FORM_.REPLY_EVERY_S);
+  return true;
+}
+
+// Αυτόματη απάντηση σε αίτηση agency / freelancer: τι προσφέρουμε και τι ακολουθεί (χωρίς τιμή: την ορίζουμε στην έγκριση).
+function agencyReply_(r, me) {
+  const cache = CacheService.getScriptCache();
+  const key = 'r:' + r.email.toLowerCase();
+  if (cache.get(key)) return false;
+  const en = r.lang === 'en', first = String(r.name).split(/\s+/)[0];
+  const L = en ? ['Hello ' + first + ',', '', 'Thank you for your interest in working with okpublisher!', '',
+    'What we offer agencies and freelancers:',
+    '• We create and publish posts, reels and stories for your clients, from their own photos and videos.',
+    '• Our name does not appear anywhere your clients see: programmes, PDFs and reports come only to you, ready to forward.',
+    '• You approve each client\'s month with one OK. We never contact your clients.',
+    '• One invoice a month for all your clients, with a partner discount on our plans.', '',
+    'Next: we look at your request and reply within 1–2 working days. Once approved, you get access to your partner dashboard ' +
+      'and your own link for adding clients.', '',
+    'Partner terms (in Greek): ' + FORM_.SITE + '/agency-terms.html', '', 'For anything else, just reply to this email.', '', 'okpublisher', FORM_.SITE]
+    : ['Γεια σας,', '', 'Ευχαριστούμε για το ενδιαφέρον σας να συνεργαστούμε!', '',
+    'Τι προσφέρουμε σε agencies και freelancers:',
+    '• Φτιάχνουμε και δημοσιεύουμε posts, reels και stories για τους πελάτες σας, από τις δικές τους φωτογραφίες και βίντεο.',
+    '• Το όνομά μας δεν εμφανίζεται πουθενά που βλέπουν οι πελάτες σας: προγράμματα, PDF και αναφορές έρχονται μόνο σε εσάς, έτοιμα να τα προωθήσετε.',
+    '• Εσείς εγκρίνετε τον μήνα κάθε πελάτη με ένα ΟΚ. Με τους πελάτες σας δεν επικοινωνούμε ποτέ.',
+    '• Μία χρέωση τον μήνα για όλους τους πελάτες σας, με έκπτωση συνεργάτη στα πακέτα μας.', '',
+    'Επόμενο: βλέπουμε την αίτησή σας και σας απαντάμε μέσα σε 1–2 εργάσιμες. Μόλις εγκριθεί, παίρνετε πρόσβαση στο δικό σας ' +
+      'διαχειριστικό και δικό σας σύνδεσμο για να βάζετε πελάτες.', '',
+    'Όροι συνεργασίας: ' + FORM_.SITE + '/agency-terms.html', '', 'Για οτιδήποτε άλλο, απαντήστε σε αυτό το email.', '', 'okpublisher', FORM_.SITE];
+  try {
+    MailApp.sendEmail({ to: r.email, subject: en ? 'okpublisher: partnership for agencies and freelancers' : 'okpublisher: συνεργασία για agencies και freelancers',
+      body: L.join('\n'), name: 'okpublisher', replyTo: me || undefined });
+  } catch (e) { console.error('αυτόματη απάντηση agency: ' + e.message); return false; }
   cache.put(key, '1', FORM_.REPLY_EVERY_S);
   return true;
 }

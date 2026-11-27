@@ -87,6 +87,24 @@ test('αίτηση: γραμμή «νέο» + email στον λογαριασμ�
   assert.strictEqual(a.replyTo, ME);
 });
 
+test('αίτηση agency: ίδια καρτέλα, ίδιες στήλες· Πακέτο «Agency», ιστοσελίδα, [είδος · πελάτες]· δικό της email και απάντηση', function () {
+  const e = makeEnv();
+  assert.deepStrictEqual(e.post({ type: 'agency', name: 'Μαρία', business: 'Studio X', email: 'hi@studio.example', phone: '210',
+    site_url: 'studio.example', kind: 'freelancer', clients: '8', message: 'Θέλουμε να συνεργαστούμε', lang: 'el', source: 'agencies', news: 'όχι' }), { ok: true });
+  const sh = e.sheets['Ενδιαφέροντα'];
+  assert.strictEqual(sh.head.length, 13, 'καμία νέα στήλη');
+  assert.deepStrictEqual(Array.from(sh.rows[0].slice(1)), ['Μαρία', 'Studio X', 'hi@studio.example', '210', 'Agency', 'https://studio.example',
+    '[Freelancer · ~8 πελάτες στα social] Θέλουμε να συνεργαστούμε', 'el', 'νέο', 'agencies', 'όχι', '']);
+  const o = owner(e)[0], a = replies(e)[0];
+  assert.ok(/Νέα αίτηση agency: Studio X/.test(o.subject) && /Έγκριση ως agency/.test(o.body), o.subject);
+  assert.ok(/συνεργασία για agencies/.test(a.subject) && /agency-terms\.html/.test(a.body) && !/€\d/.test(a.body), a.body);
+  assert.ok(!/δωρεάν εβδομάδα/i.test(a.body));
+  e.post({ type: 'agency', name: 'Anna', business: 'Agency Y', email: 'y@agency.example', lang: 'en' });
+  const a2 = replies(e)[1];
+  assert.ok(/partnership for agencies/.test(a2.subject) && /^Hello Anna,/.test(a2.body));
+  assert.strictEqual(e.sheets['Ενδιαφέροντα'].rows[1][7], '[Agency]', 'χωρίς μήνυμα: μόνο το είδος');
+});
+
 test('χωρίς τετραγωνάκι νέων → «όχι»· χωρίς πηγή → «—»', function () {
   const e = makeEnv();
   const d = Object.assign({}, BASE); delete d.news; delete d.source;
