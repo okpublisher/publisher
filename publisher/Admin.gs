@@ -26,6 +26,12 @@
  *   - Δημοσιεύσεις, Ιστορικό, Πληρωμές: οι καρτέλες «Ουρά», «Ιστορικό», «Πληρωμές» του Sheet «okpublisher».
  * Η διεύθυνση του web app γράφεται μόνη της στο admin/webapp.json του publisher-work (για τη σελίδα του site).
  *
+ * Σύνδεσμος σεταρίσματος ανά επαφή (από 27/11/2026, για admin, πωλητή και agency, ό,τι βλέπει ο καθένας): setup_link =
+ *   okpublisher.gr/setup.html?p=<κωδικός> #d=<base64url JSON> (admPrefill_, ίδια μορφή με το prefill_ της φόρμας) → η φόρμα
+ *   ανοίγει προσυμπληρωμένη (επιχείρηση, όνομα, email, πακέτο, Instagram/Facebook· όχι τηλέφωνο). Κωδικός: του πωλητή/agency
+ *   της επαφής (ανάθεση ή πρώτος σύνδεσμος), αλλιώς ο κωδικός σύστασης πελάτη. Επαφή agency: ΧΩΡΙΣ email (εγκρίσεις = της agency).
+ *   Όχι για αιτήσεις agency (Πακέτο «Agency»). Σεταρίσματα: other = «Άλλα», help = ζήτησε βοήθεια με AnyDesk (HELP_TAG).
+ *
  * Ενέργειες διαχειριστή ανά πελάτη (από 26/11/2026, μόνο role admin):
  *   - Πακέτο: με ενεργή συνδρομή → όπως η «Αλλαγή πακέτου» του πελάτη (planChangeSet_, email στον πελάτη)· χωρίς συνδρομή
  *     (δωρεάν/κανένα) → clients/<K>/package_change.json (η παραγωγή της 20ής αλλάζει config). Από τον επόμενο μήνα έως τις 19,
@@ -45,7 +51,7 @@ const ADM_ = {
   CLIENTS_CACHE_S: 300,
   CLIENTS_KEY: 'adm:clients:3',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
-  LEADS_KEY: 'adm:leads:3',
+  LEADS_KEY: 'adm:leads:4',
   GROUPS_KEY: 'adm:groups:1',
   GROUP_RE: /^[a-z0-9][a-z0-9-]{1,39}$/,
   REF_URL: 'https://okpublisher.gr/',
@@ -60,6 +66,8 @@ const ADM_ = {
   PUB_MAX: 300,
   SITE: 'https://okpublisher.gr/admin/',
   PIN_TRIES: 5,
+  LEAD_REF_RE: /^[a-z0-9]{4,10}$/,   // στήλη «Σύσταση» (ίδιο με τη φόρμα)
+  HELP_TAG: '[Θέλει βοήθεια με AnyDesk]',   // ίδιο με τη φόρμα και το setup.html
 };
 
 // ------------------------------------------------------------------ χρήστες και συνεδρίες
@@ -371,7 +379,13 @@ function admData_(token) {
   const keys = out.clients.map(function (c) { return c.key; });
   const seen = function (K) { return admin || keys.indexOf(String(K)) >= 0; };
 
-  out.leads = L.leads.filter(function (l) { const a = l.auto; delete l.auto; return take(l, 'lead:' + l.email, a); });
+  out.leads = L.leads.filter(function (l) {
+    const a = l.auto, ref = l.ref;
+    delete l.auto;
+    if (!take(l, 'lead:' + l.email, a)) return false;
+    l.setup_link = admSetupLink_(l, ref, users);
+    return true;
+  });
   const scan = siteScanState_();   // χρώματα / γραμματοσειρές από την ιστοσελίδα (Site.gs)
   try { out.groups = admGroups_().map(function (g) { return { key: g.key, name: g.name, brand: g.brand }; }); }
   catch (e) { out.groups = []; out.errors.push('Ομάδες: ' + e.message); }
@@ -436,6 +450,24 @@ function admData_(token) {
   out.sellers = admin ? out.users.filter(function (x) { return !x.owner && x.role !== 'agency'; }).map(function (x) { return { email: x.email, name: x.name }; }) : [];
   return out;
 }
+
+// Σύνδεσμος σεταρίσματος μιας επαφής, προσυμπληρωμένος (βλ. πάνω). '' για αιτήσεις agency.
+function admSetupLink_(l, ref, users) {
+  if (l.plan === 'Agency') return '';
+  const u = (l.seller && users[l.seller]) || null, agency = !!(u && u.role === 'agency');
+  // Κωδικός: του πωλητή/agency της επαφής (ανάθεση ή πρώτος σύνδεσμος), αλλιώς σύσταση πελάτη· «κανείς» → χωρίς κωδικό.
+  const p = (u && u.ref) || (l.src && l.src.how === 'referral' && ADM_.LEAD_REF_RE.test(String(ref || '')) ? String(ref) : '');
+  return ADM_.REF_URL + 'setup.html' + (p ? '?p=' + p : '') +
+    admPrefill_({ b: l.business, n: l.name, e: agency ? '' : l.email, p: admPlanName_(l.plan), s: l.social });
+}
+// '#d=' + base64url(JSON) μόνο με τα μη κενά πεδία (ίδια μορφή με το prefill_ του Form.gs).
+function admPrefill_(o) {
+  const c = {};
+  Object.keys(o).forEach(function (k) { const v = String(o[k] == null ? '' : o[k]).trim(); if (v) c[k] = v.slice(0, 400); });
+  if (!Object.keys(c).length) return '';
+  return '#d=' + Utilities.base64Encode(JSON.stringify(c), Utilities.Charset.UTF_8).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function admPlanName_(v) { const n = String(v || '').split(/[ ·]/)[0]; return ['Βασικό', 'Μεσαίο', 'Καθημερινό'].indexOf(n) >= 0 ? n : ''; }
 
 // Ποιος πωλητής έφερε τον καθένα: ο ΠΡΩΤΟΣ σύνδεσμος πωλητή (?p=) ανάμεσα σε επαφές και σεταρίσματα με το ίδιο email,
 // ΑΦΜ ή κωδικό πελάτη, με σειρά χρόνου (για πάντα). Γράφει o.auto = { seller, at } σε κάθε γραμμή· επιστρέφει { κλειδί: … }
@@ -662,7 +694,8 @@ function admLeads_() {
         instagram: v(r, 'Instagram'), address: v(r, 'Διεύθυνση/περιοχή'), about: v(r, 'Τι κάνει').slice(0, 1500), times: v(r, 'Ώρες'),
         reels: v(r, 'Έτοιμα reels'), music: v(r, 'Μουσική στα reels'), status: v(r, 'Κατάσταση'), terms: v(r, 'Όροι (έκδοση)'),
         bill_name: v(r, 'Επωνυμία τιμολόγησης'), afm: v(r, 'ΑΦΜ'), bill_check: v(r, 'Έλεγχος τιμολόγησης'), trial: v(r, 'Δωρεάν εβδομάδα'),
-        ref: v(r, 'Σύσταση').toLowerCase(), website: v(r, 'Ιστοσελίδα') };
+        ref: v(r, 'Σύσταση').toLowerCase(), website: v(r, 'Ιστοσελίδα'), other: v(r, 'Άλλα').slice(0, 1500),
+        help: v(r, 'Άλλα').indexOf(ADM_.HELP_TAG) === 0 };
     }).reverse(),
   };
   try { cache.put(ADM_.LEADS_KEY, JSON.stringify(res), ADM_.LEADS_CACHE_S); } catch (e) { /* πολύ μεγάλο: χωρίς cache */ }

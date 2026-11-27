@@ -2383,6 +2383,55 @@ test('πωλητές: ανάθεση διαχειριστή υπερισχύει
   assert.deepStrictEqual(d.clients.length + d.commissions.length, 0);
 });
 
+function prefillOf(url) {
+  const m = /#d=([A-Za-z0-9_-]+)$/.exec(url);
+  return m ? JSON.parse(Buffer.from(m[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) : null;
+}
+
+test('σύνδεσμος σεταρίσματος ανά επαφή: προσυμπληρωμένος (#d=), με τον κωδικό της επαφής ή της ανάθεσης· agency χωρίς email· όχι για αιτήσεις agency', function () {
+  const env = sellEnv();
+  const users = JSON.parse(SELL_USERS);
+  users['studio@agency.example'] = { role: 'agency', name: 'Studio X', ref: 'stu55' };
+  env.props.ADMIN_USERS = JSON.stringify(users);
+  env.opts.leadsCsv += '27/11/2026 9:00:00 π.μ.,Ηλίας,Πελάτης Agency,el@x.gr,690,Μεσαίο,@pelatis,,el,νέο,απευθείας,όχι,stu55\r\n' +
+    '27/11/2026 9:30:00 π.μ.,Θ,Studio Y,y@agency.example,,Agency,https://studio-y.gr,[Agency · ~5 πελάτες],el,νέο,απευθείας,όχι,\r\n' +
+    '27/11/2026 10:00:00 π.μ.,Ιωάννα,"Καφέ ""Γωνία"" & Σία",i@x.gr,6911111111,Καθημερινό,facebook.com/gonia,,el,νέο,απευθείας,όχι,nik22\r\n';
+  env.cache = {};
+  const adm = env.loginAs('system@example.com');
+  let d = api(env, { act: 'data', token: adm }).data;
+  const L = function (biz) { return d.leads.filter(function (l) { return l.business === biz; })[0]; };
+  const gon = L('Καφέ "Γωνία" & Σία');
+  assert.ok(/^https:\/\/okpublisher\.gr\/setup\.html\?p=nik22#d=/.test(gon.setup_link), gon.setup_link);
+  assert.deepStrictEqual(prefillOf(gon.setup_link), { b: 'Καφέ "Γωνία" & Σία', n: 'Ιωάννα', e: 'i@x.gr', p: 'Καθημερινό', s: 'facebook.com/gonia' });
+  assert.ok(gon.setup_link.indexOf('6911') < 0 && !/6911/.test(JSON.stringify(prefillOf(gon.setup_link))), 'χωρίς τηλέφωνο');
+  const alone = L('Μόνος');
+  assert.ok(/^https:\/\/okpublisher\.gr\/setup\.html#d=/.test(alone.setup_link), 'χωρίς πωλητή: χωρίς ?p=');
+  assert.deepStrictEqual(prefillOf(alone.setup_link), { b: 'Μόνος', n: 'Α', e: 'a@x.gr' });
+  const ag = L('Πελάτης Agency');
+  assert.ok(/^https:\/\/okpublisher\.gr\/setup\.html\?p=stu55#d=/.test(ag.setup_link), ag.setup_link);
+  assert.deepStrictEqual(prefillOf(ag.setup_link), { b: 'Πελάτης Agency', n: 'Ηλίας', p: 'Μεσαίο', s: '@pelatis' }, 'agency: χωρίς το email του πελάτη');
+  assert.strictEqual(L('Studio Y').setup_link, '', 'αίτηση agency: όχι σύνδεσμος σεταρίσματος');
+  api(env, { act: 'assign', token: adm, key: 'lead:a@x.gr', email: 'maria@example.com' });
+  d = api(env, { act: 'data', token: adm }).data;
+  assert.ok(/\?p=mar33#d=/.test(L('Μόνος').setup_link), 'ανάθεση σε πωλητή → ο κωδικός του');
+  d = api(env, { act: 'data', token: env.loginAs('nikos@example.com') }).data;
+  assert.ok(d.leads.length && d.leads.every(function (l) { return /\?p=nik22#d=/.test(l.setup_link); }), 'ο πωλητής βλέπει τον σύνδεσμο των δικών του');
+  d = api(env, { act: 'data', token: env.loginAs('studio@agency.example') }).data;
+  assert.deepStrictEqual(d.leads.map(function (l) { return [l.business, prefillOf(l.setup_link).e || '']; }), [['Πελάτης Agency', '']], 'η agency βλέπει τη δική της, χωρίς email πελάτη');
+});
+
+test('σεταρίσματα: «Άλλα» και βοήθεια με AnyDesk (το setup.html βάζει μπροστά το [Θέλει βοήθεια με AnyDesk])', function () {
+  const env = sellEnv();
+  env.opts.setupsCsv = 'Χρόνος,Επιχείρηση,Υπεύθυνος,Email εγκρίσεων,Πακέτο,Τι κάνει,Άλλα,Κατάσταση,ΑΦΜ,Κωδικός πελάτη,Σύσταση\r\n' +
+    '27/11/2026 1:00:00 μ.μ.,Με βοήθεια,Α,h@x.gr,Βασικό,x,[Θέλει βοήθεια με AnyDesk] απογεύματα,νέο,333333333,OK-0004,\r\n' +
+    '27/11/2026 2:00:00 μ.μ.,Χωρίς βοήθεια,Β,n@x.gr,Βασικό,x,τίποτα,νέο,444444444,OK-0005,\r\n';
+  env.cache = {};
+  const d = api(env, { act: 'data', token: env.loginAs('system@example.com') }).data;
+  const S = function (biz) { return d.setups.filter(function (x) { return x.business === biz; })[0]; };
+  assert.deepStrictEqual([S('Με βοήθεια').help, S('Με βοήθεια').other, S('Χωρίς βοήθεια').help, S('Χωρίς βοήθεια').other],
+    [true, '[Θέλει βοήθεια με AnyDesk] απογεύματα', false, 'τίποτα']);
+});
+
 test('πωλητές: νέος πωλητής παίρνει κωδικό και σύνδεσμο στο email· προμήθεια με ιστορικό (η αλλαγή ισχύει από τον τρέχοντα μήνα)', function () {
   const env = sellEnv();
   const adm = env.loginAs('system@example.com');

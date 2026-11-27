@@ -41,6 +41,8 @@ function makeEnv() {
     LockService: { getScriptLock: function () { return { tryLock: function () { return true; }, releaseLock: function () {} }; } },
     Session: { getEffectiveUser: function () { return { getEmail: function () { return ME; } }; } },
     MailApp: { sendEmail: function (o) { mails.push(o); } },
+    Utilities: { Charset: { UTF_8: 'UTF-8' },
+      base64Encode: function (x) { return (typeof x === 'string' ? Buffer.from(x, 'utf8') : Buffer.from(x)).toString('base64'); } },
     ContentService: {
       MimeType: { JSON: 'JSON' },
       createTextOutput: function (s) { return { setMimeType: function () { return this; }, getContent: function () { return s; } }; },
@@ -431,6 +433,42 @@ test('ιστοσελίδα (site_url, όχι το κρυφό website): στήλ�
   assert.ok(!/^=/.test(String(st.rows[2][col(st, 'Ιστοσελίδα')])), 'ποτέ τύπος στο Sheet');
   assert.ok(e.post(Object.assign({}, SETUP, { business: 'Bot', website: 'spam.example.com' })).ok);
   assert.strictEqual(st.rows.length, 3, 'το κρυφό «website» μένει παγίδα για bots');
+});
+
+// Αποκωδικοποίηση όπως στο setup.html: '#d=' + base64url(JSON, UTF-8).
+function prefillOf(body) {
+  const m = /setup\.html[^\s#]*#d=([A-Za-z0-9_-]+)(\s|$)/.exec(body);
+  return m ? JSON.parse(Buffer.from(m[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) : null;
+}
+
+test('αυτόματη απάντηση: σύνδεσμος σεταρίσματος προσυμπληρωμένος (#d=…, χωρίς τηλέφωνο) και μετά το ?p= του πωλητή', function () {
+  const e = makeEnv();
+  e.post(Object.assign({}, BASE, { plan: 'Καθημερινό', ref: 'k7m2x', business: 'Φούρνος «Στάχυ» & Σία' }));
+  const a = replies(e)[0];
+  assert.ok(/https:\/\/okpublisher\.gr\/setup\.html\?p=k7m2x#d=[A-Za-z0-9_-]+\s/.test(a.body), a.body);
+  assert.deepStrictEqual(prefillOf(a.body), { b: 'Φούρνος «Στάχυ» & Σία', n: 'Δοκιμή', e: 'lead@example.com', p: 'Καθημερινό', s: '@test' });
+  assert.ok(a.body.indexOf('6900000000') < 0, 'το τηλέφωνο δεν μπαίνει');
+  const e2 = makeEnv();
+  e2.post(Object.assign({}, BASE, { plan: '', social: '', lang: 'en' }));
+  assert.deepStrictEqual(prefillOf(replies(e2)[0].body), { b: 'Φούρνος Δοκιμή', n: 'Δοκιμή', e: 'lead@example.com' }, 'χωρίς πακέτο/σελίδα: μόνο ό,τι υπάρχει');
+});
+
+test('AnyDesk: η αυτόματη απάντηση το προσφέρει (ελληνικά/αγγλικά)· τετραγωνάκι στο σετάρισμα → πρώτη γραμμή και θέμα του email', function () {
+  const e = makeEnv();
+  e.post(BASE);
+  assert.ok(/πιο εύκολα από υπολογιστή\. Αν θέλετε, το κάνουμε μαζί με μια σύνδεση AnyDesk, χωρίς χρέωση/.test(replies(e)[0].body));
+  const e2 = makeEnv();
+  e2.post(Object.assign({}, BASE, { lang: 'en' }));
+  assert.ok(/together over AnyDesk, free of charge/.test(replies(e2)[0].body));
+  const e3 = makeEnv();
+  e3.post(Object.assign({}, SETUP, { message: '[Θέλει βοήθεια με AnyDesk] Απογεύματα' }));
+  const m = owner(e3).filter(function (x) { return /Σετάρισμα/.test(x.subject); })[0];
+  assert.ok(/ · θέλει AnyDesk$/.test(m.subject), m.subject);
+  assert.ok(/^⚠ Θέλει να κάνετε μαζί το σετάρισμα με AnyDesk/.test(m.body));
+  assert.ok(/Άλλα: \[Θέλει βοήθεια με AnyDesk\] Απογεύματα/.test(m.body));
+  e3.post(Object.assign({}, SETUP, { business: 'Χωρίς βοήθεια', bill_afm: '094014298', message: 'Τίποτα' }));
+  const m2 = owner(e3).filter(function (x) { return /Χωρίς βοήθεια/.test(x.subject); })[0];
+  assert.ok(!/AnyDesk/.test(m2.subject + m2.body));
 });
 
 test('doGet: η απάντηση που ελέγχει το deploy', function () {
