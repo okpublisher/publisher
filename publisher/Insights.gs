@@ -410,8 +410,11 @@ function reportMail_(d, mr) {
     }
   });
   if (open) html.push('</ul>');
-  text.push('', 'Για οποιαδήποτε ερώτηση, απαντήστε σε αυτό το email.', 'OK Publisher');
-  html.push('<p style="margin-top:20px">Για οποιαδήποτε ερώτηση, απαντήστε σε αυτό το email.<br>OK Publisher</p></div>');
+  // Πελάτης agency: χωρίς «OK Publisher», για να μπορεί η agency να την προωθήσει όπως είναι (Agency.gs).
+  const sig = agencyOf_(d.client) ? '' : 'OK Publisher';
+  text.push('', 'Για οποιαδήποτε ερώτηση, απαντήστε σε αυτό το email.');
+  if (sig) text.push(sig);
+  html.push('<p style="margin-top:20px">Για οποιαδήποτε ερώτηση, απαντήστε σε αυτό το email.' + (sig ? '<br>' + sig : '') + '</p></div>');
   return { subject: title + ' · ' + d.name, text: text.join('\n'), html: html.join('') };
 }
 

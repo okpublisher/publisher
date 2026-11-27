@@ -183,7 +183,11 @@ function billState_(K) {
   try { return JSON.parse(v); } catch (e) { return null; }
 }
 function billSave_(K, st) { P_().setProperty('BILLING_' + K, JSON.stringify(st)); }
-function billPaused_(K) { return cprop_(K, 'BILLING_PAUSED', 'false') === 'true'; }
+function billPaused_(K) {
+  if (cprop_(K, 'BILLING_PAUSED', 'false') === 'true') return true;
+  const a = agencyOf_(K);                                  // πελάτης agency: παύση όταν η agency δεν έχει πληρώσει (Agency.gs)
+  return !!a && cprop_(a, 'BILLING_PAUSED', 'false') === 'true';
+}
 function ym_(d) { return athens_(d, 'yyyy-MM'); }
 
 // ---------------------------------------------------------------- περίοδοι (από 26/11/2026)
@@ -248,7 +252,11 @@ function esc_(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 // Email πληρωμής με το κουμπί «Διακοπή συνδρομής» (και ως σύνδεσμο στο απλό κείμενο).
 function billNotify_(K, subject, text) {
-  const u = cancelUrl_(K), pu = planUrl_(K), rule = stopRule_(billState_(K));
+  const st0 = billState_(K), ag = !!(st0 && st0.agency);
+  const u = cancelUrl_(K), pu = ag ? '' : planUrl_(K), rule = stopRule_(st0);
+  if (ag && st0.agency.lines && st0.agency.lines.length && !/\nΑνάλυση:/.test(text)) {
+    text += '\n\nΑνάλυση:\n' + st0.agency.lines.map(function (l) { return '• ' + l; }).join('\n');
+  }
   const tail = (pu ? '\n\nΑλλαγή πακέτου: ' + pu : '') +
     (u ? '\n\nΔιακοπή συνδρομής: ' + u : '\n\nΓια διακοπή της συνδρομής, απαντήστε σε αυτό το email ' + rule + '.');
   const btn = function (href, label) {
@@ -577,7 +585,7 @@ function monthLabel_(ym) { const p = String(ym).split('-'); return BILL_.MONTHS[
 function euros_(cents) { return (cents / 100).toFixed(2).replace('.', ','); }
 // CLIENTS + TEST_CLIENTS (ο TST δεν δημοσιεύει ποτέ: χρήσιμος για δοκιμή πληρωμών στη demo της Viva).
 function billingClients_() {
-  return approvalClients_().filter(function (K) { return !!billState_(K); });
+  return approvalClients_().filter(function (K) { return !!billState_(K); }).concat(agencyKeys_());
 }
 
 function billLog_(K, month, cents, action, result, code, pay) {
@@ -677,6 +685,18 @@ function offerDay_(st, now) { return Math.round((utc_(athens_(now, 'yyyy-MM-dd')
 // Ένας σύνδεσμος πληρωμής ανά πακέτο· νέος αν ο προηγούμενος είναι παλιός (λήγει σε 5 ημέρες).
 function offerLinks_(K, st) {
   const out = {};
+  if (st.agency) {                                   // agency: ένας σύνδεσμος για το άθροισμα (Agency.gs)
+    const rec = st.offer.orders.Agency = st.offer.orders.Agency || {};
+    const age = rec.order_at ? (Date.now() - new Date(rec.order_at).getTime()) / 86400000 : 999;
+    if (!rec.order || age > BILL_.LINK_REFRESH_DAYS || rec.amount !== st.amount) {
+      if (rec.order) (rec.old_orders = rec.old_orders || []).push(rec.order);
+      rec.order = vivaCreateOrder_(K, { plan: st.plan, amount: st.amount }, 'start', 'πρώτος μήνας');
+      rec.order_at = new Date().toISOString();
+      rec.amount = st.amount;
+    }
+    out.Agency = vivaLink_(rec.order);
+    return out;
+  }
   BILL_.PLANS.filter(function (p) { return (st.offer.plans || BILL_.PLANS.map(function (x) { return x.name; })).indexOf(p.name) >= 0; }).forEach(function (p) {
     const rec = st.offer.orders[p.name] = st.offer.orders[p.name] || {};
     const age = rec.order_at ? (Date.now() - new Date(rec.order_at).getTime()) / 86400000 : 999;
@@ -691,6 +711,7 @@ function offerLinks_(K, st) {
 }
 
 function offerEmail_(K, st, kind, links) {
+  if (st.agency) { agencyOfferEmail_(K, st, kind, links); return; }
   const until = dm_(addDays_(st.offer.trial_start, OFFER_.LAST_DAY - 1));
   const T = {
     d5: ['Πώς σας φάνηκε η δωρεάν εβδομάδα; Συνεχίζουμε;', 'Ελπίζουμε να σας αρέσουν οι δημοσιεύσεις της δωρεάν εβδομάδας!\n\n' +
@@ -783,6 +804,7 @@ function offerClient_(K, st, now) {
 }
 
 function offerPaid_(K, st, planName, order, paid, now) {
+  if (st.agency) { agencyPaid_(K, st, order, paid, now); return; }
   const p = planOf_(planName);
   let m = ym_(now), d = Number(athens_(now, 'd'));
   if (d > 28) { m = nextYm_(m); d = 1; }       // 29–31: η μέρα του γίνεται η 1η (κερδίζει 1–3 μέρες)
@@ -907,6 +929,7 @@ function billingCycle() {
     });
     try { freeCycle_(new Date()); } catch (e) { console.log('Δωρεάν πελάτες: ' + e.message); }
     try { admRefNotify_(); } catch (e) { console.log('Email πωλητών: ' + e.message); }
+    try { agencySync_(); } catch (e) { console.log('Agencies: ' + e.message); }
     try { siteScanCycle_(); } catch (e) { console.log('Ιστοσελίδες πελατών: ' + e.message); }
     if (problems.length) reportBilling_(problems);
   } finally {
@@ -984,6 +1007,7 @@ function billingClient_(K, now) {
   let rec = st.months[m];
   if (!rec) {
     if (Object.keys(st.months).some(function (x) { return x < m && st.months[x].st === 'pending'; })) return;
+    if (st.agency && !agencyPeriod_(K, st, m)) return;   // agency: ποσό από τους πελάτες της τώρα (Agency.gs)
     if (st.tx) {
       st.months[m] = rec = { st: 'charging', at: new Date().toISOString() };
       billSave_(K, st);                                   // πριν από τη χρέωση: ποτέ δεύτερη για τον ίδιο μήνα

@@ -2063,7 +2063,160 @@ test('διαχειριστικό: η κάρτα πελάτη έχει ημέρε
   const c = api(env, { act: 'data', token: sal }).data.clients.find(function (x) { return x.key === 'OKP'; });
   assert.ok(c, 'ο πωλητής βλέπει τον πελάτη του');
   assert.deepStrictEqual(JSON.parse(JSON.stringify([c.no_approval, c.free, c.package, c.days.posts, c.days.stories])), [true, { until: '' }, 'Βασικό', ['Τρίτη', 'Πέμπτη'], []]);
-  assert.ok('adm:clients:2' in env.cache && !('adm:clients' in env.cache), 'νέο κλειδί cache');
+  assert.ok('adm:clients:3' in env.cache && !('adm:clients:2' in env.cache), 'νέο κλειδί cache');
+});
+
+// ------------------------------------------------------------------ agencies (Agency.gs, από 27/11/2026)
+function agencyEnv() {
+  const env = actEnv();
+  env.ghStore['clients'] = [{ name: 'ORE', type: 'dir' }, { name: 'OKP', type: 'dir' }, { name: 'NEW', type: 'dir' }];
+  env.ghStore['clients/NEW/config.json'] = { key: 'NEW', code: 'OK-0005', name: 'Νέος', package: 'Μεσαίο' };
+  env.props.CLIENTS = 'ORE,OKP,NEW';
+  env.act({ act: 'save_user', email: 'studio@agency.example', name: 'Studio X', role: 'agency', pct: '20' });
+  env.users = function () { return JSON.parse(env.props.ADMIN_USERS); };
+  env.ag = env.users()['studio@agency.example'];
+  env.KA = 'AG' + env.ag.ref.toUpperCase();
+  env.ast = function () { return JSON.parse(env.props['BILLING_' + env.KA]); };
+  env.at = function (t) { env.nowMs = new Date(t).getTime(); env.tok = env.loginAs('system@example.com'); };
+  return env;
+}
+
+test('agency: νέος χρήστης «agency» με σύνδεσμο, έκπτωση 20%, email καλωσορίσματος με φόρμα και όρους', function () {
+  const env = agencyEnv();
+  assert.deepStrictEqual([env.ag.role, env.ag.disc, /^[a-z2-9]{5}$/.test(env.ag.ref)], ['agency', 20, true]);
+  assert.strictEqual(env.props['NOTIFY_TO_' + env.KA], 'studio@agency.example');
+  assert.strictEqual(env.props['NAME_' + env.KA], 'Studio X');
+  const w = env.mails.filter(function (m) { return m.to === 'studio@agency.example' && /Καλώς ήρθατε/.test(m.subject); })[0];
+  assert.ok(w && w.body.indexOf('setup.html?p=' + env.ag.ref) >= 0 && /έκπτωση 20%/.test(w.body) && /agency-terms\.html/.test(w.body), w && w.body);
+  assert.ok(/Η έκπτωση είναι ποσοστό/.test(env.act({ act: 'save_user', email: 'studio@agency.example', name: 'Studio X', role: 'agency', pct: '80' }).error));
+  env.act({ act: 'save_user', email: 'studio@agency.example', name: 'Studio X', role: 'agency', pct: '25' });
+  assert.strictEqual(env.users()['studio@agency.example'].disc, 25, 'η έκπτωση αλλάζει');
+  assert.strictEqual(env.users()['studio@agency.example'].ref, env.ag.ref, 'ίδιος σύνδεσμος');
+  assert.ok(env.mails.some(function (m) { return m.to === 'studio@agency.example' && /από 20% σε 25%, από την επόμενη χρέωση/.test(m.body); }), 'email για την αλλαγή');
+  // μικρότερη έκπτωση (ακριβότερο): ισχύει 30 μέρες μετά, με email
+  env.act({ act: 'save_user', email: 'studio@agency.example', name: 'Studio X', role: 'agency', pct: '15' });
+  const u2 = env.users()['studio@agency.example'];
+  assert.deepStrictEqual([u2.disc, u2.discs.slice(-1)[0]], [25, { from: '2026-12-26', d: 15 }]);
+  assert.ok(env.mails.some(function (m) { return m.to === 'studio@agency.example' && /από 25% σε 15% από τις 26\/12\/2026 \(30 μέρες/.test(m.body); }));
+  assert.strictEqual(env.ctx.agencyDisc_(u2, '2026-12-26'), 15);
+  env.act({ act: 'save_user', email: 'studio@agency.example', name: 'Studio X', role: 'agency', pct: '25' });
+  assert.deepStrictEqual(env.users()['studio@agency.example'].discs.map(function (x) { return x.d; }), [20, 25], 'ακύρωση της μελλοντικής αλλαγής');
+  const src = require('fs').readFileSync(require('path').join(DIR, 'Agency.gs'), 'utf8');
+  assert.ok(!/^function [a-zA-Z0-9]*[^_]\(/m.test(src), 'όλες οι συναρτήσεις του Agency.gs τελειώνουν σε _');
+});
+
+test('agency: πελάτης → agency (email μόνο στην agency, χωρίς δική του χρέωση) → «Χρέωση» → πληρωμή → μέρα agency → αναλογικά → μηνιαία χρέωση με ανάλυση', function () {
+  const env = agencyEnv(), KA = env.KA;
+  let r = env.act({ act: 'client_agency', client: 'OKP', email: 'studio@agency.example' });
+  assert.ok(/Πελάτης της Studio X: Βασικό −20% = €148,80 τον μήνα με ΦΠΑ\..*Ξεκινά μόλις πληρώσει η agency/.test(r.message), r.message || r.error);
+  let cfg = env.gh('clients/OKP/config.json');
+  assert.deepStrictEqual([cfg.agency, cfg.approver_to, cfg.approvers, cfg.billing], [env.ag.ref, 'studio@agency.example', ['studio@agency.example'], { type: 'agency', agency: env.ag.ref }]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(cfg.pre_agency)), { notify_to: 'okp-client@example.com', approver_to: null, approvers: null, billing: { type: 'free' } });
+  assert.deepStrictEqual([env.props.AGENCY_OKP, env.props.NOTIFY_TO_OKP], [KA, 'studio@agency.example']);
+  assert.ok(/Πελάτης agency/.test(env.act({ act: 'client_free', client: 'OKP', until: '' }).error));
+  assert.ok(/Πελάτης agency/.test(env.act({ act: 'client_charge', client: 'OKP', plan: 'Βασικό' }).error));
+  assert.ok(/δική του ενεργή συνδρομή/.test(env.act({ act: 'client_agency', client: 'ORE', email: 'studio@agency.example' }).error));
+  let d = env.act({ act: 'data' }).data;
+  const c = d.clients.find(function (x) { return x.key === 'OKP'; });
+  assert.deepStrictEqual([c.agency, c.agency_name], [KA, 'Studio X']);
+  const u = d.users.find(function (x) { return x.email === 'studio@agency.example'; });
+  assert.deepStrictEqual([u.agency.clients, u.agency.next_eur, u.agency.paying], [['OKP'], 148.8, false]);
+  assert.ok(!d.sellers.some(function (x) { return x.email === 'studio@agency.example'; }), 'η agency δεν είναι στους πωλητές');
+
+  // «Χρέωση»: ένας σύνδεσμος με το άθροισμα, email στην agency με ανάλυση και όρους
+  r = env.act({ act: 'agency_charge', email: 'studio@agency.example' });
+  assert.ok(/σύνδεσμος πληρωμής €148,80 τον μήνα \(1 πελάτης\)/.test(r.message), r.message || r.error);
+  assert.strictEqual(env.viva.orders.pop().amount, 14880);
+  const m1 = env.mails.filter(function (m) { return m.to === 'studio@agency.example' && /Πληρωμή συνεργασίας/.test(m.subject); }).pop();
+  assert.ok(m1 && /Ανάλυση:\n• Νέος|OKP/.test(m1.body) && /Σύνολο: €148,80/.test(m1.body) && /agency-terms\.html/.test(m1.body), m1 && m1.body);
+  assert.ok(!env.mails.some(function (m) { return m.to === 'okp-client@example.com'; }), 'τίποτα στον τελικό πελάτη');
+  assert.ok(/πληρώνει ήδη|σύνδεσμο/.test(env.act({ act: 'agency_charge', email: 'studio@agency.example' }).message || ''), 'νέα «Χρέωση» = νέος σύνδεσμος');
+
+  // πληρωμή → μέρα 26, config του πελάτη με μέρα/αρχή
+  env.viva.paid[String(9000000000000000 + env.viva.n)] = 'TXA';
+  env.ctx.billingCycle();
+  let st = env.ast();
+  assert.deepStrictEqual([st.start, st.day, st.tx, st.months['2026-11'].st, st.months['2026-11'].amount, !!st.offer], ['2026-11', 26, 'TXA', 'paid', 14880, false]);
+  cfg = env.gh('clients/OKP/config.json');
+  assert.deepStrictEqual(cfg.billing, { type: 'agency', agency: env.ag.ref, day: 26, start: '2026-11-26' });
+  assert.ok(env.mails.some(function (m) { return m.to === 'studio@agency.example' && /Ξεκινάμε/.test(m.subject); }));
+  assert.ok(env.mails.some(function (m) { return /Agency πλήρωσε: Studio X/.test(m.subject); }));
+
+  // νέος πελάτης στις 6/12 (Μεσαίο): ξεκινά αμέσως, αναλογικά 20 από 30 μέρες στην επόμενη χρέωση
+  env.at('2026-12-06T12:00:00+02:00');
+  r = env.act({ act: 'client_agency', client: 'NEW', email: 'studio@agency.example' });
+  assert.ok(/Μεσαίο −20% = €248,00.*Ξεκινά αμέσως· αναλογικά €165,33/.test(r.message), r.message || r.error);
+  assert.deepStrictEqual(env.gh('clients/NEW/config.json').billing, { type: 'agency', agency: env.ag.ref, day: 26, start: '2026-11-26' });
+
+  // 26/12: μία χρέωση = 148,80 + 248,00 + 165,33
+  env.at('2026-12-26T10:00:00+02:00');
+  env.ctx.billingCycle();
+  st = env.ast();
+  assert.deepStrictEqual([st.months['2026-12'].st, st.months['2026-12'].amount, st.plan, st.agency.extra.length], ['paid', 56213, 'Agency · 2 πελάτες', 0]);
+  assert.strictEqual(env.viva.charges.pop().body.amount, 56213);
+  const m2 = env.mails.filter(function (m) { return m.to === 'studio@agency.example' && /Χρεώθηκε/.test(m.subject); }).pop();
+  assert.ok(m2 && /€562,13/.test(m2.body) && /Ανάλυση:/.test(m2.body) && /20 από 30 μέρες/.test(m2.body) && !/Αλλαγή πακέτου/.test(m2.body), m2 && m2.body);
+
+  // απλήρωτη → παύση όλων των πελατών της
+  env.viva.chargeFail = true;
+  env.at('2027-01-26T10:00:00+02:00'); env.ctx.billingCycle();
+  env.at('2027-02-10T10:00:00+02:00'); env.ctx.billingCycle();
+  assert.strictEqual(env.props['BILLING_PAUSED_' + KA], 'true');
+  assert.deepStrictEqual([env.ctx.billPaused_('OKP'), env.ctx.billPaused_('NEW'), env.ctx.billPaused_('ORE')], [true, true, false]);
+
+  // έξοδος από την agency: επιστρέφουν email και χρέωση που είχε
+  r = env.act({ act: 'client_agency', client: 'OKP', email: '' });
+  assert.ok(/Βγήκε από την Studio X.*Επέστρεψε η χρέωση που είχε πριν \(δωρεάν\)/.test(r.message), r.message || r.error);
+  cfg = env.gh('clients/OKP/config.json');
+  assert.deepStrictEqual([cfg.agency, cfg.approver_to, cfg.pre_agency, cfg.billing], [undefined, undefined, undefined, { type: 'free' }]);
+  assert.deepStrictEqual([env.props.AGENCY_OKP, env.props.NOTIFY_TO_OKP], [undefined, 'okp-client@example.com']);
+  assert.deepStrictEqual(Object.keys(env.ast().agency.clients), ['NEW']);
+  assert.ok(/πελάτες: πρώτα βγάλ/.test(env.act({ act: 'delete_user', email: 'studio@agency.example' }).error));
+});
+
+test('agency: βλέπει μόνο τους πελάτες της και τη χρέωσή της· πωλητής/agency δεν κάνουν ενέργειες· πακέτο πελάτη από την επόμενη χρέωση', function () {
+  const env = agencyEnv();
+  env.act({ act: 'client_agency', client: 'NEW', email: 'studio@agency.example' });
+  let r = env.act({ act: 'client_plan', client: 'NEW', plan: 'Καθημερινό' });
+  assert.ok(/Καθημερινό για τον .*: από την επόμενη χρέωση της Studio X \(€396,80/.test(r.message), r.message || r.error);
+  assert.strictEqual(env.gh('clients/NEW/config.json').package, 'Καθημερινό');
+  assert.strictEqual(env.ast().agency.clients.NEW.plan, 'Καθημερινό');
+  const tok = env.loginAs('studio@agency.example');
+  const d = api(env, { act: 'data', token: tok }).data;
+  assert.deepStrictEqual(d.clients.map(function (c) { return c.key; }), ['NEW']);
+  assert.deepStrictEqual([d.me.role, d.me.agency.next_eur, d.me.agency.clients, !!d.me.link, d.users, d.agencies], ['agency', 396.8, ['NEW'], true, undefined, []]);
+  ['client_agency', 'agency_charge', 'agency_stop', 'client_plan'].forEach(function (a) {
+    assert.ok(/Μόνο για διαχειριστές/.test(api(env, { act: a, token: tok, client: 'NEW', email: 'studio@agency.example', plan: 'Βασικό' }).error), a);
+  });
+  assert.strictEqual(env.ctx.admCommissions_([{ key: 'NEW', seller: 'studio@agency.example', name: 'Νέος' }], env.ctx.admUsers_()).length, 0, 'χωρίς προμήθεια');
+});
+
+test('agency: νέος πελάτης με "agency" στο config.json (από τον Claude) → μέσα σε μία ώρα πελάτης της agency· admin/agencies.json', function () {
+  const env = agencyEnv();
+  env.ghStore['clients/NEW/config.json'] = Object.assign({}, env.ghStore['clients/NEW/config.json'], { agency: env.ag.ref });
+  env.props.NOTIFY_TO_NEW = 'studio@agency.example';
+  env.ctx.billingCycle();
+  assert.deepStrictEqual([env.props.AGENCY_NEW, env.props.NOTIFY_TO_NEW], [env.KA, 'studio@agency.example']);
+  const cfg = env.gh('clients/NEW/config.json');
+  assert.deepStrictEqual([cfg.agency, cfg.approver_to, cfg.billing], [env.ag.ref, 'studio@agency.example', { type: 'agency', agency: env.ag.ref }]);
+  assert.deepStrictEqual(Object.keys(env.ast().agency.clients), ['NEW']);
+  const list = env.gh('admin/agencies.json').agencies;
+  assert.deepStrictEqual(list.map(function (a) { return [a.ref, a.key, a.name, a.email, a.disc]; }), [[env.ag.ref, env.KA, 'Studio X', 'studio@agency.example', 20]]);
+  assert.ok(env.mails.some(function (m) { return /Agency: OK-0005/.test(m.subject) && /αυτόματα από το config/.test(m.body); }));
+  const n = env.calls.length;
+  env.ctx.billingCycle();
+  assert.ok(!env.calls.slice(n).some(function (c) { return c.method === 'put' && /agencies\.json|NEW\/config/.test(decodeURIComponent(c.url)); }), 'μία φορά');
+});
+
+test('agency: η μηνιαία αναφορά πελάτη agency χωρίς «OK Publisher»', function () {
+  const env = agencyEnv();
+  env.act({ act: 'client_agency', client: 'NEW', email: 'studio@agency.example' });
+  const mr = { y: 2026, m: 11, key: '2026-11' };
+  const base = { client: 'NEW', name: 'Νέος', month: '2026-11', counts: { by_type: {}, ig_posts: 3, ig_stories: 2, fb_posts: 0, fb_stories: 0 }, account: { days: 30 }, stories: { count: 0 }, top: [], followers: { now: 100, prev: 90 }, times: { mode: 'fixed', best: null } };
+  let mail = env.ctx.reportMail_(base, mr);
+  assert.ok(!/OK Publisher/.test(mail.text) && !/OK Publisher/.test(mail.html), mail.text);
+  mail = env.ctx.reportMail_(Object.assign({}, base, { client: 'ORE' }), mr);
+  assert.ok(/OK Publisher/.test(mail.text));
 });
 
 const SELL_USERS = JSON.stringify({ 'nikos@example.com': { role: 'sales', name: 'Νίκος', ref: 'nik22', pcts: [{ from: '0000-01', pct: 15 }] },

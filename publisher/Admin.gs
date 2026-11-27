@@ -43,7 +43,7 @@ const ADM_ = {
   LOGIN_TTL_S: 900,
   MAX_SESSIONS: 40,
   CLIENTS_CACHE_S: 300,
-  CLIENTS_KEY: 'adm:clients:2',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
+  CLIENTS_KEY: 'adm:clients:3',   // αλλάζει όταν αλλάζουν τα πεδία, για να μη μείνει παλιό cache μετά το ανέβασμα
   LEADS_CACHE_S: 60,
   LEADS_KEY: 'adm:leads:3',
   GROUPS_KEY: 'adm:groups:1',
@@ -52,8 +52,8 @@ const ADM_ = {
   REF_RE: /^[a-z0-9]{5}$/,
   REF_ABC: 'abcdefghjkmnpqrstuvwxyz23456789',   // χωρίς i, l, o, 0, 1 (μπερδεύονται)
   PCT_MAX: 50,
-  ROLES: ['admin', 'sales'],
-  ROLE_NAMES: { admin: 'Διαχειριστής', sales: 'Πωλητής' },
+  ROLES: ['admin', 'sales', 'agency'],
+  ROLE_NAMES: { admin: 'Διαχειριστής', sales: 'Πωλητής', agency: 'Agency' },
   LOGIN_MSG: 'Αν το email έχει πρόσβαση, σας στείλαμε κωδικό. Ισχύει 15 λεπτά.',
   ROWS: 150,
   PUB_DAYS: 30,
@@ -74,6 +74,7 @@ function admUsers_() {
     if (em && ADM_.ROLES.indexOf(x.role) >= 0) u[em] = { role: x.role, name: String(x.name || '').slice(0, 80),
       ref: ADM_.REF_RE.test(String(x.ref || '')) ? String(x.ref) : '',
       pcts: (Array.isArray(x.pcts) ? x.pcts : []).filter(function (p) { return p && /^\d{4}-\d{2}$/.test(p.from) && p.pct >= 0 && p.pct <= ADM_.PCT_MAX; }).slice(-24) };
+    if (em && x.role === 'agency' && u[em]) { u[em].discs = agencyDiscs_(x); u[em].disc = agencyDisc_(x); }
   });
   const o = admOwner_();
   if (o) u[o] = { role: 'admin', name: 'okpublisher', owner: true, ref: '', pcts: [] };
@@ -84,6 +85,7 @@ function admSaveUsers_(u) {
   const c = {};
   Object.keys(u).forEach(function (e) {
     if (!u[e].owner) c[e] = { role: u[e].role, name: u[e].name || '', ref: u[e].ref || '', pcts: u[e].pcts || [] };
+    if (!u[e].owner && u[e].role === 'agency') { c[e].discs = agencyDiscs_(u[e]); c[e].disc = agencyDisc_(u[e]); }
   });
   P_().setProperty('ADMIN_USERS', JSON.stringify(c));
 }
@@ -208,9 +210,21 @@ function admSaveUser_(token, email, name, role, pct) {
   if (u[e] && u[e].owner) throw new Error('Ο λογαριασμός του okpublisher είναι πάντα διαχειριστής.');
   if (e === me.email && role !== 'admin') throw new Error('Δεν μπορείτε να αφαιρέσετε από τον εαυτό σας τον ρόλο του διαχειριστή.');
   const isNew = !u[e], old = u[e] || {};
+  let discMail = null;
+  if (old.role === 'agency' && role !== 'agency' && admAgencyClients_(old.ref).length) throw new Error('Η agency έχει πελάτες: πρώτα βγάλ\' τους (Πελάτες → Ενέργειες → Agency).');
   u[e] = { role: role, name: String(name || '').trim().slice(0, 80), ref: old.ref || '', pcts: old.pcts || [] };
-  if (role === 'sales' && !u[e].ref) u[e].ref = admNewRef_(u);
-  if (pct !== undefined && pct !== null && String(pct).trim() !== '') {
+  if ((role === 'sales' || role === 'agency') && !u[e].ref) u[e].ref = admNewRef_(u);
+  if (role === 'agency') {
+    // Έκπτωση % στα πακέτα (το πεδίο «%» της φόρμας)· αλλάζει όποτε θέλει ο διαχειριστής, ισχύει από την επόμενη χρέωση.
+    const d = pct === undefined || pct === null || String(pct).trim() === '' ? (old.role === 'agency' ? agencyDisc_(old) : AGENCY_.DISC_DEFAULT)
+      : Number(String(pct).replace(',', '.'));
+    if (!(d >= 0 && d <= AGENCY_.DISC_MAX)) throw new Error('Η έκπτωση είναι ποσοστό από 0 έως ' + AGENCY_.DISC_MAX + '.');
+    const prev = old.role === 'agency' ? agencyDisc_(old) : null, set = agencyDiscSet_(old.role === 'agency' ? old : {}, Math.round(d * 100) / 100);
+    u[e].discs = set.discs; u[e].disc = agencyDisc_(u[e]);
+    if (prev !== null && set.from && set.from !== '0000-01-01') discMail = { prev: prev, d: Math.round(d * 100) / 100, from: set.from };
+    P_().setProperty('NAME_' + agencyKey_(u[e].ref), u[e].name || e);
+    P_().setProperty('NOTIFY_TO_' + agencyKey_(u[e].ref), e);
+  } else if (pct !== undefined && pct !== null && String(pct).trim() !== '') {
     const n = Number(String(pct).replace(',', '.'));
     if (!(n >= 0 && n <= ADM_.PCT_MAX)) throw new Error('Η προμήθεια είναι ποσοστό από 0 έως ' + ADM_.PCT_MAX + '.');
     if (admPct_(u[e].pcts, '9999-12') !== n || !u[e].pcts.length) {
@@ -220,7 +234,23 @@ function admSaveUser_(token, email, name, role, pct) {
     }
   }
   admSaveUsers_(u);
-  if (isNew) {
+  if (discMail) {
+    try {
+      const today = athens_(new Date(), 'yyyy-MM-dd');
+      notify_(agencyKey_(u[e].ref), 'Αλλαγή έκπτωσης: ' + discMail.d + '%', 'Η έκπτωσή σας στα πακέτα αλλάζει από ' + discMail.prev + '% σε ' + discMail.d + '%' +
+        (discMail.from > today ? ' από τις ' + dm_(discMail.from, true) + ' (' + AGENCY_.NOTICE_DAYS + ' μέρες από σήμερα, όροι συνεργασίας §4)' : ', από την επόμενη χρέωση') +
+        '. Για οτιδήποτε, απαντήστε σε αυτό το email.\n\nΌροι συνεργασίας: ' + AGENCY_.TERMS);
+    } catch (x) { console.log('email έκπτωσης: ' + x.message); }
+  }
+  if (isNew && role === 'agency') {
+    try {
+      MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Καλώς ήρθατε στο okpublisher (agency)',
+        body: 'Καλώς ήρθατε! Το διαχειριστικό σας: ' + ADM_.SITE + '\nΓράψτε το email σας και θα σας έρθει κωδικός.\n\n' +
+          'Για κάθε νέο πελάτη σας, συμπληρώστε τη φόρμα σεταρίσματος από τον σύνδεσμό σας: ' + admLink_(u[e].ref, 'setup.html') + '\n' +
+          'Με το email σας στη θέση του email εγκρίσεων: όλα τα email του πελάτη (πρόγραμμα για ΟΚ, αναφορές) έρχονται μόνο σε εσάς.\n\n' +
+          'Τιμή: τα πακέτα με έκπτωση ' + u[e].disc + '%, μία χρέωση τον μήνα για όλους τους πελάτες σας.\nΌροι συνεργασίας: ' + AGENCY_.TERMS });
+    } catch (x) { console.log('email νέας agency: ' + x.message); }
+  } else if (isNew) {
     const ref = u[e].ref;
     try {
       MailApp.sendEmail({ to: e, name: CFG.SENDER_NAME, subject: 'Πρόσβαση στο διαχειριστικό okpublisher',
@@ -231,6 +261,12 @@ function admSaveUser_(token, email, name, role, pct) {
     } catch (x) { console.log('email νέου χρήστη: ' + x.message); }
   }
   return 'ok';
+}
+// Οι πελάτες μιας agency (από τον κωδικό συνδέσμου της).
+function admAgencyClients_(ref) {
+  if (!ref) return [];
+  const key = agencyKey_(ref);
+  return approvalClients_().filter(function (K) { return agencyOf_(K) === key; });
 }
 function admLink_(ref, page) { return ref ? ADM_.REF_URL + (page || '') + '?p=' + ref : ''; }
 function admNewRef_(u) {
@@ -252,7 +288,7 @@ function admPct_(pcts, ym) {
 // Πωλητές χωρίς κωδικό (από πριν): παίρνουν τώρα.
 function admEnsureRefs_(u) {
   let ch = false;
-  Object.keys(u).forEach(function (e) { if (u[e].role === 'sales' && !u[e].ref) { u[e].ref = admNewRef_(u); ch = true; } });
+  Object.keys(u).forEach(function (e) { if ((u[e].role === 'sales' || u[e].role === 'agency') && !u[e].ref) { u[e].ref = admNewRef_(u); ch = true; } });
   if (ch) admSaveUsers_(u);
   return u;
 }
@@ -264,6 +300,7 @@ function admDeleteUser_(token, email) {
   if (!e || !u[e]) return 'ok';
   if (u[e].owner) throw new Error('Ο λογαριασμός του okpublisher δεν αφαιρείται.');
   if (e === me.email) throw new Error('Δεν μπορείτε να αφαιρέσετε τον εαυτό σας.');
+  if (u[e].role === 'agency' && admAgencyClients_(u[e].ref).length) throw new Error('Η agency έχει πελάτες: πρώτα βγάλ\' τους (Πελάτες → Ενέργειες → Agency).');
   delete u[e];
   admSaveUsers_(u);
   const a = admJson_('ADMIN_ASSIGN');                     // οι αναθέσεις του φεύγουν μαζί του
@@ -297,6 +334,14 @@ function admData_(token) {
     out.me.ref = mu.ref; out.me.link = admLink_(mu.ref); out.me.setup_link = admLink_(mu.ref, 'setup.html');
     out.me.pct = admPct_(mu.pcts, ym_(new Date()));
   }
+  const agencies = agencyList_(users);
+  out.agencies = admin ? agencies.map(function (a) { return { email: a.email, name: a.name, key: a.key, disc: a.disc }; }) : [];
+  const agName = {};
+  agencies.forEach(function (a) { agName[a.key] = a.name; });
+  if (me.role === 'agency') {
+    const a = agencies.filter(function (x) { return x.email === me.email; })[0];
+    try { out.me.agency = a ? admAgencyInfo_(a) : null; } catch (e) { out.me.agency = null; out.errors.push('Χρεώσεις: ' + e.message); }
+  }
 
   let L = { leads: [], setups: [] };
   try { L = admLeads_(); } catch (e) { out.errors.push('Επαφές / σεταρίσματα: ' + e.message); }
@@ -321,7 +366,7 @@ function admData_(token) {
   let clients = [];
   try { clients = admClients_(); } catch (e) { out.errors.push('Πελάτες: ' + e.message); }
   out.clients = clients.filter(function (c) { return take(c, 'client:' + c.key, c.code ? own['c:' + c.code] : null); })
-    .map(function (c) { if (!admin) delete c.note; return c; });
+    .map(function (c) { if (!admin) delete c.note; if (c.agency) c.agency_name = agName[c.agency] || c.agency; return c; });
   const keys = out.clients.map(function (c) { return c.key; });
   const seen = function (K) { return admin || keys.indexOf(String(K)) >= 0; };
 
@@ -374,10 +419,15 @@ function admData_(token) {
     const ym = ym_(new Date());
     out.users = Object.keys(users).sort().map(function (e) {
       const u = users[e];
-      return { email: e, name: u.name || '', role: u.role, owner: !!u.owner, ref: u.ref || '', link: admLink_(u.ref), pct: admPct_(u.pcts, ym), has_pct: !!(u.pcts && u.pcts.length) };
+      const r = { email: e, name: u.name || '', role: u.role, owner: !!u.owner, ref: u.ref || '', link: admLink_(u.ref), pct: admPct_(u.pcts, ym), has_pct: !!(u.pcts && u.pcts.length) };
+      if (u.role === 'agency') {
+        const a = agencies.filter(function (x) { return x.email === e; })[0];
+        try { r.agency = a ? admAgencyInfo_(a) : null; } catch (x) { r.agency = null; out.errors.push('Agency ' + e + ': ' + x.message); }
+      }
+      return r;
     });
   }
-  out.sellers = admin ? out.users.filter(function (x) { return !x.owner; }).map(function (x) { return { email: x.email, name: x.name }; }) : [];
+  out.sellers = admin ? out.users.filter(function (x) { return !x.owner && x.role !== 'agency'; }).map(function (x) { return { email: x.email, name: x.name }; }) : [];
   return out;
 }
 
@@ -386,7 +436,7 @@ function admData_(token) {
 // (e:<email>, a:<ΑΦΜ>, c:<OK-…>) για τους πελάτες.
 function admOwners_(L, users) {
   const byRef = {}, own = {}, rows = [];
-  Object.keys(users).forEach(function (e) { if (users[e].role === 'sales' && users[e].ref) byRef[users[e].ref] = e; });
+  Object.keys(users).forEach(function (e) { if ((users[e].role === 'sales' || users[e].role === 'agency') && users[e].ref) byRef[users[e].ref] = e; });
   (L.leads || []).forEach(function (l) { rows.push({ o: l, t: admTime_(l.at), k: 0, keys: l.email ? ['e:' + l.email] : [] }); });
   (L.setups || []).forEach(function (s) {
     const afm = String(s.afm || '').replace(/[^\d]/g, '');
@@ -423,7 +473,7 @@ function admCommissions_(clients, users) {
   const out = [];
   clients.forEach(function (c) {
     const u = c.seller && users[c.seller];
-    if (!u) return;
+    if (!u || u.role !== 'sales') return;                  // agency: χωρίς προμήθεια (πελάτης μας είναι η ίδια)
     const st = billState_(c.key);
     if (!st || !st.months) return;
     Object.keys(st.months).sort().forEach(function (m) {
@@ -441,7 +491,8 @@ function admCommissions_(clients, users) {
 // Χωρίς στοιχεία επικοινωνίας στο email (τα βλέπει στο διαχειριστικό). Την πρώτη φορά απλώς σημειώνει πού έμεινε.
 function admRefNotify_() {
   const users = admUsers_();
-  if (!Object.keys(users).some(function (e) { return users[e].role === 'sales' && users[e].ref; })) return 0;
+  const refRole = function (e) { return !!users[e] && (users[e].role === 'sales' || users[e].role === 'agency'); };
+  if (!Object.keys(users).some(function (e) { return refRole(e) && users[e].ref; })) return 0;
   const L = admLeads_(), assign = admJson_('ADMIN_ASSIGN');
   admOwners_(L, users);
   const last = Number(prop_('ADMIN_REF_TS', '0')) || 0;
@@ -453,7 +504,7 @@ function admRefNotify_() {
     if (t > max) max = t;
     if (!last || t <= last) return;
     const m = assign[r.key], seller = m === '-' ? '' : (m || (r.o.auto && r.o.auto.seller) || '');
-    if (!seller || !users[seller] || users[seller].role !== 'sales') return;
+    if (!seller || !refRole(seller)) return;
     try {
       MailApp.sendEmail({ to: seller, name: CFG.SENDER_NAME, subject: r.what + ' από τον σύνδεσμό σου: ' + r.o.business + (r.o.code ? ' (' + r.o.code + ')' : ''),
         body: r.what + ' για εσένα: «' + r.o.business + '»' + (r.o.plan ? ', πακέτο ' + r.o.plan : '') + '.\n\nΤα στοιχεία είναι στο διαχειριστικό: ' +
@@ -537,7 +588,7 @@ function admClients_() {
         free: cfg && cfg.billing && cfg.billing.type === 'free' ? { until: /^\d{4}-\d{2}$/.test(String(cfg.billing.until || '')) ? String(cfg.billing.until) : '' } : null,
         pkg_change: pc && pc.status === 'scheduled' ? { plan: String(pc.plan || ''), from: String(pc.from || '') } : null,
         has_config: !!cfg,
-        no_approval: !!(cfg && cfg.approval === 'none'),
+        no_approval: !!(cfg && cfg.approval === 'none'), cfg_agency: cfg && cfg.agency ? String(cfg.agency) : '',
         days: cfg ? { posts: admDays_(cfg.post_days), stories: admDays_(cfg.story_days), post_time: cfg.times === 'auto' ? '' : String(cfg.post_time || ''),
           story_time: cfg.times === 'auto' ? '' : String(cfg.story_time || ''), auto: cfg.times === 'auto' } : null,
       };
@@ -549,6 +600,7 @@ function admClients_() {
     return { key: K, code: g.code, name: nm !== K ? nm : (g.name || K), package: g.package, group: g.group, note: g.note,
       accounts: g.accounts, approval: g.approval, active: g.active, free: g.free || null, pkg_change: g.pkg_change || null,
       has_config: g.has_config !== false, has_email: !!String(cprop_(K, 'NOTIFY_TO', '')).trim(), no_approval: !!g.no_approval, days: g.days || null,
+      agency: agencyOf_(K), cfg_agency: g.cfg_agency || '',
       live: live.indexOf(K) >= 0, test: live.indexOf(K) < 0 && all.indexOf(K) >= 0,
       paused: cprop_(K, 'PAUSED', 'false') === 'true', billing_paused: billPaused_(K), billing: admBilling_(K) };
   });
@@ -676,6 +728,9 @@ function adminApi_(p) {
       case 'client_approval': return out({ ok: true, message: admClientApproval_(t, p.client, p.mode) });
       case 'client_group': return out({ ok: true, message: admClientGroup_(t, p.client, p.group, p.name) });
       case 'setup_group': return out({ ok: true, message: admSetupGroup_(t, p.code, p.group, p.name) });
+      case 'client_agency': return out({ ok: true, message: admClientAgency_(t, p.client, p.email) });
+      case 'agency_charge': return out({ ok: true, message: admAgencyCharge_(t, p.email) });
+      case 'agency_stop': return out({ ok: true, message: admAgencyStop_(t, p.email) });
       default: return out({ ok: false, error: 'Άγνωστη ενέργεια.' });
     }
   } catch (e) {
@@ -825,6 +880,7 @@ function admClientPlan_(token, client, plan) {
   const p = planOf_(plan);
   if (!p) throw new Error('Διάλεξε πακέτο.');
   const c = admClientCfg_(client), K = c.K, cfg = c.cfg, st = billState_(K);
+  if (agencyOf_(K)) return agencyClientPlan_(K, cfg, p, me);   // πελάτης agency: από την επόμενη χρέωση της agency
   if (admPaying_(st)) {
     if (Object.keys(st.months || {}).some(function (m) { return st.months[m].st !== 'paid'; })) throw new Error('Υπάρχει απλήρωτος μήνας: πρώτα η πληρωμή.');
     const from = planChangeFrom_(st, new Date());
@@ -858,6 +914,7 @@ function admClientFree_(token, client, until) {
   until = String(until || '');
   if (until && (!/^\d{4}-\d{2}$/.test(until) || until < ym_(new Date()))) throw new Error('Άκυρος μήνας λήξης.');
   const c = admClientCfg_(client), K = c.K, cfg = c.cfg;
+  if (agencyOf_(K)) throw new Error('Πελάτης agency: η χρέωση γίνεται στην agency (Χρήστες → agency).');
   if (admPaying_(billState_(K))) throw new Error('Ο πελάτης έχει ενεργή συνδρομή: πρώτα «Διακοπή συνδρομής».');
   cfg.billing = until ? { type: 'free', until: until } : { type: 'free' };
   admSaveCfg_(K, cfg, until ? 'δωρεάν έως ' + until : 'δωρεάν χωρίς λήξη', me);
@@ -879,6 +936,7 @@ function admClientCharge_(token, client, plan) {
   const p = planOf_(plan);
   if (!p) throw new Error('Διάλεξε πακέτο.');
   const c = admClientCfg_(client), K = c.K, cfg = c.cfg, st = billState_(K);
+  if (agencyOf_(K)) throw new Error('Πελάτης agency: η χρέωση γίνεται στην agency (Χρήστες → agency).');
   if (admPaying_(st) && !st.stop_after) throw new Error('Ο πελάτης έχει ήδη συνδρομή: για άλλο πακέτο, «Πακέτο».');
   if (!String(cprop_(K, 'NOTIFY_TO', '')).trim()) throw new Error('Ο πελάτης δεν έχει email (NOTIFY_TO_' + K + ').');
   const res = {};
@@ -897,6 +955,7 @@ function admClientStop_(token, client) {
   const me = admSession_(token);
   admNeedAdmin_(me);
   const c = admClientCfg_(client), K = c.K, st = billState_(K);
+  if (agencyOf_(K)) throw new Error('Πελάτης agency: η χρέωση γίνεται στην agency (Χρήστες → agency).');
   if (!admPaying_(st)) throw new Error('Δεν υπάρχει ενεργή συνδρομή.');
   if (st.stop_after) return 'Η συνδρομή σταματά ήδη μετά ' + perFor_(st, st.stop_after) + '.';
   const after = stopAfterFor_(st, new Date());
