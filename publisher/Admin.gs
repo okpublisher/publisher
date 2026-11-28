@@ -450,6 +450,9 @@ function admData_(token) {
       return r;
     });
   }
+  if (admin) {
+    try { out.runtime = rtSummary_(new Date(), 7); } catch (e) { out.runtime = null; out.errors.push('Χρόνος εργασιών: ' + e.message); }
+  }
   out.sellers = admin ? out.users.filter(function (x) { return !x.owner && x.role !== 'agency'; }).map(function (x) { return { email: x.email, name: x.name }; }) : [];
   return out;
 }

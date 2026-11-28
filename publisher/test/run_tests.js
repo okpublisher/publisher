@@ -2944,6 +2944,55 @@ test('μουσική στα stories: σελίδα πελάτη (αρχικά α�
   assert.ok(/Μόνο για διαχειριστές ή για την agency/.test(api(env, { act: 'client_music', token: sal, client: 'ORE', stories: 'Όχι' }).error));
 });
 
+test('χρόνος αυτόματων εργασιών (Runtime.gs): μόνο από trigger, ανά μέρα και εργασία, κομμένη εκτέλεση = 6′· διαχειριστικό· runtime.json μία φορά τη μέρα· email ≥ 80%', function () {
+  const env = actEnv(), ctx = env.ctx;
+  const rt = function (n) { return JSON.parse(env.props['RT_' + n] || '{}'); };
+  ctx.run();                                                          // από τον editor: δεν μετρά
+  assert.ok(!env.props.RT_run);
+  ctx.run({ triggerUid: 't1', authMode: 'FULL' });                    // από trigger
+  assert.deepStrictEqual(rt('run')['2026-11-26'].slice(0, 2), [rt('run')['2026-11-26'][0], 1]);
+  assert.ok(!('RT_OPEN_run' in env.props), 'η σημείωση «τρέχει» σβήνει στο τέλος');
+  ctx.rtWrap_('approvalCycle', function () { env.nowMs += 125000; });
+  ctx.rtWrap_('approvalCycle', function () { env.nowMs += 5000; });
+  assert.deepStrictEqual(rt('approvalCycle')['2026-11-26'], [130000, 2, 125000]);
+  assert.throws(function () { ctx.rtWrap_('billingCycle', function () { env.nowMs += 2000; throw new Error('x'); }); }, /x/);
+  assert.deepStrictEqual(rt('billingCycle')['2026-11-26'], [2000, 1, 2000], 'μετρά και όταν η εργασία αποτύχει');
+  env.props.RT_OPEN_insightsCycle = String(env.nowMs - 20 * 60000);  // έμεινε ανοιχτή: η Google την έκοψε
+  ctx.rtWrap_('insightsCycle', function () { env.nowMs += 1000; });
+  assert.deepStrictEqual(rt('insightsCycle')['2026-11-26'], [6 * 60000 + 1000, 2, 6 * 60000]);
+  // 14 ημέρες το πολύ
+  const old = {}; for (let i = 1; i <= 20; i++) old['2026-10-' + String(i).padStart(2, '0')] = [1, 1, 1];
+  env.props.RT_splitBigVideos = JSON.stringify(old);
+  ctx.rtWrap_('splitBigVideos', function () {});
+  assert.strictEqual(Object.keys(rt('splitBigVideos')).length, 14);
+  assert.ok('2026-11-26' in rt('splitBigVideos'));
+  // διαχειριστικό: μόνο ο διαχειριστής
+  const d = env.act({ act: 'data' }).data;
+  const today = d.runtime.days[d.runtime.days.length - 1];
+  assert.strictEqual(d.runtime.limit_min, 90);
+  assert.strictEqual(d.runtime.days.length, 7);
+  assert.strictEqual(today.day, '2026-11-26');
+  assert.ok(today.min >= 8.2 && today.min < 8.5, String(today.min));   // 130″ + 2″ + 361″ (+ η δημοσίευση)
+  assert.strictEqual(today.tasks.approvalCycle.runs, 2);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.runtime.revenue)), { net_eur: 150, subs: 1 }, 'ORE: Βασικό €186 με ΦΠΑ = €150 καθαρά');
+  env.act({ act: 'save_user', email: 'sales@example.com', name: 'Ν', role: 'sales' });
+  assert.ok(!('runtime' in api(env, { act: 'data', token: env.loginAs('sales@example.com') }).data), 'ο πωλητής δεν το βλέπει');
+  // μία φορά τη μέρα: runtime.json στο publisher-work· email όταν χθες ≥ 72′
+  const puts = function () { return env.calls.filter(function (x) { return x.method === 'put' && decodeURIComponent(x.url).indexOf('/contents/admin/runtime.json') > 0; }).length; };
+  ctx.rtDaily_();
+  ctx.rtDaily_();
+  assert.strictEqual(puts(), 1, 'μία εγγραφή τη μέρα');
+  const j = env.gh('admin/runtime.json');
+  assert.strictEqual(j.days.length, 14);
+  assert.strictEqual(j.days[13].day, '2026-11-26');
+  assert.ok(!env.mails.some(function (m) { return /Αυτόματες εργασίες:/.test(m.subject); }));
+  const r = rt('run'); r['2026-11-26'] = [75 * 60000, 140, 50000]; env.props.RT_run = JSON.stringify(r);
+  env.nowMs += 24 * 3600000;
+  ctx.rtDaily_();
+  assert.strictEqual(puts(), 2);
+  assert.ok(env.mails.some(function (m) { return /Αυτόματες εργασίες: 83′ από 90′ χθες/.test(m.subject); }), env.mails.map(function (m) { return m.subject; }).join(' | '));
+});
+
 test('σελίδα πελάτη: πακέτο (από την επόμενη περίοδο, ίδιοι κανόνες με το email) και διακοπή· δωρεάν πελάτης δεν αλλάζει πακέτο', function () {
   const env = cliEnv();
   const tok = env.clientLogin('center@example.com');

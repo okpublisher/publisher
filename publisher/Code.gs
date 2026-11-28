@@ -407,7 +407,8 @@ function runClient_(K, q, S, now, start) {
   return true;
 }
 
-function run() {
+function run(e) {
+  if (rtTrigger_(e)) return rtWrap_('run', function () { return run(); });   // χρόνος εργασίας (Runtime.gs)
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   const start = Date.now();

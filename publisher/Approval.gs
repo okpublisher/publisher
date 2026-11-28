@@ -69,7 +69,8 @@ function approvalClients_() {
 }
 
 // Χωριστή κλειδαριά από τη δημοσίευση (run() κρατά το script lock): η έγκριση δεν καθυστερεί ποτέ μια δημοσίευση.
-function approvalCycle() {
+function approvalCycle(e) {
+  if (rtTrigger_(e)) return rtWrap_('approvalCycle', function () { return approvalCycle(); });   // χρόνος εργασίας (Runtime.gs)
   const lock = LockService.getUserLock();
   if (!lock.tryLock(5000)) return;
   const start = Date.now(), problems = [], cache = {};

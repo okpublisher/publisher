@@ -39,7 +39,8 @@ function folderClients_() {
 }
 
 // Κάθε βράδυ: διπλότυπα όλων των πελατών και μετά κόψιμο μεγάλων βίντεο για τον Claude, στον χρόνο που μένει.
-function dedupeMaterial() {
+function dedupeMaterial(e) {
+  if (rtTrigger_(e)) return rtWrap_('dedupeMaterial', function () { return dedupeMaterial(); });   // χρόνος εργασίας (Runtime.gs)
   const start = Date.now();
   const dedupeUntil = start + TIDY_.BUDGET_MS - 90 * 1000;
   let n = 0;

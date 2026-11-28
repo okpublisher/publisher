@@ -933,7 +933,8 @@ function setupBilling() { manualOnly_('setupBilling');
   billingCycle();
 }
 
-function billingCycle() {
+function billingCycle(e) {
+  if (rtTrigger_(e)) return rtWrap_('billingCycle', function () { return billingCycle(); });   // χρόνος εργασίας (Runtime.gs)
   const lock = LockService.getUserLock();
   if (!lock.tryLock(10000)) return;
   const problems = [];
@@ -947,6 +948,7 @@ function billingCycle() {
     try { sigSync_(); } catch (e) { console.log('Υπογραφή (καρτέλα για τη φόρμα): ' + e.message); }
     try { agencySync_(); } catch (e) { console.log('Agencies: ' + e.message); }
     try { siteScanCycle_(); } catch (e) { console.log('Ιστοσελίδες πελατών: ' + e.message); }
+    try { rtDaily_(); } catch (e) { console.log('Χρόνος εργασιών (ημερήσια): ' + e.message); }
     if (problems.length) reportBilling_(problems);
   } finally {
     lock.releaseLock();

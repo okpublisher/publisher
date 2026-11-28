@@ -52,7 +52,8 @@ function setupInsights() { manualOnly_('setupInsights');
   insightsCycle();
 }
 
-function insightsCycle() {
+function insightsCycle(e) {
+  if (rtTrigger_(e)) return rtWrap_('insightsCycle', function () { return insightsCycle(); });   // χρόνος εργασίας (Runtime.gs)
   const now = new Date(), problems = [];
   clients_().forEach(function (K) {
     if (!cprop_(K, 'TOKEN', '')) return;

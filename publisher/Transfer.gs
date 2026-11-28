@@ -22,6 +22,7 @@ const XFER_ = {
 };
 
 function splitBigVideos(until) {
+  if (rtTrigger_(until)) return rtWrap_('splitBigVideos', function () { return splitBigVideos(); });   // χρόνος εργασίας (Runtime.gs)
   const deadline = typeof until === 'number' ? until : Date.now() + XFER_.BUDGET_MS;   // από trigger έρχεται event object
   let done = 0, parts = 0, left = 0;
   folderClients_().forEach(function (K) {
