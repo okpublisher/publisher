@@ -56,7 +56,23 @@ const CFG = {
 };
 
 // ------------------------------------------------------------------ helpers
-function P_() { return PropertiesService.getScriptProperties(); }
+// Μέσα στο run(): ΜΙΑ ανάγνωση όλων των ιδιοτήτων (getProperties) αντί για εκατοντάδες getProperty (28/11/2026: ~700 κλήσεις
+// ανά κύκλο ≈ 30″, το 80% του ορίου 90′/μέρα της Google, βλ. Runtime.gs). Οι εγγραφές πάνε κανονικά στις Ιδιότητες και
+// ενημερώνουν και το αντίγραφο (ό,τι γράφει ο κύκλος το ξαναδιαβάζει σωστά). Ό,τι γράψουν άλλες εκτελέσεις στο μεταξύ
+// (π.χ. παύση από το διαχειριστικό) το βλέπει ο επόμενος κύκλος. Έξω από το run(): όπως πάντα.
+let RUN_PROPS_ = null;
+function runProps_() {
+  const S = PropertiesService.getScriptProperties(), all = S.getProperties();
+  const has = function (k) { return Object.prototype.hasOwnProperty.call(all, k); };
+  return {
+    getProperty: function (k) { return has(k) ? all[k] : null; },
+    setProperty: function (k, v) { S.setProperty(k, v); all[k] = String(v); return this; },
+    deleteProperty: function (k) { S.deleteProperty(k); delete all[k]; return this; },
+    getProperties: function () { return Object.assign({}, all); },
+    getKeys: function () { return Object.keys(all); },
+  };
+}
+function P_() { return RUN_PROPS_ || PropertiesService.getScriptProperties(); }
 function prop_(k, d) { const v = P_().getProperty(k); return v === null || v === '' ? d : v; }
 function cprop_(K, name, d) { return prop_(name + '_' + K, d); }
 
@@ -414,6 +430,7 @@ function run(e) {
   const start = Date.now();
   const cache = {}, queues = {}, problems = [];
   try {
+    RUN_PROPS_ = runProps_();
     const S = P_();
     const now = new Date();
     clients_().forEach(function (K) {
@@ -434,6 +451,7 @@ function run(e) {
     systemNotify_('Σφάλμα εκτέλεσης', e.message);
     throw e;
   } finally {
+    RUN_PROPS_ = null;
     lock.releaseLock();
   }
 }
@@ -508,10 +526,16 @@ function status_(S, pre, id) {
   return ['Σε αναμονή', ''];
 }
 
+// Υπογραφή των γραμμών της «Ουράς» (για να μη ξαναγράφεται ίδιο περιεχόμενο): μήκος + hash (djb2) του JSON.
+function syncSig_(rows, last) {
+  const t = JSON.stringify(rows) + '|' + last;
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0;
+  return t.length + ':' + h;
+}
 function syncSheet_(queues) {
   const H = ['Πελάτης', 'Ώρα δημοσίευσης', 'Τύπος', 'Λεζάντα', 'Αρχεία', 'Instagram', 'Link Instagram', 'Facebook', 'Link Facebook', 'ID'];
   const sh = sheet_('Ουρά', H);
-  sh.getRange(1, 1, 1, H.length).setValues([H]).setFontWeight('bold');
   const S = P_();
   let all = [];
   Object.keys(queues).forEach(function (K) { all = all.concat(queues[K].items); });
@@ -522,10 +546,18 @@ function syncSheet_(queues) {
     const files = (it.images || []).length + (it.video ? 1 : 0);
     return [it.client, new Date(it.publish_at), it.type, String(it.caption || '').slice(0, 120), files, ig[0], ig[1], fb[0], fb[1], it.id];
   });
-  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, H.length).clearContent();
-  if (rows.length) {
-    sh.getRange(2, 1, rows.length, H.length).setValues(rows);
-    sh.getRange(2, 2, rows.length, 1).setNumberFormat('ddd dd/MM HH:mm');
+  // Ίδιες γραμμές με τον προηγούμενο κύκλο → μόνο το σήμα ζωής (γλιτώνει ~2–4″ σε κάθε κύκλο, 28/11/2026).
+  const sig = syncSig_(rows, sh.getLastRow());
+  let same = false;
+  try { same = CacheService.getScriptCache().get('sync:ουρά') === sig; } catch (e) { same = false; }
+  if (!same) {
+    sh.getRange(1, 1, 1, H.length).setValues([H]).setFontWeight('bold');
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, H.length).clearContent();
+    if (rows.length) {
+      sh.getRange(2, 1, rows.length, H.length).setValues(rows);
+      sh.getRange(2, 2, rows.length, 1).setNumberFormat('ddd dd/MM HH:mm');
+    }
+    try { CacheService.getScriptCache().put('sync:ουρά', syncSig_(rows, sh.getLastRow()), 21600); } catch (e) { /* χωρίς cache: γράφει κάθε φορά */ }
   }
   // Σήμα ζωής: αλλάζει σε κάθε κύκλο, ώστε ο «Φύλακας» (GitHub) να βλέπει αν σταμάτησαν οι triggers.
   sh.getRange(1, H.length + 2, 1, 2).setValues([['Τελευταίος κύκλος', new Date()]]);

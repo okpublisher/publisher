@@ -196,6 +196,29 @@ test('alias LS→ORE: η ουρά του παλιού συστήματος δι�
   assert.ok(rs && rs.type === 'STORY' && rs.publish_at === '2026-12-04T20:15:00.000Z');
 });
 
+test('run(): μία ανάγνωση όλων των ιδιοτήτων ανά κύκλο (όχι εκατοντάδες getProperty)· ίδια «Ουρά» → μόνο το σήμα ζωής', function () {
+  const env = makeEnv({ props: BASE_PROPS, queues: { [OLD_Q]: lsQueue() }, now: '2026-12-04T23:30:00+02:00' });
+  const real = env.ctx.PropertiesService.getScriptProperties;
+  let gets = 0, alls = 0;
+  env.ctx.PropertiesService.getScriptProperties = function () {
+    const S = real();
+    return { getProperty: function (k) { gets++; return S.getProperty(k); }, setProperty: S.setProperty, deleteProperty: S.deleteProperty,
+      getProperties: function () { alls++; return S.getProperties(); } };
+  };
+  env.ctx.run();
+  const done1 = statusKeys(env);
+  assert.ok(done1.length > 0, 'δημοσίευσε ό,τι ήταν η ώρα του');
+  assert.ok(gets <= 3, 'getProperty στις πραγματικές Ιδιότητες: ' + gets);
+  assert.strictEqual(alls, 1, 'getProperties: μία φορά (και το καθάρισμα σημειώσεων παίρνει το ίδιο αντίγραφο)');
+  assert.strictEqual(vm.runInContext('RUN_PROPS_', env.ctx), null, 'μετά τον κύκλο: ξανά απευθείας οι Ιδιότητες');
+  const ss = env.ctx.SpreadsheetApp.getActive(), q = ss.getSheetByName('Ουρά');
+  const before = JSON.stringify(q.rows.slice(1));
+  env.nowMs += 60000;
+  env.ctx.run();                                                      // τίποτα νέο: ίδιες γραμμές
+  assert.deepStrictEqual(statusKeys(env), done1, 'καμία διπλή δημοσίευση');
+  assert.strictEqual(JSON.stringify(q.rows.slice(1)), before);
+});
+
 test('χωρίς alias ο πελάτης ΔΕΝ βλέπει τις εγγραφές LS', function () {
   const p = Object.assign({}, BASE_PROPS); delete p.ALIAS_ORE;
   const env = makeEnv({ props: p, queues: { [OLD_Q]: lsQueue() } });
