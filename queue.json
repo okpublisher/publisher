@@ -3,15 +3,6 @@
  "timezone": "Europe/Athens",
  "items": [
   {
-   "id": "LS-2026-11-25-story",
-   "account": "LS",
-   "type": "STORY",
-   "publish_at": "2026-11-25T10:00:00+02:00",
-   "images": [
-    "https://raw.githubusercontent.com/okpublisher/publisher/main/media/2026-11/ORE/2026-11-25_story_01.jpg"
-   ]
-  },
-  {
    "id": "LS-2026-11-25-post",
    "account": "LS",
    "type": "IMAGE",
